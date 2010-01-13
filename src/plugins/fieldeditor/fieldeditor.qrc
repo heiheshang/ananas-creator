@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="/fieldeditor" >
+    <file>FieldEditor.mimetypes.xml</file>
+  </qresource>
+  <qresource prefix="icon" >
+    <file>ananas16x16.jpg</file>
+  </qresource>
+</RCC>

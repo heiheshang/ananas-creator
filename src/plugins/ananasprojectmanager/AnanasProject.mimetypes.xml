@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+
+<mime-info xmlns='http://www.freedesktop.org/standards/shared-mime-info'>
+  <mime-type type="text/x-ananas-project">
+    <sub-class-of type="text/plain"/>
+    <comment>Ananas Project file</comment>
+    <glob pattern="*.rc"/>
+  </mime-type>
+</mime-info>
