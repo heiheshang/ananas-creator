@@ -275,6 +275,9 @@
         <height>130</height>
        </rect>
       </property>
+      <property name="selectionMode">
+       <enum>QAbstractItemView::SingleSelection</enum>
+      </property>
       <column>
        <property name="text">
         <string>CatAtrr</string>
@@ -387,6 +390,9 @@
         <width>300</width>
         <height>130</height>
        </rect>
+      </property>
+      <property name="selectionMode">
+       <enum>QAbstractItemView::SingleSelection</enum>
       </property>
       <column>
        <property name="text">
@@ -661,6 +667,9 @@
         <width>331</width>
         <height>121</height>
        </rect>
+      </property>
+      <property name="selectionMode">
+       <enum>QAbstractItemView::SingleSelection</enum>
       </property>
       <column>
        <property name="text">

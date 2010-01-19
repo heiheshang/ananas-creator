@@ -12,7 +12,6 @@ DirectoryEditor::DirectoryEditor(QWidget* parent, const char* name, Qt::WindowFl
     : QMainWindow(parent, fl)
 {
     setupUi(this);
-    //connect(this,SIGNAL(destroyed(QObject*)),this,SLOT(closeEvent(QCloseEvent*)));
     //(void)statusBar();
     //init();
 }
@@ -22,7 +21,6 @@ DirectoryEditor::DirectoryEditor(QWidget* parent, const char* name, Qt::WindowFl
  */
 DirectoryEditor::~DirectoryEditor()
 {
-    Core::MessageManager::instance()->printToOutputPane(tr("DirectoryEditor"));
     destroy();
     // no need to delete child widgets, Qt does it all for us
 }
@@ -83,6 +81,7 @@ void DirectoryEditor::edit_field()
         manager->activateEditor(editor);
         QMetaObject::invokeMethod(editor->widget(), "setData",
         Q_ARG(DomCfgItem*, item->child(0)->child(currentRow)));
+        connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
     }
 
 }
@@ -95,6 +94,7 @@ void DirectoryEditor::doubleClicked ( int row, int ) {
         manager->activateEditor(editor);
         QMetaObject::invokeMethod(editor->widget(), "setData",
         Q_ARG(DomCfgItem*, item->child(0)->child(row)));
+        connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
     }
 }
 void DirectoryEditor::init()
@@ -105,8 +105,19 @@ void DirectoryEditor::init()
 }
 
 
-void DirectoryEditor::updateMD()
+void DirectoryEditor::updateMD(QList<Core::IEditor*> editor)
 {
+  bool findWidget = false;
+  foreach (Core::IEditor* ed, editor)
+  {
+      if (ed->widget()==this) {
+          findWidget=true;
+          break;
+      }
+  }
+  if (findWidget==false)
+      return;
+
 //     	aCfg *md = item->md;
 // 	aCfgItem obj = item->obj, sv, g, e;
 //
@@ -142,7 +153,7 @@ void DirectoryEditor::updateMD()
 
 void DirectoryEditor::destroy()
 {
-    updateMD();
+//    updateMD();
 //     ( (MainForm*)this->topLevelWidget() )->wl->remove( this );
 //     ( (MainForm*)this->topLevelWidget() )->removeTab(name());
 }
@@ -426,16 +437,13 @@ void DirectoryEditor::createNewElementAttribute_clicked()
     QString otype=md_field;
     QString name=tr("New");
     item->insert(element,otype,name,0);
-    //Core::MessageManager::instance()->printToOutputPane("insert");
-    //for (int i=0;i<element->childCount();i++)
-    //{
-   //     DomCfgItem *field=element->child(i);
-//    Core::MessageManager::instance()->printToOutputPane(tr("%1").arg(element->child(14)->cfgName()));
-//    Core::MessageManager::instance()->printToOutputPane(tr("%1").arg(element->child(15)->cfgName()));
-//    Core::MessageManager::instance()->printToOutputPane(tr("%1").arg(element->child(16)->cfgName()));
-   // }
-    //Core::MessageManager::instance()->printToOutputPane("insert");
-    DomCfgItem *field=element->child(15);
+
+    DomCfgItem *field=element->child(element->childCount()-1);
+    field->setAttr(mda_type,QString("C 10\t")+QObject::tr("Char"));
+    field->setAttr(mda_sort,"0");
+    field->setAttr(mda_plus,"0");
+    field->setAttr(mda_nz,"0");
+    field->setAttr(mda_sum,"0");
     Core::EditorManager* manager = Core::EditorManager::instance();
 
     QString cfgName = field->cfgName();
@@ -445,10 +453,7 @@ void DirectoryEditor::createNewElementAttribute_clicked()
         QMetaObject::invokeMethod(editor->widget(), "setData",
         Q_ARG(DomCfgItem*, field));
     }
-    //Core::MessageManager::instance()->printToOutputPane(tr("%1").arg(field->nodeName()));
-    //field->setAttr(mda_type,"C 200 0 *");
-    //field->setAttr(mda_plus,"0");
-    //field->setAttr(mda_nz,"0");
+
     GetElementAttributesList();
 
 //        aListViewItem *newitem, *fielditem;
@@ -1199,8 +1204,3 @@ void DirectoryEditor::createNewElementAttribute_clicked()
 //}
 //
 
-void DirectoryEditor::hideEvent(QHideEvent* event)
-{
-    //Core::MessageManager::instance()->printToOutputPane(tr("DirectoryEditor"));
-    updateMD();
-}

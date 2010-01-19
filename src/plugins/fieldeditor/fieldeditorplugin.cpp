@@ -71,7 +71,7 @@ using namespace FIELDEditor::Internal;
     QString FieldEditorFile::mimeType() const { return m_mimeType; }
 
     bool FieldEditorFile::save(const QString &fileName) {
-        //Core::MessageManager::instance()->printToOutputPane(tr("Save %1").arg(fileName));
+        Core::MessageManager::instance()->printToOutputPane(tr("Save %1").arg(fileName));
 //        QFile file(fileName);
 //
 //        QByteArray data;
@@ -95,7 +95,7 @@ using namespace FIELDEditor::Internal;
 //            emit changed();
 //            return true;
 //        }
-        return false;
+        return true;
     }
 
     bool FieldEditorFile::open(const QString &fileName) {
@@ -106,12 +106,12 @@ using namespace FIELDEditor::Internal;
 //                m_editor->setData(file.readAll());
 //            } else {
 //                m_editor->setLazyData(0, file.size());
-//                m_editor->editorInterface()->setDisplayName(QFileInfo(fileName).fileName());
+                m_editor->editorInterface()->setDisplayName(fileName);
 //            }
 //            file.close();
 //            return true;
 //        }
-        return false;
+        return true;
     }
 
 
@@ -135,7 +135,7 @@ using namespace FIELDEditor::Internal;
         return false;
     }
 
-    bool FieldEditorFile::isSaveAsAllowed() const { return true; }
+    bool FieldEditorFile::isSaveAsAllowed() const { return false; }
 
     void FieldEditorFile::modified(ReloadBehavior *behavior) {
     }
@@ -175,7 +175,7 @@ FieldEditorInterface::FieldEditorInterface(FieldEditor *parent)
         return true;
     }
     bool FieldEditorInterface::open(const QString &fileName ) {
-        return true;;
+        return true;
     }
     Core::IFile *FieldEditorInterface::file() { return m_file; }
     const char* FieldEditorInterface::kind() const
@@ -312,6 +312,10 @@ bool FieldEditorPlugin::initialize(const QStringList &arguments, QString *errorM
 }
 
 void FieldEditorPlugin::extensionsInitialized()
+{
+}
+
+void FieldEditorPlugin::shutdown()
 {
 }
 

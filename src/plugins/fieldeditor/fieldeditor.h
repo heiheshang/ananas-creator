@@ -34,7 +34,7 @@ public:
 protected:
     void hideEvent (QHideEvent * event);
 public slots:
-    virtual void updateMD();
+    virtual void updateMD(QList<Core::IEditor*> editor);
     virtual void typeSelect( QStringList type );
     virtual void nameChanged();
     virtual void AARegSelect( int i );

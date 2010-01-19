@@ -284,15 +284,14 @@ DomCfgItem *item = static_cast<DomCfgItem*> ( currentIndex().internalPointer() )
            QString titlePattern = tr("Catalogue $");
            QDomNode stringView =  item->node();
            Core::EditorManager* manager = Core::EditorManager::instance();
-           //connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),this,SLOT(editorsClosed(QList<Core::IEditor*>)));
 
            QString cfgName = item->cfgName();
            Core::IEditor* editor = manager->openEditorWithContents("Directory Editor", &cfgName,"");
            if (editor) {
-               connect(editor, SIGNAL(changed()), this, SLOT(updateActions()));
             manager->activateEditor(editor);
             QMetaObject::invokeMethod(editor->widget(), "setData",
             Q_ARG(DomCfgItem*, item));
+            connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
           }
         }
     }
@@ -325,14 +324,13 @@ void AnanasExplorerSideBar::openSprModule()
         DomCfgItem *item = static_cast<DomCfgItem*> ( currentIndex().internalPointer() );
         QString titlePattern = tr("Directory $");
         QDomNode stringView = item->node();
-        Core::MessageManager::instance()->printToOutputPane(tr("Not found file %1").arg(stringView.toElement().text()));
         Core::EditorManager* manager = Core::EditorManager::instance();
 
         Core::IEditor* editor = manager->openEditorWithContents("Qt Script Editor", &titlePattern,stringView.toElement().text());
 
-        if (editor)
+        if (editor) {
             manager->activateEditor(editor);
-
+        }
 }
 void AnanasExplorerSideBar::closeEvent( QCloseEvent * event )
 {
@@ -357,6 +355,7 @@ if ( index.isValid() ) {
              manager->activateEditor(editor);
              QMetaObject::invokeMethod(editor->widget(), "setData",
              Q_ARG(DomCfgItem*, item));
+             connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
           }
         }
 //        if ( nodeName==md_form )

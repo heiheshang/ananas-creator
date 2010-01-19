@@ -4,6 +4,8 @@
 #include <QPalette>
 #include <QVariant>
 #include <QDebug>
+#include <coreplugin/editormanager/editormanager.h>
+
 using namespace FIELDEditor;
 
 /*
@@ -44,7 +46,7 @@ setText(){
 
 void FieldEditor::destroy()
 {
-    updateMD();
+    //updateMD();
     //( (MainForm*)this->topLevelWidget() )->wl->remove( this );
     //( (MainForm*)this->topLevelWidget() )->removeTab(name());
 }
@@ -81,7 +83,7 @@ void FieldEditor::setData( DomCfgItem *o )
 // 	al = a;
 // 	al->setData();
 // 	// setCaption( tr("Field:") + md->attr( obj, mda_name ) );
-	eName->setText( o->cfgName() );
+        eName->setText( item->cfgName() );
  	nameChanged();
  	// eID->setText( md->attr( obj, mda_id ) );
         ts = item->attr(mda_type );
@@ -226,9 +228,19 @@ void FieldEditor::setData( DomCfgItem *o )
  	typeSelect( type );
 }
 
-void FieldEditor::updateMD()
+void FieldEditor::updateMD(QList<Core::IEditor*> editor)
 {
   QString st;
+  bool findWidget = false;
+  foreach (Core::IEditor* ed, editor)
+  {
+      if (ed->widget()==this) {
+          findWidget=true;
+          break;
+      }
+  }
+  if (findWidget==false)
+      return;
 // 
 //  aCfg *md = item->md;
 //  aCfgItem obj = item->obj;
@@ -266,14 +278,13 @@ void FieldEditor::updateMD()
                 st.append(" I");
   }
   //printf("%s\n",st.ascii());
-  qDebug() << st;
   item->setAttr(mda_type, st );
 }
 
 void FieldEditor::hideEvent(QHideEvent* event)
 {
     //Core::MessageManager::instance()->printToOutputPane(tr("DirectoryEditor"));
-    updateMD();
+    //updateMD();
 }
 
 void FieldEditor::typeSelect( QStringList type )

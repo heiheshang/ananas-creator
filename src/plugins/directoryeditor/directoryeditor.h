@@ -37,13 +37,13 @@ public:
     Q_INVOKABLE void setData( DomCfgItem * o );
 public slots:
     //virtual void setData( DomCfgItem * o );
-    virtual void updateMD();
+    virtual void updateMD(QList<Core::IEditor*> editor);
     virtual void eSv_activated( int index );
     virtual void eSvG_activated( int index );
 
 protected:
     int newVariable;
-    void hideEvent (QHideEvent * event);
+
 protected slots:
     virtual void languageChange();
 
