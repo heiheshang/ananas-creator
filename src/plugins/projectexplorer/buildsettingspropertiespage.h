@@ -37,6 +37,7 @@
 #include <QtGui/QPushButton>
 #include <QtGui/QLabel>
 #include <QtGui/QGroupBox>
+#include <QtGui/QSpacerItem>
 
 namespace ProjectExplorer {
 
@@ -44,7 +45,7 @@ class IBuildStepFactory;
 
 namespace Internal {
 
-class BuildSettingsSubWidgets : public QGroupBox
+class BuildSettingsSubWidgets : public QWidget
 {
     Q_OBJECT
 public:
@@ -56,6 +57,7 @@ public:
 private:
     QList<QWidget *> m_widgets;
     QList<QLabel *> m_labels;
+    QList<QSpacerItem *> m_spacerItems;
 };
 
 class BuildSettingsPanelFactory : public IPanelFactory
@@ -98,10 +100,11 @@ private slots:
     void createConfiguration();
     void cloneConfiguration();
     void deleteConfiguration();
-
+    void updateAddButtonMenu();
+    void checkMakeActiveLabel();
+    void makeActive();
 
 private:
-    void setActiveConfiguration(const QString &configuration);
     void cloneConfiguration(const QString &toClone);
     void deleteConfiguration(const QString &toDelete);
 
@@ -110,6 +113,9 @@ private:
     QPushButton *m_removeButton;
     QComboBox *m_buildConfigurationComboBox;
     BuildSettingsSubWidgets *m_subWidgets;
+    QString m_buildConfiguration;
+    QMenu *m_addButtonMenu;
+    QLabel *m_makeActiveLabel;
 };
 
 } // namespace Internal

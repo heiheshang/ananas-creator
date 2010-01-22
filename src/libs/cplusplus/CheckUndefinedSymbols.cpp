@@ -51,6 +51,7 @@ void CheckUndefinedSymbols::setGlobalNamespaceBinding(NamespaceBindingPtr global
 {
     _globalNamespaceBinding = globalNamespaceBinding;
     _types.clear();
+    _protocols.clear();
 
     if (_globalNamespaceBinding) {
         QSet<NamespaceBinding *> processed;
@@ -78,20 +79,44 @@ QByteArray CheckUndefinedSymbols::templateParameterName(DeclarationAST *ast) con
             return templateParameterName(d->name);
         else if (TemplateTypeParameterAST *d = ast->asTemplateTypeParameter())
             return templateParameterName(d->name);
+        else if (ParameterDeclarationAST *d = ast->asParameterDeclaration()) {
+            if (d->symbol) {
+                if (const Identifier *id = d->symbol->identifier())
+                    return QByteArray::fromRawData(id->chars(), id->size());
+            }
+        }
     }
     return QByteArray();
 }
 
 bool CheckUndefinedSymbols::isType(const QByteArray &name) const
 {
+    for (int i = _compoundStatementStack.size() - 1; i != -1; --i) {
+        Scope *members = _compoundStatementStack.at(i)->symbol->members();
+
+        for (unsigned m = 0; m < members->symbolCount(); ++m) {
+            Symbol *member = members->symbolAt(m);
+
+            if (member->isTypedef() && member->isDeclaration()) {
+                if (Identifier *id = member->identifier()) {
+                    if (name == id->chars())
+                        return true;
+                }
+            }
+        }
+    }
+
     for (int i = _templateDeclarationStack.size() - 1; i != - 1; --i) {
         TemplateDeclarationAST *templateDeclaration = _templateDeclarationStack.at(i);
+
         for (DeclarationListAST *it = templateDeclaration->template_parameters; it; it = it->next) {
             DeclarationAST *templateParameter = it->declaration;
+
             if (templateParameterName(templateParameter) == name)
                 return true;
         }
     }
+
     return _types.contains(name);
 }
 
@@ -112,23 +137,43 @@ void CheckUndefinedSymbols::addType(Name *name)
         _types.insert(QByteArray(id->chars(), id->size()));
 }
 
+void CheckUndefinedSymbols::addProtocol(Name *name)
+{
+    if (!name)
+        return;
+
+    if (Identifier *id = name->identifier())
+        _protocols.insert(QByteArray(id->chars(), id->size()));
+}
+
+bool CheckUndefinedSymbols::isProtocol(const QByteArray &name) const
+{
+    return _protocols.contains(name);
+}
+
 void CheckUndefinedSymbols::buildTypeMap(Class *klass)
 {
     addType(klass->name());
 
     for (unsigned i = 0; i < klass->memberCount(); ++i) {
-        Symbol *member = klass->memberAt(i);
+        buildMemberTypeMap(klass->memberAt(i));
+    }
+}
 
-        if (Class *klass = member->asClass()) {
-            buildTypeMap(klass);
-        } else if (Enum *e = member->asEnum()) {
-            addType(e->name());
-        } else if (ForwardClassDeclaration *fwd = member->asForwardClassDeclaration()) {
-            addType(fwd->name());
-        } else if (Declaration *decl = member->asDeclaration()) {
-            if (decl->isTypedef())
-                addType(decl->name());
-        }
+void CheckUndefinedSymbols::buildMemberTypeMap(Symbol *member)
+{
+    if (member == 0)
+        return;
+
+    if (Class *klass = member->asClass()) {
+        buildTypeMap(klass);
+    } else if (Enum *e = member->asEnum()) {
+        addType(e->name());
+    } else if (ForwardClassDeclaration *fwd = member->asForwardClassDeclaration()) {
+        addType(fwd->name());
+    } else if (Declaration *decl = member->asDeclaration()) {
+        if (decl->isTypedef())
+            addType(decl->name());
     }
 }
 
@@ -158,10 +203,16 @@ void CheckUndefinedSymbols::buildTypeMap(NamespaceBinding *binding, QSet<Namespa
                     addType(fKlass->name());
                 } else if (ObjCClass *klass = member->asObjCClass()) {
                     addType(klass->name());
+
+                    for (unsigned i = 0; i < klass->memberCount(); ++i)
+                        buildMemberTypeMap(klass->memberAt(i));
                 } else if (ObjCForwardProtocolDeclaration *fProto = member->asObjCForwardProtocolDeclaration()) {
-                    addType(fProto->name());
+                    addProtocol(fProto->name());
                 } else if (ObjCProtocol *proto = member->asObjCProtocol()) {
-                    addType(proto->name());
+                    addProtocol(proto->name());
+
+                    for (unsigned i = 0; i < proto->memberCount(); ++i)
+                        buildMemberTypeMap(proto->memberAt(i));
                 }
             }
         }
@@ -180,10 +231,17 @@ FunctionDeclaratorAST *CheckUndefinedSymbols::currentFunctionDeclarator() const
     return _functionDeclaratorStack.last();
 }
 
+CompoundStatementAST *CheckUndefinedSymbols::compoundStatement() const
+{
+    if (_compoundStatementStack.isEmpty())
+        return 0;
+
+    return _compoundStatementStack.last();
+}
+
 bool CheckUndefinedSymbols::visit(FunctionDeclaratorAST *ast)
 {
     _functionDeclaratorStack.append(ast);
-
     return true;
 }
 
@@ -288,6 +346,17 @@ bool CheckUndefinedSymbols::visit(FunctionDefinitionAST *ast)
 
 void CheckUndefinedSymbols::endVisit(FunctionDefinitionAST *)
 { }
+
+bool CheckUndefinedSymbols::visit(CompoundStatementAST *ast)
+{
+    _compoundStatementStack.append(ast);
+    return true;
+}
+
+void CheckUndefinedSymbols::endVisit(CompoundStatementAST *)
+{
+    _compoundStatementStack.removeLast();
+}
 
 bool CheckUndefinedSymbols::visit(SimpleDeclarationAST *ast)
 {
@@ -417,4 +486,54 @@ bool CheckUndefinedSymbols::visit(SizeofExpressionAST *ast)
     }
 
     return true;
+}
+
+bool CheckUndefinedSymbols::visit(ObjCClassDeclarationAST *ast)
+{
+    if (NameAST *nameAST = ast->superclass) {
+        bool resolvedSuperClassName = false;
+
+        if (Name *name = nameAST->name) {
+            Identifier *id = name->identifier();
+            const QByteArray spell = QByteArray::fromRawData(id->chars(), id->size());
+            if (isType(spell))
+                resolvedSuperClassName = true;
+        }
+
+        if (! resolvedSuperClassName) {
+            translationUnit()->warning(nameAST->firstToken(),
+                                       "expected class-name after ':' token");
+        }
+    }
+
+    return true;
+}
+
+bool CheckUndefinedSymbols::visit(ObjCProtocolRefsAST *ast)
+{
+    for (IdentifierListAST *iter = ast->identifier_list; iter; iter = iter->next) {
+        if (NameAST *nameAST = iter->name) {
+            bool resolvedProtocolName = false;
+
+            if (Name *name = nameAST->name) {
+                Identifier *id = name->identifier();
+                const QByteArray spell = QByteArray::fromRawData(id->chars(), id->size());
+                if (isProtocol(spell))
+                    resolvedProtocolName = true;
+            }
+
+            if (!resolvedProtocolName) {
+                char after;
+
+                if (iter == ast->identifier_list)
+                    after = '<';
+                else
+                    after = ',';
+
+                translationUnit()->warning(nameAST->firstToken(), "expected protocol name after '%c' token", after);
+            }
+        }
+    }
+
+    return false;
 }

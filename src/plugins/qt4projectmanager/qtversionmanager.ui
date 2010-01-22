@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>577</width>
-    <height>477</height>
+    <height>507</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -100,7 +100,7 @@ p, li { white-space: pre-wrap; }
         </item>
        </layout>
       </item>
-      <item row="6" column="1">
+      <item row="8" column="1">
        <layout class="QHBoxLayout" name="horizontalLayout_2">
         <item>
          <widget class="QLabel" name="debuggingHelperStateLabel">
@@ -146,7 +146,7 @@ p, li { white-space: pre-wrap; }
         </column>
         <column>
          <property name="text">
-          <string>Path</string>
+          <string>QMake Location</string>
          </property>
         </column>
         <column>
@@ -169,22 +169,22 @@ p, li { white-space: pre-wrap; }
       <item row="2" column="0">
        <widget class="QLabel" name="pathLabel">
         <property name="text">
-         <string>Path:</string>
+         <string>QMake Location:</string>
         </property>
        </widget>
       </item>
       <item row="2" column="1">
-       <widget class="Core::Utils::PathChooser" name="qtPath"/>
+       <widget class="Utils::PathChooser" name="qmakePath" native="true"/>
       </item>
       <item row="3" column="0">
        <widget class="QLabel" name="mingwLabel">
         <property name="text">
-         <string>MinGw Directory:</string>
+         <string>MinGW Directory:</string>
         </property>
        </widget>
       </item>
       <item row="3" column="1">
-       <widget class="Core::Utils::PathChooser" name="mingwPath"/>
+       <widget class="Utils::PathChooser" name="mingwPath" native="true"/>
       </item>
       <item row="4" column="0">
        <widget class="QLabel" name="msvcLabel">
@@ -193,43 +193,51 @@ p, li { white-space: pre-wrap; }
         </property>
        </widget>
       </item>
+      <item row="5" column="0">
+       <widget class="QLabel" name="s60SDKLabel">
+        <property name="text">
+         <string>S60 SDK:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1">
+       <widget class="Utils::PathChooser" name="s60SDKPath" native="true"/>
+      </item>
       <item row="6" column="0">
+       <widget class="QLabel" name="gcceLabel">
+        <property name="text">
+         <string>CSL/GCCE Directory:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="1">
+       <widget class="Utils::PathChooser" name="gccePath" native="true"/>
+      </item>
+      <item row="7" column="0">
+       <widget class="QLabel" name="mwcLabel">
+        <property name="text">
+         <string>Carbide Directory:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="1">
+       <widget class="Utils::PathChooser" name="mwcPath" native="true"/>
+      </item>
+      <item row="8" column="0">
        <widget class="QLabel" name="debuggingHelperLabel">
         <property name="text">
          <string>Debugging Helper:</string>
         </property>
        </widget>
       </item>
-      <item row="7" column="1">
+      <item row="9" column="1">
        <widget class="QLabel" name="errorLabel">
         <property name="text">
          <string/>
         </property>
        </widget>
       </item>
-      <item row="5" column="0">
-       <widget class="QLabel" name="mwcLabel">
-        <property name="text">
-         <string>MWC Directory:</string>
-        </property>
-       </widget>
-      </item>
-      <item row="5" column="1">
-       <widget class="Core::Utils::PathChooser" name="mwcPath"/>
-      </item>
      </layout>
-     <zorder>qtdirList</zorder>
-     <zorder>versionNameLabel</zorder>
-     <zorder>nameEdit</zorder>
-     <zorder>pathLabel</zorder>
-     <zorder>qtPath</zorder>
-     <zorder>mingwLabel</zorder>
-     <zorder>mingwPath</zorder>
-     <zorder>msvcLabel</zorder>
-     <zorder>debuggingHelperLabel</zorder>
-     <zorder>errorLabel</zorder>
-     <zorder>mwcLabel</zorder>
-     <zorder>mwcPath</zorder>
     </widget>
    </item>
    <item>
@@ -257,7 +265,7 @@ p, li { white-space: pre-wrap; }
  </widget>
  <customwidgets>
   <customwidget>
-   <class>Core::Utils::PathChooser</class>
+   <class>Utils::PathChooser</class>
    <extends>QWidget</extends>
    <header location="global">utils/pathchooser.h</header>
    <container>1</container>
@@ -268,7 +276,7 @@ p, li { white-space: pre-wrap; }
   <tabstop>addButton</tabstop>
   <tabstop>delButton</tabstop>
   <tabstop>nameEdit</tabstop>
-  <tabstop>qtPath</tabstop>
+  <tabstop>qmakePath</tabstop>
   <tabstop>mingwPath</tabstop>
   <tabstop>msvcComboBox</tabstop>
   <tabstop>showLogButton</tabstop>

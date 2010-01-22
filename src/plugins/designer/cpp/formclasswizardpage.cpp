@@ -57,6 +57,7 @@ FormClassWizardPage::FormClassWizardPage(QWidget * parent) :
     m_ui->newClassWidget->setBaseClassInputVisible(false);
     m_ui->newClassWidget->setNamespacesEnabled(true);
     m_ui->newClassWidget->setAllowDirectories(true);
+    m_ui->newClassWidget->setClassTypeComboVisible(false);
 
     connect(m_ui->newClassWidget, SIGNAL(validChanged()), this, SLOT(slotValidChanged()));
     connect(m_ui->settingsToolButton, SIGNAL(clicked()), this, SLOT(slotSettings()));
@@ -75,8 +76,8 @@ static  bool inline lowerCaseFiles(const Core::ICore *core)
     QString lowerCaseSettingsKey = QLatin1String(CppTools::Constants::CPPTOOLS_SETTINGSGROUP);
     lowerCaseSettingsKey += QLatin1Char('/');
     lowerCaseSettingsKey += QLatin1String(CppTools::Constants::LOWERCASE_CPPFILES_KEY);
-
-    return core->settings()->value(lowerCaseSettingsKey, QVariant(false)).toBool();
+    const bool lowerCaseDefault = CppTools::Constants::lowerCaseFilesDefault;
+    return core->settings()->value(lowerCaseSettingsKey, QVariant(lowerCaseDefault)).toBool();
 }
 
 // Set up new class widget from settings

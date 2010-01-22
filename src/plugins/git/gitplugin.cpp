@@ -56,6 +56,10 @@
 #include <vcsbase/basevcssubmiteditorfactory.h>
 #include <vcsbase/vcsbaseoutputwindow.h>
 
+#include <projectexplorer/projectexplorer.h>
+#include <projectexplorer/project.h>
+#include <projectexplorer/projectnodes.h>
+
 #include <QtCore/QDebug>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
@@ -126,7 +130,6 @@ GitPlugin::GitPlugin() :
     m_showAction(0),
     m_stageAction(0),
     m_unstageAction(0),
-    m_revertAction(0),
     m_commitAction(0),
     m_pullAction(0),
     m_pushAction(0),
@@ -138,10 +141,9 @@ GitPlugin::GitPlugin() :
     m_stashPopAction(0),
     m_stashListAction(0),
     m_branchListAction(0),
-    m_projectExplorer(0),
     m_gitClient(0),
+    m_versionControl(0),
     m_changeSelectionDialog(0),
-    m_changeTmpFile(0),
     m_submitActionTriggered(false)
 {
     m_instance = this;
@@ -149,17 +151,22 @@ GitPlugin::GitPlugin() :
 
 GitPlugin::~GitPlugin()
 {
-    cleanChangeTmpFile();
+    cleanCommitMessageFile();
     delete m_gitClient;
     m_instance = 0;
 }
 
-void GitPlugin::cleanChangeTmpFile()
+void GitPlugin::cleanCommitMessageFile()
 {
-    if (m_changeTmpFile) {
-        delete m_changeTmpFile;
-        m_changeTmpFile = 0;
+    if (!m_commitMessageFileName.isEmpty()) {
+        QFile::remove(m_commitMessageFileName);
+        m_commitMessageFileName.clear();
     }
+}
+
+bool GitPlugin::isCommitEditorOpen() const
+{
+    return !m_commitMessageFileName.isEmpty();
 }
 
 GitPlugin *GitPlugin::instance()
@@ -209,8 +216,8 @@ bool GitPlugin::initialize(const QStringList &arguments, QString *errorMessage)
 
     addAutoReleasedObject(new GitSubmitEditorFactory(&submitParameters));
 
-    GitVersionControl *versionControl = new GitVersionControl(m_gitClient);
-    addAutoReleasedObject(versionControl);
+    m_versionControl = new GitVersionControl(m_gitClient);
+    addAutoReleasedObject(m_versionControl);
 
     addAutoReleasedObject(new CloneWizard);
     addAutoReleasedObject(new Gitorious::Internal::GitoriousCloneWizard);
@@ -226,100 +233,78 @@ bool GitPlugin::initialize(const QStringList &arguments, QString *errorMessage)
     gitContainer->menu()->setTitle(tr("&Git"));
     toolsContainer->addMenu(gitContainer);
     if (QAction *ma = gitContainer->menu()->menuAction()) {
-        ma->setEnabled(versionControl->isEnabled());
-        connect(versionControl, SIGNAL(enabledChanged(bool)), ma, SLOT(setVisible(bool)));
+        ma->setEnabled(m_versionControl->isEnabled());
+        connect(m_versionControl, SIGNAL(enabledChanged(bool)), ma, SLOT(setVisible(bool)));
     }
 
     Core::Command *command;
 
-    m_diffAction = new Core::Utils::ParameterAction(tr("Diff Current File"), tr("Diff \"%1\""), Core::Utils::ParameterAction::AlwaysEnabled, this);
+    m_diffAction = new Utils::ParameterAction(tr("Diff Current File"), tr("Diff \"%1\""), Utils::ParameterAction::AlwaysEnabled, this);
     command = actionManager->registerAction(m_diffAction, "Git.Diff", globalcontext);
     command->setAttribute(Core::Command::CA_UpdateText);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+G,Alt+D")));
-#endif
     connect(m_diffAction, SIGNAL(triggered()), this, SLOT(diffCurrentFile()));
     gitContainer->addAction(command);
 
-    m_statusAction = new Core::Utils::ParameterAction(tr("File Status"), tr("Status Related to \"%1\""), Core::Utils::ParameterAction::AlwaysEnabled, this);
+    m_statusAction = new Utils::ParameterAction(tr("File Status"), tr("Status Related to \"%1\""), Utils::ParameterAction::AlwaysEnabled, this);
     command = actionManager->registerAction(m_statusAction, "Git.Status", globalcontext);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+G,Alt+S")));
-#endif
     command->setAttribute(Core::Command::CA_UpdateText);
     connect(m_statusAction, SIGNAL(triggered()), this, SLOT(statusFile()));
     gitContainer->addAction(command);
 
-    m_logAction = new Core::Utils::ParameterAction(tr("Log File"), tr("Log of \"%1\""), Core::Utils::ParameterAction::AlwaysEnabled, this);
+    m_logAction = new Utils::ParameterAction(tr("Log File"), tr("Log of \"%1\""), Utils::ParameterAction::AlwaysEnabled, this);
     command = actionManager->registerAction(m_logAction, "Git.Log", globalcontext);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+G,Alt+L")));
-#endif
     command->setAttribute(Core::Command::CA_UpdateText);
     connect(m_logAction, SIGNAL(triggered()), this, SLOT(logFile()));
     gitContainer->addAction(command);
 
-    m_blameAction = new Core::Utils::ParameterAction(tr("Blame"), tr("Blame for \"%1\""), Core::Utils::ParameterAction::AlwaysEnabled, this);
+    m_blameAction = new Utils::ParameterAction(tr("Blame"), tr("Blame for \"%1\""), Utils::ParameterAction::AlwaysEnabled, this);
     command = actionManager->registerAction(m_blameAction, "Git.Blame", globalcontext);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+G,Alt+B")));
-#endif
     command->setAttribute(Core::Command::CA_UpdateText);
     connect(m_blameAction, SIGNAL(triggered()), this, SLOT(blameFile()));
     gitContainer->addAction(command);
 
-    m_undoFileAction = new Core::Utils::ParameterAction(tr("Undo Changes"), tr("Undo Changes for \"%1\""),  Core::Utils::ParameterAction::AlwaysEnabled, this);
+    m_undoFileAction = new Utils::ParameterAction(tr("Undo Changes"), tr("Undo Changes for \"%1\""),  Utils::ParameterAction::AlwaysEnabled, this);
     command = actionManager->registerAction(m_undoFileAction, "Git.Undo", globalcontext);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+G,Alt+U")));
-#endif
     command->setAttribute(Core::Command::CA_UpdateText);
     connect(m_undoFileAction, SIGNAL(triggered()), this, SLOT(undoFileChanges()));
     gitContainer->addAction(command);
 
-    m_stageAction = new Core::Utils::ParameterAction(tr("Stage File for Commit"), tr("Stage \"%1\" for Commit"), Core::Utils::ParameterAction::AlwaysEnabled, this);
+    m_stageAction = new Utils::ParameterAction(tr("Stage File for Commit"), tr("Stage \"%1\" for Commit"), Utils::ParameterAction::AlwaysEnabled, this);
     command = actionManager->registerAction(m_stageAction, "Git.Stage", globalcontext);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+G,Alt+A")));
-#endif
     command->setAttribute(Core::Command::CA_UpdateText);
     connect(m_stageAction, SIGNAL(triggered()), this, SLOT(stageFile()));
     gitContainer->addAction(command);
 
-    m_unstageAction = new Core::Utils::ParameterAction(tr("Unstage File from Commit"), tr("Unstage \"%1\" from Commit"), Core::Utils::ParameterAction::AlwaysEnabled, this);
+    m_unstageAction = new Utils::ParameterAction(tr("Unstage File from Commit"), tr("Unstage \"%1\" from Commit"), Utils::ParameterAction::AlwaysEnabled, this);
     command = actionManager->registerAction(m_unstageAction, "Git.Unstage", globalcontext);
     command->setAttribute(Core::Command::CA_UpdateText);
     connect(m_unstageAction, SIGNAL(triggered()), this, SLOT(unstageFile()));
     gitContainer->addAction(command);
 
-    m_revertAction = new Core::Utils::ParameterAction(tr("Revert..."), tr("Revert \"%1\"..."), Core::Utils::ParameterAction::AlwaysEnabled, this);
-    command = actionManager->registerAction(m_revertAction, "Git.Revert", globalcontext);
-    command->setAttribute(Core::Command::CA_UpdateText);
-    connect(m_revertAction, SIGNAL(triggered()), this, SLOT(revertFile()));
-    gitContainer->addAction(command);
-
     gitContainer->addAction(createSeparator(actionManager, globalcontext, QLatin1String("Git.Sep.Project"), this));
 
-    m_diffProjectAction = new Core::Utils::ParameterAction(tr("Diff Current Project"), tr("Diff Project \"%1\""), Core::Utils::ParameterAction::AlwaysEnabled, this);
+    m_diffProjectAction = new Utils::ParameterAction(tr("Diff Current Project"), tr("Diff Project \"%1\""), Utils::ParameterAction::AlwaysEnabled, this);
     command = actionManager->registerAction(m_diffProjectAction, "Git.DiffProject", globalcontext);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence("Alt+G,Alt+Shift+D"));
-#endif
     command->setAttribute(Core::Command::CA_UpdateText);
     connect(m_diffProjectAction, SIGNAL(triggered()), this, SLOT(diffCurrentProject()));
     gitContainer->addAction(command);
 
-    m_statusProjectAction = new Core::Utils::ParameterAction(tr("Project Status"), tr("Status Project \"%1\""), Core::Utils::ParameterAction::AlwaysEnabled, this);
+    m_statusProjectAction = new Utils::ParameterAction(tr("Project Status"), tr("Status Project \"%1\""), Utils::ParameterAction::AlwaysEnabled, this);
     command = actionManager->registerAction(m_statusProjectAction, "Git.StatusProject", globalcontext);
     command->setAttribute(Core::Command::CA_UpdateText);
     connect(m_statusProjectAction, SIGNAL(triggered()), this, SLOT(statusProject()));
     gitContainer->addAction(command);
 
-    m_logProjectAction = new Core::Utils::ParameterAction(tr("Log Project"), tr("Log Project \"%1\""), Core::Utils::ParameterAction::AlwaysEnabled, this);
+    m_logProjectAction = new Utils::ParameterAction(tr("Log Project"), tr("Log Project \"%1\""), Utils::ParameterAction::AlwaysEnabled, this);
     command = actionManager->registerAction(m_logProjectAction, "Git.LogProject", globalcontext);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+G,Alt+K")));
-#endif
     command->setAttribute(Core::Command::CA_UpdateText);
     connect(m_logProjectAction, SIGNAL(triggered()), this, SLOT(logProject()));
     gitContainer->addAction(command);
@@ -354,9 +339,7 @@ bool GitPlugin::initialize(const QStringList &arguments, QString *errorMessage)
 
     m_commitAction = new QAction(tr("Commit..."), this);
     command = actionManager->registerAction(m_commitAction, "Git.Commit", globalcontext);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+G,Alt+C")));
-#endif
     command->setAttribute(Core::Command::CA_UpdateText);
     connect(m_commitAction, SIGNAL(triggered()), this, SLOT(startCommit()));
     gitContainer->addAction(command);
@@ -414,7 +397,11 @@ bool GitPlugin::initialize(const QStringList &arguments, QString *errorMessage)
 
 void GitPlugin::extensionsInitialized()
 {
-    m_projectExplorer = ProjectExplorer::ProjectExplorerPlugin::instance();
+}
+
+GitVersionControl *GitPlugin::versionControl() const
+{
+    return m_versionControl;
 }
 
 void GitPlugin::submitEditorDiff(const QStringList &unstaged, const QStringList &staged)
@@ -440,29 +427,31 @@ void GitPlugin::diffCurrentProject()
 
 QFileInfo GitPlugin::currentFile() const
 {
-    QString fileName = m_core->fileManager()->currentFile();
-    QFileInfo fileInfo(fileName);
-    return fileInfo;
+    return QFileInfo(m_core->fileManager()->currentFile());
 }
 
 QString GitPlugin::getWorkingDirectory()
 {
     QString workingDirectory;
-    if (m_projectExplorer && m_projectExplorer->currentNode()) {
-        workingDirectory = QFileInfo(m_projectExplorer->currentNode()->path()).absolutePath();
+    if (const ProjectExplorer::ProjectExplorerPlugin *p = ProjectExplorer::ProjectExplorerPlugin::instance()) {
+        if (p && p->currentNode()) {
+            const QString currentPath = p->currentNode()->path();
+            if (!currentPath.isEmpty())
+                workingDirectory = QFileInfo(currentPath).absolutePath();
+        }
     }
+
     if (Git::Constants::debug > 1)
         qDebug() << Q_FUNC_INFO << "Project" << workingDirectory;
 
-    if (workingDirectory.isEmpty())
-        workingDirectory = QFileInfo(m_core->fileManager()->currentFile()).absolutePath();
+    if (workingDirectory.isEmpty()) {
+        const QString currentFileName = m_core->fileManager()->currentFile();
+        if (!currentFileName.isEmpty())
+            workingDirectory = QFileInfo(currentFileName).absolutePath();
+    }
     if (Git::Constants::debug > 1)
         qDebug() << Q_FUNC_INFO << "file" << workingDirectory;
 
-    if (workingDirectory.isEmpty()) {
-        VCSBase::VCSBaseOutputWindow::instance()->appendError(tr("Could not find working directory"));
-        return QString();
-    }
     return workingDirectory;
 }
 
@@ -492,7 +481,9 @@ void GitPlugin::blameFile()
     const QFileInfo fileInfo = currentFile();
     const QString fileName = fileInfo.fileName();
     const QString workingDirectory = fileInfo.absolutePath();
-    m_gitClient->blame(workingDirectory, fileName);
+
+    m_gitClient->blame(workingDirectory, fileName,
+                       VCSBase::VCSBaseEditor::lineNumberOfCurrentEditor(fileInfo.absoluteFilePath()));
 }
 
 void GitPlugin::logProject()
@@ -505,23 +496,25 @@ void GitPlugin::logProject()
 
 void GitPlugin::undoFileChanges()
 {
-    QFileInfo fileInfo = currentFile();
-    QString fileName = fileInfo.fileName();
-    QString workingDirectory = fileInfo.absolutePath();
-
+    const QFileInfo fileInfo = currentFile();
     Core::FileChangeBlocker fcb(fileInfo.filePath());
     fcb.setModifiedReload(true);
 
-    QString errorMessage;
-    if (!m_gitClient->synchronousCheckout(workingDirectory, QStringList() << fileName, &errorMessage))
-        VCSBase::VCSBaseOutputWindow::instance()->append(errorMessage);
-
+    m_gitClient->revert(QStringList(fileInfo.absoluteFilePath()));
 }
 
 void GitPlugin::undoProjectChanges()
 {
-    QString workingDirectory = getWorkingDirectory();
+    const QString workingDirectory = getWorkingDirectory();
     if (workingDirectory.isEmpty())
+        return;
+    const QMessageBox::StandardButton answer
+            = QMessageBox::question(m_core->mainWindow(),
+                                    tr("Revert"),
+                                    tr("Would you like to revert all pending changes to the project?"),
+                                    QMessageBox::Yes|QMessageBox::No,
+                                    QMessageBox::No);
+    if (answer == QMessageBox::No)
         return;
     m_gitClient->hardReset(workingDirectory, QString());
 }
@@ -542,20 +535,11 @@ void GitPlugin::unstageFile()
     m_gitClient->synchronousReset(workingDirectory, QStringList(fileName));
 }
 
-void GitPlugin::revertFile()
-{
-    const QFileInfo fileInfo = currentFile();
-    Core::FileChangeBlocker fcb(fileInfo.filePath());
-    fcb.setModifiedReload(true);
-
-    m_gitClient->revert(QStringList(fileInfo.absoluteFilePath()));
-}
-
 void GitPlugin::startCommit()
 {
     if (VCSBase::VCSBaseSubmitEditor::raiseSubmitEditor())
         return;
-    if (m_changeTmpFile) {
+    if (isCommitEditorOpen()) {
         VCSBase::VCSBaseOutputWindow::instance()->appendWarning(tr("Another submit is currently being executed."));
         return;
     }
@@ -583,20 +567,19 @@ void GitPlugin::startCommit()
         qDebug() << Q_FUNC_INFO << data << commitTemplate;
 
     // Start new temp file with message template
-    QTemporaryFile *changeTmpFile = new QTemporaryFile(this);
-    changeTmpFile->setAutoRemove(true);
-    if (!changeTmpFile->open()) {
-        VCSBase::VCSBaseOutputWindow::instance()->append(tr("Cannot create temporary file: %1").arg(changeTmpFile->errorString()));
-        delete changeTmpFile;
+    QTemporaryFile changeTmpFile;
+    changeTmpFile.setAutoRemove(false);
+    if (!changeTmpFile.open()) {
+        VCSBase::VCSBaseOutputWindow::instance()->append(tr("Cannot create temporary file: %1").arg(changeTmpFile.errorString()));
         return;
     }
-    m_changeTmpFile = changeTmpFile;
-    m_changeTmpFile->write(commitTemplate.toLocal8Bit());
-    m_changeTmpFile->flush();    
+    m_commitMessageFileName = changeTmpFile.fileName();
+    changeTmpFile.write(commitTemplate.toLocal8Bit());
+    changeTmpFile.flush();
     // Keep the file alive, else it removes self and forgets
     // its name
-    m_changeTmpFile->close();
-    openSubmitEditor(m_changeTmpFile->fileName(), data);
+    changeTmpFile.close();
+    openSubmitEditor(m_commitMessageFileName, data);
 }
 
 Core::IEditor *GitPlugin::openSubmitEditor(const QString &fileName, const CommitData &cd)
@@ -627,7 +610,7 @@ void GitPlugin::submitCurrentLog()
 bool GitPlugin::editorAboutToClose(Core::IEditor *iEditor)
 {
     // Closing a submit editor?
-    if (!m_changeTmpFile || !iEditor || qstrcmp(iEditor->kind(), Constants::GITSUBMITEDITOR_KIND))
+    if (!iEditor || !isCommitEditorOpen() || qstrcmp(iEditor->kind(), Constants::GITSUBMITEDITOR_KIND))
         return true;
     Core::IFile *fileIFace = iEditor->file();
     const GitSubmitEditor *editor = qobject_cast<GitSubmitEditor *>(iEditor);
@@ -636,7 +619,7 @@ bool GitPlugin::editorAboutToClose(Core::IEditor *iEditor)
     // Submit editor closing. Make it write out the commit message
     // and retrieve files
     const QFileInfo editorFile(fileIFace->fileName());
-    const QFileInfo changeFile(m_changeTmpFile->fileName());
+    const QFileInfo changeFile(m_commitMessageFileName);
     // Paranoia!
     if (editorFile.absoluteFilePath() != changeFile.absoluteFilePath())
         return true;
@@ -649,12 +632,12 @@ bool GitPlugin::editorAboutToClose(Core::IEditor *iEditor)
                                  tr("Do you want to commit the change?"),
                                  tr("The commit message check failed. Do you want to commit the change?"),
                                  &settings.promptToSubmit, !m_submitActionTriggered);
-    m_submitActionTriggered = false;    
+    m_submitActionTriggered = false;
     switch (answer) {
     case VCSBase::VCSBaseSubmitEditor::SubmitCanceled:
         return false; // Keep editing and change file
     case VCSBase::VCSBaseSubmitEditor::SubmitDiscarded:
-        cleanChangeTmpFile();
+        cleanCommitMessageFile();
         return true; // Cancel all
     default:
         break;
@@ -674,13 +657,13 @@ bool GitPlugin::editorAboutToClose(Core::IEditor *iEditor)
 
         closeEditor = m_gitClient->addAndCommit(m_submitRepository,
                                                 editor->panelData(),
-                                                m_changeTmpFile->fileName(),
+                                                m_commitMessageFileName,
                                                 fileList,
                                                 m_submitOrigCommitFiles,
                                                 m_submitOrigDeleteFiles);
     }
     if (closeEditor)
-        cleanChangeTmpFile();
+        cleanCommitMessageFile();
     return closeEditor;
 }
 
@@ -758,7 +741,6 @@ void GitPlugin::updateActions()
     m_undoFileAction->setParameter(fileName);
     m_stageAction->setParameter(fileName);
     m_unstageAction->setParameter(fileName);
-    m_revertAction->setParameter(fileName);
 
     bool enabled = !fileName.isEmpty() && !repository.isEmpty();
     m_diffAction->setEnabled(enabled);
@@ -768,7 +750,6 @@ void GitPlugin::updateActions()
     m_undoFileAction->setEnabled(enabled);
     m_stageAction->setEnabled(enabled);
     m_unstageAction->setEnabled(enabled);
-    m_revertAction->setEnabled(enabled);
 
     if (repository.isEmpty()) {
         // If the file is not in a repository, the corresponding project will
@@ -779,16 +760,16 @@ void GitPlugin::updateActions()
         m_statusProjectAction->setEnabled(false);
         m_logProjectAction->setParameter(repository);
         m_logProjectAction->setEnabled(false);
+        m_undoProjectAction->setEnabled(false);
         return;
     }
 
     // We only know the file is in some repository, we do not know
     // anything about any project so far.
-    using namespace ProjectExplorer;
     QString project;
-    if (m_projectExplorer) {
-        if (const Node *node = m_projectExplorer->currentNode())
-            if (const Node *projectNode = node->projectNode())
+    if (const ProjectExplorer::ProjectExplorerPlugin *p = ProjectExplorer::ProjectExplorerPlugin::instance()) {
+        if (const ProjectExplorer::Node *node = p->currentNode())
+            if (const ProjectExplorer::Node *projectNode = node->projectNode())
                 project = QFileInfo(projectNode->path()).completeBaseName();
     }
 
@@ -799,6 +780,7 @@ void GitPlugin::updateActions()
     m_statusProjectAction->setParameter(project);
     m_logProjectAction->setEnabled(enabled);
     m_logProjectAction->setParameter(project);
+    m_undoProjectAction->setEnabled(enabled);
 }
 
 void GitPlugin::showCommit()

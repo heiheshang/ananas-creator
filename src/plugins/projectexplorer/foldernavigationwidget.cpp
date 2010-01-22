@@ -139,7 +139,7 @@ void FolderNavigationWidget::setCurrentFile(const QString &filePath)
 
     QString dir = QFileInfo(filePath).path();
     if (dir.isEmpty())
-        dir = Core::Utils::PathChooser::homePath();
+        dir = Utils::PathChooser::homePath();
 
     QModelIndex dirIndex = m_dirModel->index(dir);
     QModelIndex fileIndex = m_dirModel->index(filePath);
@@ -210,7 +210,7 @@ Core::NavigationView FolderNavigationWidgetFactory::createWidget()
     toggleSync->setChecked(ptw->autoSynchronization());
     toggleSync->setToolTip(tr("Synchronize with Editor"));
     connect(toggleSync, SIGNAL(clicked(bool)), ptw, SLOT(toggleAutoSynchronization()));
-    n.doockToolBarWidgets << toggleSync;
+    n.dockToolBarWidgets << toggleSync;
     return n;
 }
 

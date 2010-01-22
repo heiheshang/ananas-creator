@@ -44,14 +44,13 @@
 #include <QtGui/QToolButton>
 #include <QtGui/QPushButton>
 
-/*static*/ const char * const Core::Utils::PathChooser::browseButtonLabel =
+/*static*/ const char * const Utils::PathChooser::browseButtonLabel =
 #ifdef Q_WS_MAC
-                   QT_TRANSLATE_NOOP("Core::Utils::PathChooser", "Choose...");
+                   QT_TRANSLATE_NOOP("Utils::PathChooser", "Choose...");
 #else
-                   QT_TRANSLATE_NOOP("Core::Utils::PathChooser", "Browse...");
+                   QT_TRANSLATE_NOOP("Utils::PathChooser", "Browse...");
 #endif
 
-namespace Core {
 namespace Utils {
 
 // ------------------ PathValidatingLineEdit
@@ -109,6 +108,7 @@ PathChooser::PathChooser(QWidget *parent) :
     connect(m_d->m_lineEdit, SIGNAL(validReturnPressed()), this, SIGNAL(returnPressed()));
     connect(m_d->m_lineEdit, SIGNAL(textChanged(QString)), this, SIGNAL(changed(QString)));
     connect(m_d->m_lineEdit, SIGNAL(validChanged()), this, SIGNAL(validChanged()));
+    connect(m_d->m_lineEdit, SIGNAL(validChanged(bool)), this, SIGNAL(validChanged(bool)));
     connect(m_d->m_lineEdit, SIGNAL(editingFinished()), this, SIGNAL(editingFinished()));
 
     m_d->m_lineEdit->setMinimumWidth(200);
@@ -324,4 +324,3 @@ QString PathChooser::makeDialogTitle(const QString &title)
 }
 
 } // namespace Utils
-} // namespace Core

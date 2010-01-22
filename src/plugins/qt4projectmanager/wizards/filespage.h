@@ -36,11 +36,9 @@ QT_BEGIN_NAMESPACE
 class QLabel;
 QT_END_NAMESPACE
 
-namespace Core {
 namespace Utils {
 class NewClassWidget;
 } // namespace Utils
-} // namespace Core
 
 namespace Qt4ProjectManager {
 namespace Internal {
@@ -68,7 +66,8 @@ public:
     bool formInputCheckable() const;
     bool formInputChecked() const;
     QStringList baseClassChoices() const;
-    bool lowerCaseFiles() const;
+    bool lowerCaseFiles() const;    
+    bool isClassTypeComboVisible() const;
 
     void setSuffixes(const QString &header, const QString &source,  const QString &form = QString());
 
@@ -81,9 +80,10 @@ public slots:
     void setFormInputCheckable(bool checkable);
     void setFormInputChecked(bool checked);
     void setLowerCaseFiles(bool l);
+    void setClassTypeComboVisible(bool v);
 
 private:
-    Core::Utils::NewClassWidget *m_newClassWidget;
+    Utils::NewClassWidget *m_newClassWidget;
     QLabel *m_errorLabel;
 };
 

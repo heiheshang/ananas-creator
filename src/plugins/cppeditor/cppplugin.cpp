@@ -43,6 +43,7 @@
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/editormanager/editormanager.h>
+#include <coreplugin/progressmanager/progressmanager.h>
 #include <texteditor/completionsupport.h>
 #include <texteditor/fontsettings.h>
 #include <texteditor/storagesettings.h>
@@ -51,11 +52,11 @@
 #include <texteditor/texteditorsettings.h>
 #include <texteditor/texteditorconstants.h>
 #include <cpptools/cpptoolsconstants.h>
+#include <cpptools/cppmodelmanagerinterface.h>
 
 #include <QtCore/QFileInfo>
 #include <QtCore/QSettings>
 #include <QtGui/QMenu>
-#include <QtGui/QAction>
 
 using namespace CppEditor::Internal;
 
@@ -97,7 +98,6 @@ Core::IEditor *CppEditorFactory::createEditor(QWidget *parent)
 {
     CPPEditor *editor = new CPPEditor(parent);
     editor->setRevisionsVisible(true);
-    editor->setMimeType(CppEditor::Constants::CPP_SOURCE_MIMETYPE);
     m_owner->initializeEditor(editor);
     return editor->editableInterface();
 }
@@ -109,11 +109,26 @@ QStringList CppEditorFactory::mimeTypes() const
 
 ///////////////////////////////// CppPlugin //////////////////////////////////
 
+static inline
+        Core::Command *createSeparator(Core::ActionManager *am,
+                                       QObject *parent,
+                                       const QList<int> &context,
+                                       const char *id)
+{
+    QAction *separator = new QAction(parent);
+    separator->setSeparator(true);
+    return am->registerAction(separator, QLatin1String(id), context);
+}
+
 CppPlugin *CppPlugin::m_instance = 0;
 
 CppPlugin::CppPlugin() :
     m_actionHandler(0),
-    m_sortedMethodOverview(false)
+    m_sortedMethodOverview(false),
+    m_renameSymbolUnderCursorAction(0),
+    m_findUsagesAction(0),
+    m_updateCodeModelAction(0)
+
 {
     m_instance = this;
 }
@@ -190,9 +205,10 @@ bool CppPlugin::initialize(const QStringList & /*arguments*/, QString *errorMess
     context << core->uniqueIDManager()->uniqueIdentifier(CppEditor::Constants::C_CPPEDITOR);
 
     Core::ActionManager *am = core->actionManager();
-    am->createMenu(CppEditor::Constants::M_CONTEXT);
+    Core::ActionContainer *contextMenu= am->createMenu(CppEditor::Constants::M_CONTEXT);
 
     Core::Command *cmd;
+    Core::ActionContainer *cppToolsMenu = am->actionContainer(QLatin1String(CppTools::Constants::M_TOOLS_CPP));
 
     QAction *jumpToDefinition = new QAction(tr("Follow Symbol under Cursor"), this);
     cmd = am->registerAction(jumpToDefinition,
@@ -200,8 +216,8 @@ bool CppPlugin::initialize(const QStringList & /*arguments*/, QString *errorMess
     cmd->setDefaultKeySequence(QKeySequence(Qt::Key_F2));
     connect(jumpToDefinition, SIGNAL(triggered()),
             this, SLOT(jumpToDefinition()));
-    am->actionContainer(CppEditor::Constants::M_CONTEXT)->addAction(cmd);
-    am->actionContainer(CppTools::Constants::M_TOOLS_CPP)->addAction(cmd);
+    contextMenu->addAction(cmd);
+    cppToolsMenu->addAction(cmd);
 
     QAction *switchDeclarationDefinition = new QAction(tr("Switch between Method Declaration/Definition"), this);
     cmd = am->registerAction(switchDeclarationDefinition,
@@ -209,16 +225,33 @@ bool CppPlugin::initialize(const QStringList & /*arguments*/, QString *errorMess
     cmd->setDefaultKeySequence(QKeySequence("Shift+F2"));
     connect(switchDeclarationDefinition, SIGNAL(triggered()),
             this, SLOT(switchDeclarationDefinition()));
-    am->actionContainer(CppEditor::Constants::M_CONTEXT)->addAction(cmd);
-    am->actionContainer(CppTools::Constants::M_TOOLS_CPP)->addAction(cmd);
+    contextMenu->addAction(cmd);
+    cppToolsMenu->addAction(cmd);
 
-    QAction *renameSymbolUnderCursorAction = new QAction(tr("Rename Symbol under Cursor"), this);
-    cmd = am->registerAction(renameSymbolUnderCursorAction,
+    m_findUsagesAction = new QAction(tr("Find Usages"), this);
+    cmd = am->registerAction(m_findUsagesAction, Constants::FIND_USAGES, context);
+    cmd->setDefaultKeySequence(QKeySequence(tr("Ctrl+Shift+U")));
+    connect(m_findUsagesAction, SIGNAL(triggered()), this, SLOT(findUsages()));
+    contextMenu->addAction(cmd);
+    cppToolsMenu->addAction(cmd);
+
+    m_renameSymbolUnderCursorAction = new QAction(tr("Rename Symbol under Cursor"), this);
+    cmd = am->registerAction(m_renameSymbolUnderCursorAction,
         Constants::RENAME_SYMBOL_UNDER_CURSOR, context);
     cmd->setDefaultKeySequence(QKeySequence("CTRL+SHIFT+R"));
-    connect(renameSymbolUnderCursorAction, SIGNAL(triggered()), this, SLOT(renameSymbolUnderCursor()));
-    am->actionContainer(CppEditor::Constants::M_CONTEXT)->addAction(cmd);
-    am->actionContainer(CppTools::Constants::M_TOOLS_CPP)->addAction(cmd);
+    connect(m_renameSymbolUnderCursorAction, SIGNAL(triggered()), this, SLOT(renameSymbolUnderCursor()));
+    contextMenu->addAction(cmd);
+    cppToolsMenu->addAction(cmd);
+
+    // Update context in global context
+    QList<int> globalContext;
+    globalContext.append(Core::Constants::C_GLOBAL_ID);
+    cppToolsMenu->addAction(createSeparator(am, this, globalContext, CppEditor::Constants::SEPARATOR2));
+    m_updateCodeModelAction = new QAction(tr("Update code model"), this);
+    cmd = am->registerAction(m_updateCodeModelAction, QLatin1String(Constants::UPDATE_CODEMODEL), globalContext);
+    CppTools::CppModelManagerInterface *cppModelManager = CppTools::CppModelManagerInterface::instance();
+    connect(m_updateCodeModelAction, SIGNAL(triggered()), cppModelManager, SLOT(updateModifiedSourceFiles()));
+    cppToolsMenu->addAction(cmd);
 
     m_actionHandler = new TextEditor::TextEditorActionHandler(CppEditor::Constants::C_CPPEDITOR,
         TextEditor::TextEditorActionHandler::Format
@@ -226,14 +259,19 @@ bool CppPlugin::initialize(const QStringList & /*arguments*/, QString *errorMess
         | TextEditor::TextEditorActionHandler::UnCollapseAll);
 
     m_actionHandler->initializeActions();
+    
+    contextMenu->addAction(createSeparator(am, this, context, CppEditor::Constants::SEPARATOR));
 
     cmd = am->command(TextEditor::Constants::AUTO_INDENT_SELECTION);
-    am->actionContainer(CppEditor::Constants::M_CONTEXT)->addAction(cmd);
+    contextMenu->addAction(cmd);
 
     cmd = am->command(TextEditor::Constants::UN_COMMENT_SELECTION);
-    am->actionContainer(CppEditor::Constants::M_CONTEXT)->addAction(cmd);
+    contextMenu->addAction(cmd);
 
-
+    connect(core->progressManager(), SIGNAL(taskStarted(QString)),
+            this, SLOT(onTaskStarted(QString)));
+    connect(core->progressManager(), SIGNAL(allTasksFinished(QString)),
+            this, SLOT(onAllTasksFinished(QString)));
     readSettings();
     return true;
 }
@@ -279,6 +317,32 @@ void CppPlugin::renameSymbolUnderCursor()
     CPPEditor *editor = qobject_cast<CPPEditor*>(em->currentEditor()->widget());
     if (editor)
         editor->renameSymbolUnderCursor();
+}
+
+void CppPlugin::findUsages()
+{
+    Core::EditorManager *em = Core::EditorManager::instance();
+    CPPEditor *editor = qobject_cast<CPPEditor*>(em->currentEditor()->widget());
+    if (editor)
+        editor->findUsages();
+}
+
+void CppPlugin::onTaskStarted(const QString &type)
+{
+    if (type == CppTools::Constants::TASK_INDEX) {
+        m_renameSymbolUnderCursorAction->setEnabled(false);
+        m_findUsagesAction->setEnabled(false);
+        m_updateCodeModelAction->setEnabled(false);
+    }
+}
+
+void CppPlugin::onAllTasksFinished(const QString &type)
+{
+    if (type == CppTools::Constants::TASK_INDEX) {
+        m_renameSymbolUnderCursorAction->setEnabled(true);
+        m_findUsagesAction->setEnabled(true);
+        m_updateCodeModelAction->setEnabled(true);
+    }
 }
 
 Q_EXPORT_PLUGIN(CppPlugin)

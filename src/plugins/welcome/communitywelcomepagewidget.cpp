@@ -32,11 +32,12 @@
 
 #include "rssfetcher.h"
 
+#include <QtCore/QMap>
 #include <QtGui/QDesktopServices>
+#include <QtGui/QTreeWidgetItem>
 
 namespace Welcome {
 namespace Internal {
-
 CommunityWelcomePageWidget::CommunityWelcomePageWidget(QWidget *parent) :
     QWidget(parent),
     m_rssFetcher(new RSSFetcher(7)),
@@ -54,12 +55,22 @@ CommunityWelcomePageWidget::CommunityWelcomePageWidget(QWidget *parent) :
     //: Add localized feed here only if one exists
     m_rssFetcher->fetch(QUrl(tr("http://labs.trolltech.com/blogs/feed")));
 
-    ui->sitesTreeWidget->addItem(tr("Qt Home"), QLatin1String("http://qt.nokia.com"));
-    ui->sitesTreeWidget->addItem(tr("Qt Labs"), QLatin1String("http://labs.trolltech.com"));
-    ui->sitesTreeWidget->addItem(tr("Qt Git Hosting"), QLatin1String("http://qt.gitorious.org"));
-    ui->sitesTreeWidget->addItem(tr("Qt Centre"), QLatin1String("http://www.qtcentre.org"));
-    ui->sitesTreeWidget->addItem(tr("Qt for S60 at Forum Nokia"), QLatin1String("http://discussion.forum.nokia.com/forum/forumdisplay.php?f=196"));
+    QList<QPair<QString, QString> > sites;
+    sites << qMakePair(tr("Qt Home"), QString(QLatin1String("http://qt.nokia.com")));
+    sites << qMakePair(tr("Qt Labs"), QString(QLatin1String("http://labs.qt.nokia.com")));
+    sites << qMakePair(tr("Qt Git Hosting"), QString(QLatin1String("http://qt.gitorious.org")));
+    sites << qMakePair(tr("Qt Centre"), QString(QLatin1String("http://www.qtcentre.org")));
+    sites << qMakePair(tr("Qt Apps"), QString(QLatin1String("http://www.qt-apps.org")));
+    sites << qMakePair(tr("Qt for Symbian at Forum Nokia"),  QString(QLatin1String("http://discussion.forum.nokia.com/forum/forumdisplay.php?f=196")));
+
+    QListIterator<QPair<QString, QString> > it(sites);
+    while (it.hasNext()) {
+        QPair<QString, QString> pair = it.next();
+        ui->sitesTreeWidget->addItem(pair.first, pair.second, pair.second);
+    }
+
 }
+
 
 CommunityWelcomePageWidget::~CommunityWelcomePageWidget()
 {

@@ -3,6 +3,10 @@
 
 #include <QMainWindow>
 #include "ananasprojectmanager/libananas/acfg.h"
+#include <extensionsystem/iplugin.h>
+#include <coreplugin/editormanager/ieditorfactory.h>
+#include <coreplugin/ifile.h>
+#include <texteditor/basetexteditor.h>
 #include "ui_fieldeditor.h"
 
 namespace Core {

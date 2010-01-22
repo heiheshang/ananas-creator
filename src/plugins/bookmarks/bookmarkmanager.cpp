@@ -37,6 +37,7 @@
 #include <coreplugin/icore.h>
 #include <coreplugin/uniqueidmanager.h>
 #include <projectexplorer/projectexplorer.h>
+#include <projectexplorer/session.h>
 #include <texteditor/basetexteditor.h>
 #include <utils/qtcassert.h>
 
@@ -278,7 +279,10 @@ void BookmarkView::setModel(QAbstractItemModel *model)
 
 void BookmarkView::gotoBookmark(const QModelIndex &index)
 {
-    static_cast<BookmarkManager *>(model())->gotoBookmark(index);
+    BookmarkManager *bm = static_cast<BookmarkManager *>(model());
+    Bookmark *bk = bm->bookmarkForIndex(index);
+    if (!bm->gotoBookmark(bk))
+        bm->removeBookmark(bk);
 }
 
 ////
@@ -478,15 +482,13 @@ Bookmark *BookmarkManager::bookmarkForIndex(QModelIndex index)
     return m_bookmarksList.at(index.row());
 }
 
-void BookmarkManager::gotoBookmark(const QModelIndex &idx)
-{
-    gotoBookmark(m_bookmarksList.at(idx.row()));
-}
 
-void BookmarkManager::gotoBookmark(Bookmark* bookmark)
+bool BookmarkManager::gotoBookmark(Bookmark* bookmark)
 {
-    TextEditor::BaseTextEditor::openEditorAt(bookmark->filePath(),
-                                             bookmark->lineNumber());
+    using namespace TextEditor;
+    if (ITextEditor *editor = BaseTextEditor::openEditorAt(bookmark->filePath(), bookmark->lineNumber()))
+        return (editor->currentLine() == bookmark->lineNumber());
+    return false;
 }
 
 void BookmarkManager::nextInDocument()
@@ -545,12 +547,22 @@ void BookmarkManager::next()
     QModelIndex current = selectionModel()->currentIndex();
     if (!current.isValid())
         return;
-    int row = current.row() + 1;
-    if (row == m_bookmarksList.size())
-        row = 0;
-    QModelIndex newIndex = current.sibling(row, current.column());
-    selectionModel()->setCurrentIndex(newIndex, QItemSelectionModel::Select | QItemSelectionModel::Clear);
-    gotoBookmark(newIndex);
+    int row = current.row();
+    ++row;
+    while (true) {
+        if (row == m_bookmarksList.size())
+            row = 0;
+
+        Bookmark *bk = m_bookmarksList.at(row);
+        if (gotoBookmark(bk)) {
+            QModelIndex newIndex = current.sibling(row, current.column());
+            selectionModel()->setCurrentIndex(newIndex, QItemSelectionModel::Select | QItemSelectionModel::Clear);
+            return;
+        }
+        removeBookmark(bk);
+        if (m_bookmarksList.isEmpty()) // No bookmarks anymore ...
+            return;
+    }
 }
 
 void BookmarkManager::prev()
@@ -558,13 +570,22 @@ void BookmarkManager::prev()
     QModelIndex current = selectionModel()->currentIndex();
     if (!current.isValid())
         return;
+
     int row = current.row();
-    if (row == 0)
-        row = m_bookmarksList.size();
-     --row;
-    QModelIndex newIndex = current.sibling(row, current.column());
-    selectionModel()->setCurrentIndex(newIndex, QItemSelectionModel::Select | QItemSelectionModel::Clear);
-    gotoBookmark(newIndex);
+    while (true) {
+        if (row == 0)
+            row = m_bookmarksList.size();
+        --row;
+        Bookmark *bk = m_bookmarksList.at(row);
+        if (gotoBookmark(bk)) {
+            QModelIndex newIndex = current.sibling(row, current.column());
+            selectionModel()->setCurrentIndex(newIndex, QItemSelectionModel::Select | QItemSelectionModel::Clear);
+            return;
+        }
+        removeBookmark(bk);
+        if (m_bookmarksList.isEmpty())
+            return;
+    }
 }
 
 TextEditor::ITextEditor *BookmarkManager::currentTextEditor() const

@@ -29,6 +29,7 @@
 
 #include "breakhandler.h"
 
+#include "debuggeractions.h"
 #include "debuggermanager.h"
 #include "stackframe.h"
 
@@ -47,6 +48,18 @@ using namespace Debugger::Internal;
 // BreakpointMarker
 //
 //////////////////////////////////////////////////////////////////
+
+// Compare file names case insensitively on Windows.
+static inline bool fileNameMatch(const QString &f1, const QString &f2)
+{
+    return f1.compare(f2,
+#ifdef Q_OS_WIN
+                      Qt::CaseInsensitive
+#else
+                      Qt::CaseSensitive
+#endif
+                      ) == 0;
+}
 
 namespace Debugger {
 namespace Internal {
@@ -196,20 +209,30 @@ QString BreakpointData::toToolTip() const
     QString rc;
     QTextStream str(&rc);
     str << "<html><body><table>";
-    str << "<tr><td>" << BreakHandler::tr("Marker File:") << "</td><td>" << markerFileName << "</td></tr>";
-    str << "<tr><td>" << BreakHandler::tr("Marker Line:") << "</td><td>" << markerLineNumber << "</td></tr>";
-    str << "<tr><td>" << BreakHandler::tr("Breakpoint Number:") << "</td><td>" << bpNumber << "</td></tr>";
-    str << "<tr><td>" << BreakHandler::tr("Breakpoint Address:") << "</td><td>" << bpAddress << "</td></tr>";
+    str << "<tr><td>" << BreakHandler::tr("Marker File:")
+        << "</td><td>" << markerFileName << "</td></tr>";
+    str << "<tr><td>" << BreakHandler::tr("Marker Line:")
+        << "</td><td>" << markerLineNumber << "</td></tr>";
+    str << "<tr><td>" << BreakHandler::tr("Breakpoint Number:")
+        << "</td><td>" << bpNumber << "</td></tr>";
+    str << "<tr><td>" << BreakHandler::tr("Breakpoint Address:")
+        << "</td><td>" << bpAddress << "</td></tr>";
     str << "</table><br><hr><table>";
     str << "<tr><th>" << BreakHandler::tr("Property")
         << "</th><th>" << BreakHandler::tr("Requested")
         << "</th><th>" << BreakHandler::tr("Obtained") << "</th></tr>";
-    str << "<tr><td>" << BreakHandler::tr("Internal Number:") << "</td><td>&mdash;</td><td>" << bpNumber << "</td></tr>";
-    str << "<tr><td>" << BreakHandler::tr("File Name:") << "</td><td>" << fileName << "</td><td>" << bpFileName << "</td></tr>";
-    str << "<tr><td>" << BreakHandler::tr("Function Name:") << "</td><td>" << funcName << "</td><td>" << bpFuncName << "</td></tr>";
-    str << "<tr><td>" << BreakHandler::tr("Line Number:") << "</td><td>" << lineNumber << "</td><td>" << bpLineNumber << "</td></tr>";
-    str << "<tr><td>" << BreakHandler::tr("Condition:") << "</td><td>" << condition << "</td><td>" << bpCondition << "</td></tr>";
-    str << "<tr><td>" << BreakHandler::tr("Ignore Count:") << "</td><td>" << ignoreCount << "</td><td>" << bpIgnoreCount << "</td></tr>";
+    str << "<tr><td>" << BreakHandler::tr("Internal Number:")
+        << "</td><td>&mdash;</td><td>" << bpNumber << "</td></tr>";
+    str << "<tr><td>" << BreakHandler::tr("File Name:")
+        << "</td><td>" << fileName << "</td><td>" << bpFileName << "</td></tr>";
+    str << "<tr><td>" << BreakHandler::tr("Function Name:")
+        << "</td><td>" << funcName << "</td><td>" << bpFuncName << "</td></tr>";
+    str << "<tr><td>" << BreakHandler::tr("Line Number:")
+        << "</td><td>" << lineNumber << "</td><td>" << bpLineNumber << "</td></tr>";
+    str << "<tr><td>" << BreakHandler::tr("Condition:")
+        << "</td><td>" << condition << "</td><td>" << bpCondition << "</td></tr>";
+    str << "<tr><td>" << BreakHandler::tr("Ignore Count:")
+        << "</td><td>" << ignoreCount << "</td><td>" << bpIgnoreCount << "</td></tr>";
     str << "</table></body></html>";
     return rc;
 }
@@ -225,7 +248,7 @@ bool BreakpointData::isLocatedAt(const QString &fileName_, int lineNumber_) cons
         return true;
     return false;
     */
-    return lineNumber_ == markerLineNumber && fileName_ == markerFileName;
+    return lineNumber_ == markerLineNumber && fileNameMatch(fileName_, markerFileName);
 }
 
 bool BreakpointData::conditionsMatch() const
@@ -246,9 +269,8 @@ bool BreakpointData::conditionsMatch() const
 //////////////////////////////////////////////////////////////////
 
 BreakHandler::BreakHandler(DebuggerManager *manager, QObject *parent)
-    : QAbstractItemModel(parent), m_manager(manager)
-{
-}
+    : QAbstractTableModel(parent), m_manager(manager)
+{}
 
 BreakHandler::~BreakHandler()
 {
@@ -257,7 +279,7 @@ BreakHandler::~BreakHandler()
 
 int BreakHandler::columnCount(const QModelIndex &parent) const
 {
-    return parent.isValid() ? 0 : 6;
+    return parent.isValid() ? 0 : 7;
 }
 
 int BreakHandler::rowCount(const QModelIndex &parent) const
@@ -300,7 +322,7 @@ int BreakHandler::findBreakpoint(const BreakpointData &needle)
             return index;
         // at least at a position we were looking for
         // FIXME: breaks multiple breakpoints at the same location
-        if (data->fileName == needle.bpFileName
+        if (fileNameMatch(data->fileName, needle.bpFileName)
                 && data->lineNumber == needle.bpLineNumber)
             return index;
     }
@@ -425,7 +447,7 @@ QVariant BreakHandler::headerData(int section,
     if (orientation == Qt::Horizontal && role == Qt::DisplayRole) {
         static QString headers[] = {
             tr("Number"),  tr("Function"), tr("File"), tr("Line"),
-            tr("Condition"), tr("Ignore")
+            tr("Condition"), tr("Ignore"), tr("Address")
         };
         return headers[section];
     }
@@ -494,10 +516,14 @@ QVariant BreakHandler::data(const QModelIndex &mi, int role) const
                 return data->pending ? data->ignoreCount : data->bpIgnoreCount;
             if (role == Qt::ToolTipRole)
                 return tr("Breakpoint will only be hit after being ignored so many times.");
+        case 6:
+            if (role == Qt::DisplayRole)
+                return data->bpAddress;
             break;
     }
     if (role == Qt::ToolTipRole)
-        return data->toToolTip();
+        return theDebuggerBoolSetting(UseToolTipsInBreakpointsView)
+                ? data->toToolTip() : QVariant();
     return QVariant();
 }
 
@@ -507,7 +533,7 @@ Qt::ItemFlags BreakHandler::flags(const QModelIndex &mi) const
         //case 0:
         //    return Qt::ItemIsUserCheckable | Qt::ItemIsEnabled;
         default:
-            return  QAbstractItemModel::flags(mi);
+            return QAbstractTableModel::flags(mi);
     }
 }
 

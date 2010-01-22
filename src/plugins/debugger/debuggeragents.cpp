@@ -28,6 +28,7 @@
 **************************************************************************/
 
 #include "debuggeragents.h"
+#include "debuggerstringutils.h"
 #include "idebuggerengine.h"
 
 #include <coreplugin/coreconstants.h>
@@ -42,6 +43,9 @@
 
 #include <utils/qtcassert.h>
 
+#include <QtCore/QDebug>
+
+#include <QtGui/QMessageBox>
 #include <QtGui/QPlainTextEdit>
 #include <QtGui/QTextCursor>
 #include <QtGui/QSyntaxHighlighter>
@@ -57,7 +61,7 @@ namespace Internal {
 //
 ///////////////////////////////////////////////////////////////////////
 
-/*! 
+/*!
     \class MemoryViewAgent
 
     Objects form this class are created in response to user actions in
@@ -66,13 +70,13 @@ namespace Internal {
 */
 
 MemoryViewAgent::MemoryViewAgent(DebuggerManager *manager, quint64 addr)
-    : QObject(manager), m_engine(manager->currentEngine())
+    : QObject(manager), m_engine(manager->currentEngine()), m_manager(manager)
 {
     init(addr);
 }
 
 MemoryViewAgent::MemoryViewAgent(DebuggerManager *manager, const QString &addr)
-    : QObject(manager), m_engine(manager->currentEngine())
+    : QObject(manager), m_engine(manager->currentEngine()), m_manager(manager) 
 {
     bool ok = true;
     init(addr.toULongLong(&ok, 0));
@@ -81,33 +85,44 @@ MemoryViewAgent::MemoryViewAgent(DebuggerManager *manager, const QString &addr)
 
 MemoryViewAgent::~MemoryViewAgent()
 {
-    m_editor->deleteLater();
+    if (m_editor)
+        m_editor->deleteLater();
 }
 
-void MemoryViewAgent::init(quint64 addr) 
+void MemoryViewAgent::init(quint64 addr)
 {
     Core::EditorManager *editorManager = Core::EditorManager::instance();
     QString titlePattern = tr("Memory $");
     m_editor = editorManager->openEditorWithContents(
         Core::Constants::K_DEFAULT_BINARY_EDITOR,
         &titlePattern);
-    connect(m_editor->widget(), SIGNAL(lazyDataRequested(int,bool)),
-        this, SLOT(fetchLazyData(int,bool)));
-    editorManager->activateEditor(m_editor);
-    QMetaObject::invokeMethod(m_editor->widget(), "setLazyData",
-        Q_ARG(int, addr), Q_ARG(int, INT_MAX), Q_ARG(int, BinBlockSize));
+    if (m_editor) {
+        connect(m_editor->widget(), SIGNAL(lazyDataRequested(quint64,bool)),
+            this, SLOT(fetchLazyData(quint64,bool)));
+        editorManager->activateEditor(m_editor);
+        QMetaObject::invokeMethod(m_editor->widget(), "setLazyData",
+            Q_ARG(quint64, addr), Q_ARG(int, 1024 * 1024), Q_ARG(int, BinBlockSize));
+    } else {
+        m_manager->showMessageBox(QMessageBox::Warning,
+            tr("No memory viewer available"),
+            tr("The memory contents cannot be shown as no viewer plugin "
+               "for binary data has been loaded."));
+        deleteLater();
+    }
 }
 
-void MemoryViewAgent::fetchLazyData(int block, bool sync)
+void MemoryViewAgent::fetchLazyData(quint64 block, bool sync)
 {
     Q_UNUSED(sync); // FIXME: needed support for incremental searching
-    m_engine->fetchMemory(this, BinBlockSize * block, BinBlockSize); 
+    if (m_engine)
+        m_engine->fetchMemory(this, BinBlockSize * block, BinBlockSize);
 }
 
 void MemoryViewAgent::addLazyData(quint64 addr, const QByteArray &ba)
 {
-    QMetaObject::invokeMethod(m_editor->widget(), "addLazyData",
-        Q_ARG(int, addr / BinBlockSize), Q_ARG(QByteArray, ba));
+    if (m_editor && m_editor->widget())
+        QMetaObject::invokeMethod(m_editor->widget(), "addLazyData",
+            Q_ARG(quint64, addr / BinBlockSize), Q_ARG(QByteArray, ba));
 }
 
 
@@ -139,10 +154,10 @@ public:
 struct DisassemblerViewAgentPrivate
 {
     QPointer<TextEditor::ITextEditor> editor;
-    QString address;
-    QString function;
+    StackFrame frame;
     QPointer<DebuggerManager> manager;
     LocationMark2 *locationMark;
+    QHash<QString, QString> cache;
 };
 
 /*!
@@ -178,7 +193,7 @@ private:
 */
 
 DisassemblerViewAgent::DisassemblerViewAgent(DebuggerManager *manager)
-    : QObject(manager), d(new DisassemblerViewAgentPrivate)
+    : QObject(0), d(new DisassemblerViewAgentPrivate)
 {
     d->editor = 0;
     d->locationMark = new LocationMark2();
@@ -189,23 +204,57 @@ DisassemblerViewAgent::~DisassemblerViewAgent()
 {
     if (d->editor)
         d->editor->deleteLater();
+    d->editor = 0;
+    delete d->locationMark;
+    d->locationMark = 0;
     delete d;
+    d = 0;
+}
+
+void DisassemblerViewAgent::cleanup()
+{
+    d->cache.clear();
+    //if (d->editor)
+    //    d->editor->deleteLater();
+    //d->editor = 0;
+}
+
+void DisassemblerViewAgent::resetLocation()
+{
+    if (d->editor)
+        d->editor->markableInterface()->removeMark(d->locationMark);
+}
+
+QString frameKey(const StackFrame &frame)
+{
+    return _("%1:%2:%3").arg(frame.function).arg(frame.file).arg(frame.from);
 }
 
 void DisassemblerViewAgent::setFrame(const StackFrame &frame)
 {
+    d->frame = frame;
+    if (!frame.function.isEmpty() && frame.function != _("??")) {
+        QHash<QString, QString>::ConstIterator it = d->cache.find(frameKey(frame));
+        if (it != d->cache.end()) {
+            QString msg = _("Use cache dissassembler for '%1' in '%2'")
+                .arg(frame.function).arg(frame.file);
+            d->manager->showDebuggerOutput(msg);
+            setContents(*it);
+            return;
+        }
+    } 
     IDebuggerEngine *engine = d->manager->currentEngine();
     QTC_ASSERT(engine, return);
     engine->fetchDisassembler(this, frame);
-    d->address = frame.address;
-    d->function = frame.function;
 }
 
 void DisassemblerViewAgent::setContents(const QString &contents)
 {
+    QTC_ASSERT(d, return);
     using namespace Core;
     using namespace TextEditor;
 
+    d->cache.insert(frameKey(d->frame), contents);
     QPlainTextEdit *plainTextEdit = 0;
     EditorManager *editorManager = EditorManager::instance();
     if (!d->editor) {
@@ -226,10 +275,10 @@ void DisassemblerViewAgent::setContents(const QString &contents)
         plainTextEdit->setPlainText(contents);
 
     d->editor->markableInterface()->removeMark(d->locationMark);
-    d->editor->setDisplayName(_("Disassembler (%1)").arg(d->function));
+    d->editor->setDisplayName(_("Disassembler (%1)").arg(d->frame.function));
 
     for (int pos = 0, line = 0; ; ++line, ++pos) {
-        if (contents.midRef(pos, d->address.size()) == d->address) {
+        if (contents.midRef(pos, d->frame.address.size()) == d->frame.address) {
             d->editor->markableInterface()->addMark(d->locationMark, line + 1);
             if (plainTextEdit) {
                 QTextCursor tc = plainTextEdit->textCursor();
@@ -244,9 +293,22 @@ void DisassemblerViewAgent::setContents(const QString &contents)
     }
 }
 
+bool DisassemblerViewAgent::contentsCoversAddress(const QString &contents) const
+{
+    QTC_ASSERT(d, return false);
+    for (int pos = 0, line = 0; ; ++line, ++pos) { 
+        if (contents.midRef(pos, d->frame.address.size()) == d->frame.address)
+            return true;
+        pos = contents.indexOf('\n', pos + 1);
+        if (pos == -1)
+            break;
+    }
+    return false;
+}
+
 QString DisassemblerViewAgent::address() const
 {
-    return d->address;
+    return d->frame.address;
 }
 
 } // namespace Internal

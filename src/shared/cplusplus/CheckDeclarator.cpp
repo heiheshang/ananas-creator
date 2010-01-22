@@ -55,7 +55,7 @@
 #include "CoreTypes.h"
 #include "Symbols.h"
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 CheckDeclarator::CheckDeclarator(Semantic *semantic)
     : SemanticCheck(semantic),
@@ -168,6 +168,9 @@ bool CheckDeclarator::visit(FunctionDeclaratorAST *ast)
     ast->symbol = fun;
     fun->setReturnType(_fullySpecifiedType);
 
+    if (_fullySpecifiedType.isVirtual())
+        fun->setVirtual(true);
+
     if (ast->parameters) {
         DeclarationListAST *parameter_declarations = ast->parameters->parameter_declarations;
         for (DeclarationListAST *decl = parameter_declarations; decl; decl = decl->next) {
@@ -262,14 +265,15 @@ bool CheckDeclarator::visit(ObjCMethodPrototypeAST *ast)
     method->setReturnType(returnType);
 
     if (ast->selector && ast->selector->asObjCSelectorWithArguments()) {
-        // TODO: check the parameters (EV)
-        //    fun->setVariadic(...);
         // TODO: add arguments (EV)
         for (ObjCMessageArgumentDeclarationListAST *it = ast->arguments; it; it = it->next) {
             ObjCMessageArgumentDeclarationAST *argDecl = it->argument_declaration;
 
             semantic()->check(argDecl, method->arguments());
         }
+
+        if (ast->dot_dot_dot_token)
+            method->setVariadic(true);
     }
 
     _fullySpecifiedType = FullySpecifiedType(method);
@@ -296,4 +300,4 @@ void CheckDeclarator::applyCvQualifiers(SpecifierAST *cv)
     }
 }
 
-CPLUSPLUS_END_NAMESPACE
+

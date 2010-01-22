@@ -85,7 +85,6 @@ CMakeOpenProjectWizard::CMakeOpenProjectWizard(CMakeManager *cmakeManager, const
     setPage(CMakeRunPageId, new CMakeRunPage(this));
 
     setStartId(startid);
-    setOption(QWizard::NoCancelButton);
     init();
 }
 
@@ -101,7 +100,6 @@ CMakeOpenProjectWizard::CMakeOpenProjectWizard(CMakeManager *cmakeManager, const
         addPage(new CMakeRunPage(this, CMakeRunPage::Recreate, buildDirectory));
     else
         addPage(new CMakeRunPage(this, CMakeRunPage::Update, buildDirectory));
-    setOption(QWizard::NoCancelButton);
     init();
 }
 
@@ -236,7 +234,7 @@ ShadowBuildPage::ShadowBuildPage(CMakeOpenProjectWizard *cmakeWizard, bool chang
                           "This ensures that the source directory remains clean and enables multiple builds "
                           "with different settings."));
     fl->addWidget(label);
-    m_pc = new Core::Utils::PathChooser(this);
+    m_pc = new Utils::PathChooser(this);
     m_pc->setPath(m_cmakeWizard->buildDirectory());
     connect(m_pc, SIGNAL(changed(QString)), this, SLOT(buildDirectoryChanged()));
     fl->addRow(tr("Build directory:"), m_pc);
@@ -261,11 +259,35 @@ void CMakeRunPage::initWidgets()
 {
     QFormLayout *fl = new QFormLayout;
     setLayout(fl);
+    // Description Label
     m_descriptionLabel = new QLabel(this);
     m_descriptionLabel->setWordWrap(true);
 
     fl->addRow(m_descriptionLabel);
 
+    if (m_cmakeWizard->cmakeManager()->isCMakeExecutableValid()) {
+        m_cmakeExecutable = 0;
+    } else {
+        QString text = tr("Please specify the path to the cmake executable. No cmake executable was found in the path.");
+        QString cmakeExecutable = m_cmakeWizard->cmakeManager()->cmakeExecutable();
+        if (!cmakeExecutable.isEmpty()) {
+            QFileInfo fi(cmakeExecutable);
+            if (!fi.exists())
+                text += tr(" The cmake executable (%1) does not exist.").arg(cmakeExecutable);
+            else if (!fi.isExecutable())
+                text += tr(" The path %1 is not a executable.").arg(cmakeExecutable);
+            else
+                text += tr(" The path %1 is not a valid cmake.").arg(cmakeExecutable);
+        }
+
+        fl->addRow(new QLabel(text, this));
+        // Show a field for the user to enter
+        m_cmakeExecutable = new Utils::PathChooser(this);
+        m_cmakeExecutable->setExpectedKind(Utils::PathChooser::Command);
+        fl->addRow("CMake Executable", m_cmakeExecutable);
+    }
+
+    // Run CMake Line (with arguments)
     m_argumentsLineEdit = new QLineEdit(this);
     connect(m_argumentsLineEdit,SIGNAL(returnPressed()), this, SLOT(runCMake()));
 
@@ -282,7 +304,7 @@ void CMakeRunPage::initWidgets()
 
     fl->addRow(tr("Arguments"), hbox);
 
-
+    // Bottom output window
     m_output = new QPlainTextEdit(this);
     m_output->setReadOnly(true);
     QSizePolicy pl = m_output->sizePolicy();
@@ -330,16 +352,17 @@ void CMakeRunPage::initializePage()
         m_generatorComboBox->setVisible(true);
         QString cachedGenerator;
         // Try to find out generator from CMakeCachhe file, if it exists
+
         QFile fi(m_buildDirectory + "/CMakeCache.txt");
         if (fi.exists()) {
             // Cache exists, then read it...
-            if (fi.open(QIODevice::ReadOnly)) {
-                while (fi.canReadLine()) {
+            if (fi.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                while (!fi.atEnd()) {
                     QString line = fi.readLine();
                     if (line.startsWith("CMAKE_GENERATOR:INTERNAL=")) {
                         int splitpos = line.indexOf('=');
                         if (splitpos != -1) {
-                            cachedGenerator = line.mid(splitpos).trimmed();
+                            cachedGenerator = line.mid(splitpos + 1).trimmed();
                         }
                         break;
                     }
@@ -347,9 +370,8 @@ void CMakeRunPage::initializePage()
             }
         }        
         m_generatorComboBox->clear();
-        // Find out whether we have multiple mvc versions
+        // Find out whether we have multiple msvc versions
         QStringList msvcVersions = ProjectExplorer::ToolChain::availableMSVCVersions();
-        qDebug()<<"msvcVersions:"<<msvcVersions;
         if (msvcVersions.isEmpty()) {
 
         } else if (msvcVersions.count() == 1) {
@@ -403,9 +425,23 @@ void CMakeRunPage::runCMake()
         delete tc;
     }
 
-    m_cmakeProcess = cmakeManager->createXmlFile(arguments, m_cmakeWizard->sourceDirectory(), m_buildDirectory, env, generator);
-    connect(m_cmakeProcess, SIGNAL(readyRead()), this, SLOT(cmakeReadyRead()));
-    connect(m_cmakeProcess, SIGNAL(finished(int)), this, SLOT(cmakeFinished()));
+    if (m_cmakeExecutable) {
+        // We asked the user for the cmake executable
+        m_cmakeWizard->cmakeManager()->setCMakeExecutable(m_cmakeExecutable->path());
+    }
+
+    m_output->clear();
+
+    if (m_cmakeWizard->cmakeManager()->isCMakeExecutableValid()) {
+        m_cmakeProcess = new QProcess();
+        connect(m_cmakeProcess, SIGNAL(readyRead()), this, SLOT(cmakeReadyRead()));
+        connect(m_cmakeProcess, SIGNAL(finished(int)), this, SLOT(cmakeFinished()));
+        cmakeManager->createXmlFile(m_cmakeProcess, arguments, m_cmakeWizard->sourceDirectory(), m_buildDirectory, env, generator);
+    } else {
+        m_runCMake->setEnabled(true);
+        m_argumentsLineEdit->setEnabled(true);
+        m_output->appendPlainText(tr("No valid cmake executable specified."));
+    }
 }
 
 void CMakeRunPage::cmakeReadyRead()

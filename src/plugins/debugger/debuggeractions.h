@@ -48,8 +48,8 @@ public:
     DebuggerSettings(QObject *parent = 0);
     ~DebuggerSettings();
 
-    void insertItem(int code, Core::Utils::SavedAction *item);
-    Core::Utils::SavedAction *item(int code) const;
+    void insertItem(int code, Utils::SavedAction *item);
+    Utils::SavedAction *item(int code) const;
 
     QString dump() const;
 
@@ -60,7 +60,7 @@ public slots:
     void writeSettings(QSettings *settings) const;
 
 private:
-    QHash<int, Core::Utils::SavedAction *> m_items; 
+    QHash<int, Utils::SavedAction *> m_items; 
 };
 
 
@@ -77,19 +77,30 @@ enum DebuggerActionCode
     AutoQuit,
     LockView,
     LogTimeStamps,
-    StepByInstruction,
+    OperateByInstruction,
+    AutoDerefPointers,
 
     RecheckDebuggingHelpers,
     UseDebuggingHelpers,
     UseCustomDebuggingHelperLocation,
     CustomDebuggingHelperLocation,
     DebugDebuggingHelpers,
+
+    UseCodeModel,
     
+    UseToolTipsInMainEditor,
+    UseToolTipsInLocalsView,
+    UseToolTipsInBreakpointsView,
+    UseToolTipsInStackView,
+    UseAddressInBreakpointsView,
+    UseAddressInStackView,
+
     // Gdb
     GdbLocation,
     GdbEnvironment,
     GdbScriptFile,
     ExecuteCommand,
+    GdbWatchdogTimeout,
 
     // Stack
     MaximalStackDepth,
@@ -100,7 +111,6 @@ enum DebuggerActionCode
     WatchExpressionInWindow,
     RemoveWatchExpression,
     WatchPoint,
-    UseToolTips,
     AssignValue,
     AssignType,
 
@@ -117,14 +127,32 @@ enum DebuggerActionCode
     SelectedPluginBreakpoints,
     NoPluginBreakpoints,
     SelectedPluginBreakpointsPattern,
+    UsePreciseBreakpoints
 };
 
 // singleton access
-Core::Utils::SavedAction *theDebuggerAction(int code);
+Utils::SavedAction *theDebuggerAction(int code);
 
 // convenience
 bool theDebuggerBoolSetting(int code);
 QString theDebuggerStringSetting(int code);
+
+struct DebuggerManagerActions
+{
+    QAction *continueAction;
+    QAction *stopAction;
+    QAction *resetAction; // FIXME: Should not be needed in a stable release
+    QAction *stepAction;
+    QAction *stepOutAction;
+    QAction *runToLineAction;
+    QAction *runToFunctionAction;
+    QAction *jumpToLineAction;
+    QAction *nextAction;
+    QAction *watchAction;
+    QAction *breakAction;
+    QAction *sepAction;
+    QAction *reverseDirectionAction;
+};
 
 } // namespace Internal
 } // namespace Debugger

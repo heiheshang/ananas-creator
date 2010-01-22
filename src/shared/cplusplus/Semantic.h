@@ -52,8 +52,8 @@
 #include "CPlusPlusForwardDeclarations.h"
 #include "ASTfwd.h"
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
+
+namespace CPlusPlus {
 
 class CPLUSPLUS_EXPORT Semantic
 {
@@ -78,7 +78,7 @@ public:
 
     FullySpecifiedType check(ExpressionAST *expression, Scope *scope);
 
-    void check(DeclarationAST *declaration, Scope *scope, Scope *templateParameters = 0);
+    void check(DeclarationAST *declaration, Scope *scope, TemplateParameters *templateParameters = 0);
 
     void check(StatementAST *statement, Scope *scope);
 
@@ -114,7 +114,7 @@ private:
     Data *d;
 };
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // CPLUSPLUS_SEMANTIC_H

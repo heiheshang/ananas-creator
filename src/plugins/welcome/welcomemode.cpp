@@ -29,7 +29,6 @@
 
 #include "welcomemode.h"
 #include <extensionsystem/pluginmanager.h>
-#include <extensionsystem/iwelcomepage.h>
 
 #include <coreplugin/icore.h>
 #include <coreplugin/coreconstants.h>
@@ -39,6 +38,7 @@
 
 #include <utils/styledbar.h>
 #include <utils/welcomemodetreewidget.h>
+#include <utils/iwelcomepage.h>
 
 #include <QtGui/QMouseEvent>
 #include <QtGui/QScrollArea>
@@ -55,6 +55,7 @@
 #include "ui_welcomemode.h"
 
 using namespace ExtensionSystem;
+using namespace Utils;
 
 namespace Welcome {
 
@@ -83,7 +84,7 @@ WelcomeMode::WelcomeMode() :
     QVBoxLayout *l = new QVBoxLayout(m_d->m_widget);
     l->setMargin(0);
     l->setSpacing(0);
-    l->addWidget(new Core::Utils::StyledBar(m_d->m_widget));
+    l->addWidget(new Utils::StyledBar(m_d->m_widget));
     m_d->m_welcomePage = new QWidget(m_d->m_widget);
     m_d->ui.setupUi(m_d->m_welcomePage);
     m_d->ui.helpUsLabel->setAttribute(Qt::WA_LayoutUsesWidgetRect);

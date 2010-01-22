@@ -29,7 +29,9 @@
 
 #include "buildconfiguration.h"
 
-using namespace ProjectExplorer::Internal;
+#include <utils/qtcassert.h>
+
+using namespace ProjectExplorer;
 
 BuildConfiguration::BuildConfiguration(const QString &name)
     : m_name(name)
@@ -42,20 +44,21 @@ BuildConfiguration::BuildConfiguration(const QString &name, BuildConfiguration *
 {
 }
 
+void BuildConfiguration::setName(const QString &name)
+{
+    m_name = name;
+}
+
 QString BuildConfiguration::name() const
 {
     return m_name;
 }
 
-QString BuildConfiguration::displayName()
+QString BuildConfiguration::displayName() const
 {
-    QVariant v = getValue("ProjectExplorer.BuildConfiguration.DisplayName");
-    if (v.isValid()) {
-        return v.toString();
-    } else {
-        setDisplayName(m_name);
-        return m_name;
-    }
+    QVariant v = value("ProjectExplorer.BuildConfiguration.DisplayName");
+    QTC_ASSERT(v.isValid(), return QString());
+    return v.toString();
 }
 
 void BuildConfiguration::setDisplayName(const QString &name)
@@ -63,7 +66,7 @@ void BuildConfiguration::setDisplayName(const QString &name)
     setValue("ProjectExplorer.BuildConfiguration.DisplayName", name);
 }
 
-QVariant BuildConfiguration::getValue(const QString & key) const
+QVariant BuildConfiguration::value(const QString & key) const
 {
     QHash<QString, QVariant>::const_iterator it = m_values.find(key);
     if (it != m_values.constEnd())
@@ -95,3 +98,13 @@ QMap<QString, QVariant> BuildConfiguration::toMap() const
     return result;
 }
 
+
+IBuildConfigurationFactory::IBuildConfigurationFactory(QObject *parent)
+    : QObject(parent)
+{
+}
+
+IBuildConfigurationFactory::~IBuildConfigurationFactory()
+{
+
+}

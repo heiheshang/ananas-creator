@@ -30,66 +30,70 @@
 #ifndef PROJECTEXPLORER_H
 #define PROJECTEXPLORER_H
 
-#include "project.h"
-#include "session.h"
 #include "projectexplorer_export.h"
 
 #include <extensionsystem/iplugin.h>
-#include <coreplugin/icorelistener.h>
 
-#include <QtCore/QObject>
 #include <QtCore/QSharedPointer>
-#include <QtCore/QList>
-#include <QtCore/QQueue>
-#include <QtCore/QModelIndex>
-#include <QtGui/QMenu>
-#include <QtGui/QTreeWidget>
-#include <QtGui/QTreeWidgetItem>
+#include <QtGui/QDialog>
+
+QT_BEGIN_NAMESPACE
+class QPoint;
+class QAction;
+class QComboBox;
+QT_END_NAMESPACE
 
 namespace Core {
 class IContext;
 class IMode;
 class IFileFactory;
-    namespace Utils {
-        class ParameterAction;
-    }
 }
 
-namespace Welcome {
-    class WelcomeMode;
+namespace Utils {
+class ParameterAction;
 }
 
 namespace ProjectExplorer {
 class BuildManager;
-class PersistentSettings;
-class RunConfiguration;
 class RunControl;
 class SessionManager;
-class IRunConfigurationRunner;
+class RunConfiguration;
+class IRunControlFactory;
+class Project;
+class Node;
+class BuildConfiguration;
 
 namespace Internal {
-class ApplicationOutput;
-class OutputPane;
-class ProjectWindow;
 class ProjectFileFactory;
-class ProjectWelcomePage;
-class ProjectWelcomePageWidget;
+struct ProjectExplorerSettings;
 
-struct ProjectExplorerSettings
+class BuildConfigDialog : public QDialog
 {
-    bool buildBeforeRun;
-    bool saveBeforeBuild;
-    bool showCompilerOutput;
-    bool useJom;
-    bool operator==(const ProjectExplorerSettings &other) {
-        return this->buildBeforeRun == other.buildBeforeRun
-                && this->saveBeforeBuild == other.saveBeforeBuild
-                && this->showCompilerOutput == other.showCompilerOutput
-                && this->useJom == other.useJom;
-    }
+    Q_OBJECT
+public:
+    enum DialogResult {
+        ChangeBuild = 10,
+        Cancel = 11,
+        Continue = 12
+    };
+    BuildConfigDialog(Project *project, QWidget *parent = 0);
+
+    BuildConfiguration *selectedBuildConfiguration() const;
+
+private slots:
+    void buttonClicked();
+
+private:
+    Project *m_project;
+    QPushButton *m_changeBuildConfiguration;
+    QPushButton *m_cancel;
+    QPushButton *m_justContinue;
+    QComboBox *m_configCombo;
 };
 
 } // namespace Internal
+
+struct ProjectExplorerPluginPrivate;
 
 class PROJECTEXPLORER_EXPORT ProjectExplorerPlugin
     : public ExtensionSystem::IPlugin
@@ -210,11 +214,12 @@ private slots:
 
 private:
     void runProjectImpl(Project *pro);
-    void executeRunConfiguration(QSharedPointer<RunConfiguration>, const QString &mode);
+    void executeRunConfiguration(const QSharedPointer<RunConfiguration> &, const QString &mode);
+    bool showBuildConfigDialog();
     void setCurrent(Project *project, QString filePath, Node *node);
 
     QStringList allFilesWithDependencies(Project *pro);
-    IRunConfigurationRunner *findRunner(QSharedPointer<RunConfiguration> config, const QString &mode);
+    IRunControlFactory *findRunControlFactory(const QSharedPointer<RunConfiguration> &config, const QString &mode);
 
     void updateActions();
     void addToRecentProjects(const QString &fileName, const QString &displayName);
@@ -222,89 +227,8 @@ private:
     Internal::ProjectFileFactory *findProjectFileFactory(const QString &filename) const;
 
     static ProjectExplorerPlugin *m_instance;
-
-    QMenu *m_sessionContextMenu;
-    QMenu *m_sessionMenu;
-    QMenu *m_projectMenu;
-    QMenu *m_subProjectMenu;
-    QMenu *m_folderMenu;
-    QMenu *m_fileMenu;
-    QMenu *m_openWithMenu;
-
-    QMultiMap<int, QObject*> m_actionMap;
-    QAction *m_sessionManagerAction;
-    QAction *m_newAction;
-#if 0
-    QAction *m_loadAction;
-#endif
-    Core::Utils::ParameterAction *m_unloadAction;
-    QAction *m_clearSession;
-    QAction *m_buildProjectOnlyAction;
-    Core::Utils::ParameterAction *m_buildAction;
-    QAction *m_buildSessionAction;
-    QAction *m_rebuildProjectOnlyAction;
-    Core::Utils::ParameterAction *m_rebuildAction;
-    QAction *m_rebuildSessionAction;
-    QAction *m_cleanProjectOnlyAction;
-    Core::Utils::ParameterAction *m_cleanAction;
-    QAction *m_cleanSessionAction;
-    QAction *m_runAction;
-    QAction *m_runActionContextMenu;
-    QAction *m_cancelBuildAction;
-    QAction *m_debugAction;
-    QAction *m_addNewFileAction;
-    QAction *m_addExistingFilesAction;
-    QAction *m_openFileAction;
-    QAction *m_showInGraphicalShell;
-    QAction *m_removeFileAction;
-    QAction *m_renameFileAction;
-
-    QMenu *m_buildConfigurationMenu;
-    QActionGroup *m_buildConfigurationActionGroup;
-    QMenu *m_runConfigurationMenu;
-    QActionGroup *m_runConfigurationActionGroup;
-
-    Internal::ProjectWindow *m_proWindow;
-    SessionManager *m_session;
-    QString m_sessionToRestoreAtStartup;
-
-    Project *m_currentProject;
-    Node *m_currentNode;
-
-    BuildManager *m_buildManager;
-
-    QList<Internal::ProjectFileFactory*> m_fileFactories;
-    QStringList m_profileMimeTypes;
-    Internal::OutputPane *m_outputPane;
-
-    QList<QPair<QString, QString> > m_recentProjects; // pair of filename, displayname
-    static const int m_maxRecentProjects = 7;
-
-    QString m_lastOpenDirectory;
-    QSharedPointer<RunConfiguration> m_delayedRunConfiguration;
-    RunControl *m_debuggingRunControl;
-    QString m_runMode;
-    QString m_projectFilterString;
-    Internal::ProjectExplorerSettings m_projectExplorerSettings;
-    Internal::ProjectWelcomePage *m_welcomePlugin;
-    Internal::ProjectWelcomePageWidget *m_welcomePage;
+    ProjectExplorerPluginPrivate *d;  
 };
-
-namespace Internal {
-
-class CoreListenerCheckingForRunningBuild : public Core::ICoreListener
-{
-    Q_OBJECT
-public:
-    CoreListenerCheckingForRunningBuild(BuildManager *manager);
-
-    bool coreAboutToClose();
-
-private:
-    BuildManager *m_manager;
-};
-
-} // namespace Internal
 
 } // namespace ProjectExplorer
 

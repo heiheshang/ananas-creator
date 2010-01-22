@@ -41,6 +41,8 @@
 #include <vcsbase/vcsbaseoutputwindow.h>
 #include <utils/synchronousprocess.h>
 #include <utils/parameteraction.h>
+#include <projectexplorer/session.h>
+#include <projectexplorer/project.h>
 
 #include <coreplugin/icore.h>
 #include <coreplugin/coreconstants.h>
@@ -58,9 +60,9 @@
 #include <QtCore/QDate>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
-#include <QtCore/QTemporaryFile>
 #include <QtCore/QTextCodec>
 #include <QtCore/QtPlugin>
+#include <QtCore/QTemporaryFile>
 #include <QtGui/QAction>
 #include <QtGui/QMainWindow>
 #include <QtGui/QMenu>
@@ -151,7 +153,6 @@ CVSPlugin *CVSPlugin::m_cvsPluginInstance = 0;
 
 CVSPlugin::CVSPlugin() :
     m_versionControl(0),
-    m_changeTmpFile(0),
     m_projectExplorer(0),
     m_addAction(0),
     m_deleteAction(0),
@@ -174,17 +175,19 @@ CVSPlugin::CVSPlugin() :
 
 CVSPlugin::~CVSPlugin()
 {
-    cleanChangeTmpFile();
+    cleanCommitMessageFile();
 }
 
-void CVSPlugin::cleanChangeTmpFile()
+void CVSPlugin::cleanCommitMessageFile()
 {
-    if (m_changeTmpFile) {
-        if (m_changeTmpFile->isOpen())
-            m_changeTmpFile->close();
-        delete m_changeTmpFile;
-        m_changeTmpFile = 0;
+    if (!m_commitMessageFileName.isEmpty()) {
+        QFile::remove(m_commitMessageFileName);
+        m_commitMessageFileName.clear();
     }
+}
+bool CVSPlugin::isCommitEditorOpen() const
+{
+    return !m_commitMessageFileName.isEmpty();
 }
 
 static const VCSBase::VCSBaseSubmitEditorParameters submitParameters = {
@@ -257,24 +260,22 @@ bool CVSPlugin::initialize(const QStringList &arguments, QString *errorMessage)
     globalcontext << core->uniqueIDManager()->uniqueIdentifier(C_GLOBAL);
 
     Core::Command *command;
-    m_addAction = new Core::Utils::ParameterAction(tr("Add"), tr("Add \"%1\""), Core::Utils::ParameterAction::EnabledWithParameter, this);
+    m_addAction = new Utils::ParameterAction(tr("Add"), tr("Add \"%1\""), Utils::ParameterAction::EnabledWithParameter, this);
     command = ami->registerAction(m_addAction, CMD_ID_ADD,
         globalcontext);
     command->setAttribute(Core::Command::CA_UpdateText);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+C,Alt+A")));
-#endif
     connect(m_addAction, SIGNAL(triggered()), this, SLOT(addCurrentFile()));
     cvsMenu->addAction(command);
 
-    m_deleteAction = new Core::Utils::ParameterAction(tr("Delete"), tr("Delete \"%1\""), Core::Utils::ParameterAction::EnabledWithParameter, this);
+    m_deleteAction = new Utils::ParameterAction(tr("Delete"), tr("Delete \"%1\""), Utils::ParameterAction::EnabledWithParameter, this);
     command = ami->registerAction(m_deleteAction, CMD_ID_DELETE_FILE,
         globalcontext);
     command->setAttribute(Core::Command::CA_UpdateText);
     connect(m_deleteAction, SIGNAL(triggered()), this, SLOT(deleteCurrentFile()));
     cvsMenu->addAction(command);
 
-    m_revertAction = new Core::Utils::ParameterAction(tr("Revert"), tr("Revert \"%1\""), Core::Utils::ParameterAction::EnabledWithParameter, this);
+    m_revertAction = new Utils::ParameterAction(tr("Revert"), tr("Revert \"%1\""), Utils::ParameterAction::EnabledWithParameter, this);
     command = ami->registerAction(m_revertAction, CMD_ID_REVERT,
         globalcontext);
     command->setAttribute(Core::Command::CA_UpdateText);
@@ -289,13 +290,11 @@ bool CVSPlugin::initialize(const QStringList &arguments, QString *errorMessage)
     connect(m_diffProjectAction, SIGNAL(triggered()), this, SLOT(diffProject()));
     cvsMenu->addAction(command);
 
-    m_diffCurrentAction = new Core::Utils::ParameterAction(tr("Diff Current File"), tr("Diff \"%1\""), Core::Utils::ParameterAction::EnabledWithParameter, this);
+    m_diffCurrentAction = new Utils::ParameterAction(tr("Diff Current File"), tr("Diff \"%1\""), Utils::ParameterAction::EnabledWithParameter, this);
     command = ami->registerAction(m_diffCurrentAction,
         CMD_ID_DIFF_CURRENT, globalcontext);
     command->setAttribute(Core::Command::CA_UpdateText);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+C,Alt+D")));
-#endif
     connect(m_diffCurrentAction, SIGNAL(triggered()), this, SLOT(diffCurrentFile()));
     cvsMenu->addAction(command);
 
@@ -307,19 +306,17 @@ bool CVSPlugin::initialize(const QStringList &arguments, QString *errorMessage)
     connect(m_commitAllAction, SIGNAL(triggered()), this, SLOT(startCommitAll()));
     cvsMenu->addAction(command);
 
-    m_commitCurrentAction = new Core::Utils::ParameterAction(tr("Commit Current File"), tr("Commit \"%1\""), Core::Utils::ParameterAction::EnabledWithParameter, this);
+    m_commitCurrentAction = new Utils::ParameterAction(tr("Commit Current File"), tr("Commit \"%1\""), Utils::ParameterAction::EnabledWithParameter, this);
     command = ami->registerAction(m_commitCurrentAction,
         CMD_ID_COMMIT_CURRENT, globalcontext);
     command->setAttribute(Core::Command::CA_UpdateText);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+C,Alt+C")));
-#endif
     connect(m_commitCurrentAction, SIGNAL(triggered()), this, SLOT(startCommitCurrentFile()));
     cvsMenu->addAction(command);
 
     cvsMenu->addAction(createSeparator(this, ami, CMD_ID_SEPARATOR2, globalcontext));
 
-    m_filelogCurrentAction = new Core::Utils::ParameterAction(tr("Filelog Current File"), tr("Filelog \"%1\""), Core::Utils::ParameterAction::EnabledWithParameter, this);
+    m_filelogCurrentAction = new Utils::ParameterAction(tr("Filelog Current File"), tr("Filelog \"%1\""), Utils::ParameterAction::EnabledWithParameter, this);
     command = ami->registerAction(m_filelogCurrentAction,
         CMD_ID_FILELOG_CURRENT, globalcontext);
     command->setAttribute(Core::Command::CA_UpdateText);
@@ -327,7 +324,7 @@ bool CVSPlugin::initialize(const QStringList &arguments, QString *errorMessage)
         SLOT(filelogCurrentFile()));
     cvsMenu->addAction(command);
 
-    m_annotateCurrentAction = new Core::Utils::ParameterAction(tr("Annotate Current File"), tr("Annotate \"%1\""), Core::Utils::ParameterAction::EnabledWithParameter, this);
+    m_annotateCurrentAction = new Utils::ParameterAction(tr("Annotate Current File"), tr("Annotate \"%1\""), Utils::ParameterAction::EnabledWithParameter, this);
     command = ami->registerAction(m_annotateCurrentAction,
         CMD_ID_ANNOTATE_CURRENT, globalcontext);
     command->setAttribute(Core::Command::CA_UpdateText);
@@ -383,7 +380,7 @@ void CVSPlugin::extensionsInitialized()
 
 bool CVSPlugin::editorAboutToClose(Core::IEditor *iEditor)
 {
-    if (!m_changeTmpFile || !iEditor || qstrcmp(Constants::CVSCOMMITEDITOR, iEditor->kind()))
+    if (!iEditor || !isCommitEditorOpen() || qstrcmp(Constants::CVSCOMMITEDITOR, iEditor->kind()))
         return true;
 
     Core::IFile *fileIFace = iEditor->file();
@@ -394,7 +391,7 @@ bool CVSPlugin::editorAboutToClose(Core::IEditor *iEditor)
     // Submit editor closing. Make it write out the commit message
     // and retrieve files
     const QFileInfo editorFile(fileIFace->fileName());
-    const QFileInfo changeFile(m_changeTmpFile->fileName());
+    const QFileInfo changeFile(m_commitMessageFileName);
     if (editorFile.absoluteFilePath() != changeFile.absoluteFilePath())
         return true; // Oops?!
 
@@ -411,7 +408,7 @@ bool CVSPlugin::editorAboutToClose(Core::IEditor *iEditor)
     case VCSBase::VCSBaseSubmitEditor::SubmitCanceled:
         return false; // Keep editing and change file
     case VCSBase::VCSBaseSubmitEditor::SubmitDiscarded:
-        cleanChangeTmpFile();
+        cleanCommitMessageFile();
         return true; // Cancel all
     default:
         break;
@@ -424,10 +421,10 @@ bool CVSPlugin::editorAboutToClose(Core::IEditor *iEditor)
         Core::ICore::instance()->fileManager()->blockFileChange(fileIFace);
         fileIFace->save();
         Core::ICore::instance()->fileManager()->unblockFileChange(fileIFace);
-        closeEditor= commit(m_changeTmpFile->fileName(), fileList);
+        closeEditor= commit(m_commitMessageFileName, fileList);
     }
     if (closeEditor)
-        cleanChangeTmpFile();
+        cleanCommitMessageFile();
     return closeEditor;
 }
 
@@ -554,9 +551,11 @@ void CVSPlugin::revertCurrentFile()
     QStringList args(QLatin1String("update"));
     args.push_back(QLatin1String("-C"));
 
-    const CVSResponse revertResponse = runCVS(args, QStringList(file), cvsShortTimeOut, true);
+    const QStringList files = QStringList(file);
+    const CVSResponse revertResponse = runCVS(args, files, cvsShortTimeOut, true);
     if (revertResponse.result == CVSResponse::Ok) {
         fcb.setModifiedReload(true);
+        m_versionControl->emitFilesChanged(files);
     }
 }
 
@@ -639,7 +638,7 @@ void CVSPlugin::startCommit(const QString &source)
         return;
     if (VCSBase::VCSBaseSubmitEditor::raiseSubmitEditor())
         return;
-    if (m_changeTmpFile) {
+    if (isCommitEditorOpen()) {
         VCSBase::VCSBaseOutputWindow::instance()->appendWarning(tr("Another commit is currently being executed."));
         return;
     }
@@ -674,22 +673,21 @@ void CVSPlugin::startCommit(const QString &source)
     }
 
     // Create a new submit change file containing the submit template
-    QTemporaryFile *changeTmpFile = new QTemporaryFile(this);
-    changeTmpFile->setAutoRemove(true);
-    if (!changeTmpFile->open()) {
-        VCSBase::VCSBaseOutputWindow::instance()->appendError(tr("Cannot create temporary file: %1").arg(changeTmpFile->errorString()));
-        delete changeTmpFile;
+    QTemporaryFile changeTmpFile;
+    changeTmpFile.setAutoRemove(false);
+    if (!changeTmpFile.open()) {
+        VCSBase::VCSBaseOutputWindow::instance()->appendError(tr("Cannot create temporary file: %1").arg(changeTmpFile.errorString()));
         return;
     }
-    m_changeTmpFile = changeTmpFile;
     // TODO: Retrieve submit template from
     const QString submitTemplate;
+    m_commitMessageFileName = changeTmpFile.fileName();
     // Create a submit
-    m_changeTmpFile->write(submitTemplate.toUtf8());
-    m_changeTmpFile->flush();
-    m_changeTmpFile->close();
+    changeTmpFile.write(submitTemplate.toUtf8());
+    changeTmpFile.flush();
+    changeTmpFile.close();
     // Create a submit editor and set file list
-    CVSSubmitEditor *editor = openCVSSubmitEditor(m_changeTmpFile->fileName());
+    CVSSubmitEditor *editor = openCVSSubmitEditor(m_commitMessageFileName);
     editor->setStateList(statusOutput);
 }
 
@@ -738,7 +736,10 @@ void CVSPlugin::updateProject()
     if (!topLevels.empty()) {
         QStringList args(QLatin1String("update"));
         args.push_back(QLatin1String("-dR"));
-        runCVS(args, topLevels, cvsLongTimeOut, true);
+        const CVSResponse response = runCVS(args, topLevels, cvsLongTimeOut, true);
+        if (response.result == CVSResponse::Ok)
+            foreach(const QString &topLevel, topLevels)
+                m_versionControl->emitRepositoryChanged(topLevel);
     }
 }
 
@@ -758,14 +759,17 @@ void CVSPlugin::annotate(const QString &file)
 
     // Re-use an existing view if possible to support
     // the common usage pattern of continuously changing and diffing a file
+    const int lineNumber = VCSBase::VCSBaseEditor::lineNumberOfCurrentEditor(file);
 
     if (Core::IEditor *editor = locateEditor("annotateFileName", file)) {
         editor->createNew(response.stdOut);
+        VCSBase::VCSBaseEditor::gotoLineOfEditor(editor, lineNumber);
         Core::EditorManager::instance()->activateEditor(editor);
     } else {
         const QString title = QString::fromLatin1("cvs annotate %1").arg(QFileInfo(file).fileName());
         Core::IEditor *newEditor = showOutputInEditor(title, response.stdOut, VCSBase::AnnotateOutput, file, codec);
         newEditor->setProperty("annotateFileName", file);
+        VCSBase::VCSBaseEditor::gotoLineOfEditor(newEditor, lineNumber);
     }
 }
 
@@ -1076,7 +1080,7 @@ CVSResponse CVSPlugin::runCVS(const QString &workingDirectory,
         qDebug() << "runCVS" << timeOut << outputText;
 
     // Run, connect stderr to the output window
-    Core::Utils::SynchronousProcess process;
+    Utils::SynchronousProcess process;
     if (!response.workingDirectory.isEmpty())
         process.setWorkingDirectory(response.workingDirectory);
 
@@ -1096,25 +1100,25 @@ CVSResponse CVSPlugin::runCVS(const QString &workingDirectory,
         connect(&process, SIGNAL(stdOutBuffered(QString,bool)), outputWindow, SLOT(append(QString)));
     }
 
-    const Core::Utils::SynchronousProcessResponse sp_resp = process.run(executable, allArgs);
+    const Utils::SynchronousProcessResponse sp_resp = process.run(executable, allArgs);
     response.result = CVSResponse::OtherError;
     response.stdErr = sp_resp.stdErr;
     response.stdOut = sp_resp.stdOut;
     switch (sp_resp.result) {
-    case Core::Utils::SynchronousProcessResponse::Finished:
+    case Utils::SynchronousProcessResponse::Finished:
         response.result = CVSResponse::Ok;
         break;
-    case Core::Utils::SynchronousProcessResponse::FinishedError:
+    case Utils::SynchronousProcessResponse::FinishedError:
         response.result = CVSResponse::NonNullExitCode;
         response.message = tr("The process terminated with exit code %1.").arg(sp_resp.exitCode);
         break;
-    case Core::Utils::SynchronousProcessResponse::TerminatedAbnormally:
+    case Utils::SynchronousProcessResponse::TerminatedAbnormally:
         response.message = tr("The process terminated abnormally.");
         break;
-    case Core::Utils::SynchronousProcessResponse::StartFailed:
+    case Utils::SynchronousProcessResponse::StartFailed:
         response.message = tr("Could not start cvs '%1'. Please check your settings in the preferences.").arg(executable);
         break;
-    case Core::Utils::SynchronousProcessResponse::Hang:
+    case Utils::SynchronousProcessResponse::Hang:
         response.message = tr("CVS did not respond within timeout limit (%1 ms).").arg(timeOut);
         break;
     }

@@ -40,6 +40,7 @@
 #include <coreplugin/ifile.h>
 #include <projectexplorer/buildstep.h>
 #include <projectexplorer/environmenteditmodel.h>
+#include <projectexplorer/persistentsettings.h>
 #include <utils/qtcassert.h>
 
 #include <QtGui/QFormLayout>
@@ -47,21 +48,19 @@
 #include <QtGui/QLabel>
 #include <QtGui/QCheckBox>
 #include <QtGui/QToolButton>
-#include <QtGui/QGroupBox>
 #include <QtGui/QComboBox>
 
 using namespace Qt4ProjectManager::Internal;
 using namespace Qt4ProjectManager;
-using ProjectExplorer::ApplicationRunConfiguration;
+using ProjectExplorer::LocalApplicationRunConfiguration;
 using ProjectExplorer::PersistentSettingsReader;
 using ProjectExplorer::PersistentSettingsWriter;
 
 Qt4RunConfiguration::Qt4RunConfiguration(Qt4Project *pro, const QString &proFilePath)
-    : ApplicationRunConfiguration(pro),
+    : LocalApplicationRunConfiguration(pro),
       m_proFilePath(proFilePath),
       m_runMode(Gui),
       m_userSetName(false),
-      m_configWidget(0),
       m_cachedTargetInformationValid(false),
       m_isUsingDyldImageSuffix(false),
       m_userSetWokingDirectory(false),
@@ -94,17 +93,18 @@ QString Qt4RunConfiguration::type() const
     return "Qt4ProjectManager.Qt4RunConfiguration";
 }
 
-bool Qt4RunConfiguration::isEnabled() const
+bool Qt4RunConfiguration::isEnabled(ProjectExplorer::BuildConfiguration *configuration) const
 {
 #ifdef QTCREATOR_WITH_S60
     Qt4Project *pro = qobject_cast<Qt4Project*>(project());
     QTC_ASSERT(pro, return false);
-    ProjectExplorer::ToolChain::ToolChainType type = pro->toolChainType(pro->activeBuildConfiguration());
+    ProjectExplorer::ToolChain::ToolChainType type = pro->toolChainType(configuration);
     return type != ProjectExplorer::ToolChain::WINSCW
             && type != ProjectExplorer::ToolChain::GCCE
             && type != ProjectExplorer::ToolChain::RVCT_ARMV5
             && type != ProjectExplorer::ToolChain::RVCT_ARMV6;
 #else
+    Q_UNUSED(configuration);
     return true;
 #endif
 }
@@ -120,7 +120,14 @@ Qt4RunConfigurationWidget::Qt4RunConfigurationWidget(Qt4RunConfiguration *qt4Run
     m_usingDyldImageSuffix(0),
     m_isShown(false)
 {
-    QFormLayout *toplayout = new QFormLayout();
+    QVBoxLayout *vboxTopLayout = new QVBoxLayout(this);
+    vboxTopLayout->setMargin(0);
+
+    m_detailsContainer = new Utils::DetailsWidget(this);
+    vboxTopLayout->addWidget(m_detailsContainer);
+    QWidget *detailsWidget = new QWidget(m_detailsContainer);
+    m_detailsContainer->setWidget(detailsWidget);
+    QFormLayout *toplayout = new QFormLayout(detailsWidget);
     toplayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     toplayout->setMargin(0);
 
@@ -132,9 +139,9 @@ Qt4RunConfigurationWidget::Qt4RunConfigurationWidget(Qt4RunConfiguration *qt4Run
     m_executableLabel = new QLabel(m_qt4RunConfiguration->executable());
     toplayout->addRow(tr("Executable:"), m_executableLabel);
 
-    m_workingDirectoryEdit = new Core::Utils::PathChooser();
+    m_workingDirectoryEdit = new Utils::PathChooser();
     m_workingDirectoryEdit->setPath(m_qt4RunConfiguration->workingDirectory());
-    m_workingDirectoryEdit->setExpectedKind(Core::Utils::PathChooser::Directory);
+    m_workingDirectoryEdit->setExpectedKind(Utils::PathChooser::Directory);
     m_workingDirectoryEdit->setPromptDialogTitle(tr("Select the working directory"));
 
     QToolButton *resetButton = new QToolButton();
@@ -142,6 +149,7 @@ Qt4RunConfigurationWidget::Qt4RunConfigurationWidget(Qt4RunConfiguration *qt4Run
     resetButton->setIcon(QIcon(":/core/images/reset.png"));
 
     QHBoxLayout *boxlayout = new QHBoxLayout();
+    boxlayout->setMargin(0);
     boxlayout->addWidget(m_workingDirectoryEdit);
     boxlayout->addWidget(resetButton);
     toplayout->addRow(tr("Working Directory:"), boxlayout);
@@ -152,7 +160,7 @@ Qt4RunConfigurationWidget::Qt4RunConfigurationWidget(Qt4RunConfiguration *qt4Run
     toplayout->addRow(argumentsLabel, m_argumentsLineEdit);
 
     m_useTerminalCheck = new QCheckBox(tr("Run in Terminal"));
-    m_useTerminalCheck->setChecked(m_qt4RunConfiguration->runMode() == ProjectExplorer::ApplicationRunConfiguration::Console);
+    m_useTerminalCheck->setChecked(m_qt4RunConfiguration->runMode() == ProjectExplorer::LocalApplicationRunConfiguration::Console);
     toplayout->addRow(QString(), m_useTerminalCheck);
 
 #ifdef Q_OS_MAC
@@ -163,17 +171,13 @@ Qt4RunConfigurationWidget::Qt4RunConfigurationWidget(Qt4RunConfiguration *qt4Run
             this, SLOT(usingDyldImageSuffixToggled(bool)));
 #endif
 
-    QVBoxLayout *vbox = new QVBoxLayout(this);
-    vbox->setContentsMargins(0, -1, 0, -1);
-    vbox->addLayout(toplayout);
-
     QLabel *environmentLabel = new QLabel(this);
     environmentLabel->setText(tr("Run Environment"));
     QFont f = environmentLabel->font();
     f.setBold(true);
     f.setPointSizeF(f.pointSizeF() *1.2);
     environmentLabel->setFont(f);
-    vbox->addWidget(environmentLabel);
+    vboxTopLayout->addWidget(environmentLabel);
 
     QWidget *baseEnvironmentWidget = new QWidget;
     QHBoxLayout *baseEnvironmentLayout = new QHBoxLayout(baseEnvironmentWidget);
@@ -195,7 +199,7 @@ Qt4RunConfigurationWidget::Qt4RunConfigurationWidget(Qt4RunConfiguration *qt4Run
     m_environmentWidget->setBaseEnvironment(m_qt4RunConfiguration->baseEnvironment());
     m_environmentWidget->setUserChanges(m_qt4RunConfiguration->userEnvironmentChanges());
     m_environmentWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    vbox->addWidget(m_environmentWidget);
+    vboxTopLayout->addWidget(m_environmentWidget);
 
     connect(m_workingDirectoryEdit, SIGNAL(changed(QString)),
             this, SLOT(setWorkingDirectory()));
@@ -220,8 +224,8 @@ Qt4RunConfigurationWidget::Qt4RunConfigurationWidget(Qt4RunConfiguration *qt4Run
             this, SLOT(commandLineArgumentsChanged(QString)));
     connect(qt4RunConfiguration, SIGNAL(nameChanged(QString)),
             this, SLOT(nameChanged(QString)));
-    connect(qt4RunConfiguration, SIGNAL(runModeChanged(ProjectExplorer::ApplicationRunConfiguration::RunMode)),
-            this, SLOT(runModeChanged(ProjectExplorer::ApplicationRunConfiguration::RunMode)));
+    connect(qt4RunConfiguration, SIGNAL(runModeChanged(ProjectExplorer::LocalApplicationRunConfiguration::RunMode)),
+            this, SLOT(runModeChanged(ProjectExplorer::LocalApplicationRunConfiguration::RunMode)));
     connect(qt4RunConfiguration, SIGNAL(usingDyldImageSuffixChanged(bool)),
             this, SLOT(usingDyldImageSuffixChanged(bool)));
     connect(qt4RunConfiguration, SIGNAL(effectiveTargetInformationChanged()),
@@ -232,6 +236,17 @@ Qt4RunConfigurationWidget::Qt4RunConfigurationWidget(Qt4RunConfiguration *qt4Run
 
     connect(qt4RunConfiguration, SIGNAL(baseEnvironmentChanged()),
             this, SLOT(baseEnvironmentChanged()));
+}
+
+void Qt4RunConfigurationWidget::updateSummary()
+{
+    const QString &filename = QFileInfo(m_qt4RunConfiguration->executable()).fileName();
+    const QString &arguments = ProjectExplorer::Environment::joinArgumentList(m_qt4RunConfiguration->commandLineArguments());
+    const bool terminal = m_qt4RunConfiguration->runMode() == LocalApplicationRunConfiguration::Console;
+    const QString text = terminal ?
+                         tr("Running executable: <b>%1</b> %2 (in terminal)").arg(filename, arguments) :
+                         tr("Running executable: <b>%1</b> %2").arg(filename, arguments);
+    m_detailsContainer->setSummaryText(text);
 }
 
 void Qt4RunConfigurationWidget::baseEnvironmentComboBoxChanged(int index)
@@ -299,8 +314,8 @@ void Qt4RunConfigurationWidget::nameEdited(const QString &name)
 void Qt4RunConfigurationWidget::termToggled(bool on)
 {
     m_ignoreChange = true;
-    m_qt4RunConfiguration->setRunMode(on ? ApplicationRunConfiguration::Console
-                                         : ApplicationRunConfiguration::Gui);
+    m_qt4RunConfiguration->setRunMode(on ? LocalApplicationRunConfiguration::Console
+                                         : LocalApplicationRunConfiguration::Gui);
     m_ignoreChange = false;
 }
 
@@ -319,8 +334,10 @@ void Qt4RunConfigurationWidget::workingDirectoryChanged(const QString &workingDi
 
 void Qt4RunConfigurationWidget::commandLineArgumentsChanged(const QString &args)
 {
-    if (!m_ignoreChange)
-        m_argumentsLineEdit->setText(args);
+    updateSummary();
+    if (m_ignoreChange)
+        return;
+    m_argumentsLineEdit->setText(args);
 }
 
 void Qt4RunConfigurationWidget::nameChanged(const QString &name)
@@ -329,10 +346,11 @@ void Qt4RunConfigurationWidget::nameChanged(const QString &name)
         m_nameLineEdit->setText(name);
 }
 
-void Qt4RunConfigurationWidget::runModeChanged(ApplicationRunConfiguration::RunMode runMode)
+void Qt4RunConfigurationWidget::runModeChanged(LocalApplicationRunConfiguration::RunMode runMode)
 {
+    updateSummary();
     if (!m_ignoreChange)
-        m_useTerminalCheck->setChecked(runMode == ApplicationRunConfiguration::Console);
+        m_useTerminalCheck->setChecked(runMode == LocalApplicationRunConfiguration::Console);
 }
 
 void Qt4RunConfigurationWidget::usingDyldImageSuffixChanged(bool state)
@@ -343,6 +361,7 @@ void Qt4RunConfigurationWidget::usingDyldImageSuffixChanged(bool state)
 
 void Qt4RunConfigurationWidget::effectiveTargetInformationChanged()
 {
+    updateSummary();
     if (m_isShown) {
         m_executableLabel->setText(QDir::toNativeSeparators(m_qt4RunConfiguration->executable()));
         m_ignoreChange = true;
@@ -382,12 +401,12 @@ void Qt4RunConfiguration::save(PersistentSettingsWriter &writer) const
     writer.saveValue("BaseEnvironmentBase", m_baseEnvironmentBase);
     writer.saveValue("UserSetWorkingDirectory", m_userSetWokingDirectory);
     writer.saveValue("UserWorkingDirectory", m_userWorkingDirectory);
-    ApplicationRunConfiguration::save(writer);
+    LocalApplicationRunConfiguration::save(writer);
 }
 
 void Qt4RunConfiguration::restore(const PersistentSettingsReader &reader)
 {    
-    ApplicationRunConfiguration::restore(reader);
+    LocalApplicationRunConfiguration::restore(reader);
     const QDir projectDir = QFileInfo(project()->file()->fileName()).absoluteDir();
     m_commandLineArguments = reader.restoreValue("CommandLineArguments").toStringList();
     m_proFilePath = projectDir.filePath(reader.restoreValue("ProFile").toString());
@@ -413,7 +432,7 @@ QString Qt4RunConfiguration::executable() const
     return m_executable;
 }
 
-ApplicationRunConfiguration::RunMode Qt4RunConfiguration::runMode() const
+LocalApplicationRunConfiguration::RunMode Qt4RunConfiguration::runMode() const
 {
     return m_runMode;
 }
@@ -453,7 +472,6 @@ ProjectExplorer::Environment Qt4RunConfiguration::baseEnvironment() const
     } else  if (m_baseEnvironmentBase == Qt4RunConfiguration::SystemEnvironmentBase) {
         env = ProjectExplorer::Environment::systemEnvironment();
     } else  if (m_baseEnvironmentBase == Qt4RunConfiguration::BuildEnvironmentBase) {
-        QString config = project()->activeBuildConfiguration();
         env = project()->environment(project()->activeBuildConfiguration());
     }
     if (m_isUsingDyldImageSuffix) {
@@ -544,7 +562,7 @@ void Qt4RunConfiguration::updateTarget()
 
     // Find out what flags we pass on to qmake, this code is duplicated in the qmake step
     QtVersion::QmakeBuildConfig defaultBuildConfiguration = pro->qtVersion(pro->activeBuildConfiguration())->defaultBuildConfig();
-    QtVersion::QmakeBuildConfig projectBuildConfiguration = QtVersion::QmakeBuildConfig(pro->value(pro->activeBuildConfiguration(), "buildConfiguration").toInt());
+    QtVersion::QmakeBuildConfig projectBuildConfiguration = QtVersion::QmakeBuildConfig(pro->activeBuildConfiguration()->value("buildConfiguration").toInt());
     QStringList addedUserConfigArguments;
     QStringList removedUserConfigArguments;
     if ((defaultBuildConfiguration & QtVersion::BuildAll) && !(projectBuildConfiguration & QtVersion::BuildAll))

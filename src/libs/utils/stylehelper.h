@@ -32,14 +32,17 @@
 
 #include "utils_global.h"
 
-#include <QtCore/QRect>
-#include <QtGui/QPainter>
-#include <QtGui/QApplication>
-#include <QtGui/QPalette>
 #include <QtGui/QColor>
+
+QT_BEGIN_NAMESPACE
+class QPalette;
+class QPainter;
+class QRect;
+QT_END_NAMESPACE
 
 // Helper class holding all custom color values
 
+namespace Utils {
 class QTCREATOR_UTILS_EXPORT StyleHelper
 {
 public:
@@ -72,4 +75,5 @@ private:
     static QColor m_baseColor;
 };
 
+} // namespace Utils
 #endif // STYLEHELPER_H

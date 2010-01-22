@@ -53,8 +53,8 @@
 #include <cstring>
 #include <cstdlib>
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
+
+namespace CPlusPlus {
 
 template <typename _Literal>
 class LiteralTable
@@ -101,7 +101,21 @@ public:
     iterator end() const
     { return _literals + _literalCount + 1; }
 
-    _Literal *findOrInsertLiteral(const char *chars, unsigned size)
+    _Literal *findLiteral(const char *chars, unsigned size) const
+    {
+       if (_buckets) {
+           unsigned h = _Literal::hashCode(chars, size);
+           _Literal *literal = _buckets[h % _allocatedBuckets];
+           for (; literal; literal = static_cast<_Literal *>(literal->_next)) {
+               if (literal->size() == size && ! std::strncmp(literal->chars(), chars, size))
+                  return literal;
+           }
+       }
+
+       return 0;
+   }
+
+   _Literal *findOrInsertLiteral(const char *chars, unsigned size)
     {
        if (_buckets) {
            unsigned h = _Literal::hashCode(chars, size);
@@ -161,8 +175,6 @@ protected:
     }
 
 protected:
-    MemoryPool *_pool;
-
     _Literal **_literals;
     int _allocatedLiterals;
     int _literalCount;
@@ -171,7 +183,7 @@ protected:
     int _allocatedBuckets;
 };
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // CPLUSPLUS_LITERALTABLE_H

@@ -34,6 +34,8 @@
 #include "compileoutputwindow.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorer.h"
+#include "project.h"
+#include "projectexplorersettings.h"
 #include "taskwindow.h"
 
 #include <coreplugin/icore.h>
@@ -44,6 +46,9 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QTimer>
+
+#include <qtconcurrent/QtConcurrentTools>
+
 #include <QtGui/QHeaderView>
 #include <QtGui/QIcon>
 #include <QtGui/QLabel>
@@ -184,8 +189,10 @@ void BuildManager::gotoTaskWindow()
 
 void BuildManager::startBuildQueue()
 {
-    if (m_buildQueue.isEmpty())
+    if (m_buildQueue.isEmpty()) {
+        emit buildQueueFinished(true);
         return;
+    }
     if (!m_running) {
         // Progress Reporting
         Core::ProgressManager *progressManager = Core::ICore::instance()->progressManager();
@@ -327,14 +334,16 @@ void BuildManager::buildProjects(const QList<Project *> &projects, const QList<Q
     end = projects.constEnd();
 
     for (it = projects.constBegin(); it != end; ++it, ++cit) {
-        QList<BuildStep *> buildSteps = (*it)->buildSteps();
-        foreach (BuildStep *bs, buildSteps) {
-            buildQueueAppend(bs, *cit);
+        if (*cit != QString::null) {
+            QList<BuildStep *> buildSteps = (*it)->buildSteps();
+            foreach (BuildStep *bs, buildSteps) {
+                buildQueueAppend(bs, *cit);
+            }
         }
     }
-    startBuildQueue();
     if (ProjectExplorerPlugin::instance()->projectExplorerSettings().showCompilerOutput)
         m_outputWindow->popup(false);
+    startBuildQueue();
 }
 
 void BuildManager::cleanProjects(const QList<Project *> &projects, const QList<QString> &configurations)
@@ -350,9 +359,9 @@ void BuildManager::cleanProjects(const QList<Project *> &projects, const QList<Q
             buildQueueAppend(bs, *cit);
         }
     }
-    startBuildQueue();
     if (ProjectExplorerPlugin::instance()->projectExplorerSettings().showCompilerOutput)
         m_outputWindow->popup(false);
+    startBuildQueue();
 }
 
 void BuildManager::buildProject(Project *p, const QString &configuration)

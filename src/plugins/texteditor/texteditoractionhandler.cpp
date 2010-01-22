@@ -33,7 +33,7 @@
 #include "texteditorplugin.h"
 #include "linenumberfilter.h"
 
-#include <quickopen/quickopenmanager.h>
+#include <locator/locatormanager.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/uniqueidmanager.h>
@@ -50,7 +50,7 @@ using namespace TextEditor;
 using namespace TextEditor::Internal;
 
 TextEditorActionHandler::TextEditorActionHandler(const QString &context,
-                                                 uint optionalActions) 
+                                                 uint optionalActions)
   : QObject(Core::ICore::instance()),
     m_undoAction(0),
     m_redoAction(0),
@@ -141,11 +141,15 @@ void TextEditorActionHandler::createActions()
     advancedMenu->addAction(command, Core::Constants::G_EDIT_FORMAT);
     connect(m_formatAction, SIGNAL(triggered(bool)), this, SLOT(formatAction()));
 
+#ifdef Q_WS_MAC
+    QString modifier = tr("Meta");
+#else
+    QString modifier = tr("Ctrl");
+#endif
+
     m_rewrapParagraphAction = new QAction(tr("&Rewrap Paragraph"), this);
     command = am->registerAction(m_rewrapParagraphAction, TextEditor::Constants::REWRAP_PARAGRAPH, m_contextId);
-#ifndef Q_WS_MAC
-    command->setDefaultKeySequence(QKeySequence(tr("Ctrl+E, R")));
-#endif
+    command->setDefaultKeySequence(QKeySequence(tr("%1+E, R").arg(modifier)));
     advancedMenu->addAction(command, Core::Constants::G_EDIT_FORMAT);
     connect(m_rewrapParagraphAction, SIGNAL(triggered(bool)), this, SLOT(rewrapParagraphAction()));
 
@@ -154,9 +158,7 @@ void TextEditorActionHandler::createActions()
     m_visualizeWhitespaceAction->setCheckable(true);
     command = am->registerAction(m_visualizeWhitespaceAction,
                                  TextEditor::Constants::VISUALIZE_WHITESPACE, m_contextId);
-#ifndef Q_WS_MAC
-    command->setDefaultKeySequence(QKeySequence(tr("Ctrl+E, Ctrl+V")));
-#endif
+    command->setDefaultKeySequence(QKeySequence(tr("%1+E, %2+V").arg(modifier, modifier)));
     advancedMenu->addAction(command, Core::Constants::G_EDIT_FORMAT);
     connect(m_visualizeWhitespaceAction, SIGNAL(triggered(bool)), this, SLOT(setVisualizeWhitespace(bool)));
 
@@ -170,9 +172,7 @@ void TextEditorActionHandler::createActions()
     m_textWrappingAction = new QAction(tr("Enable Text &Wrapping"), this);
     m_textWrappingAction->setCheckable(true);
     command = am->registerAction(m_textWrappingAction, TextEditor::Constants::TEXT_WRAPPING, m_contextId);
-#ifndef Q_WS_MAC
-    command->setDefaultKeySequence(QKeySequence(tr("Ctrl+E, Ctrl+W")));
-#endif
+    command->setDefaultKeySequence(QKeySequence(tr("%1+E, %2+W").arg(modifier, modifier)));
     advancedMenu->addAction(command, Core::Constants::G_EDIT_FORMAT);
     connect(m_textWrappingAction, SIGNAL(triggered(bool)), this, SLOT(setTextWrapping(bool)));
 
@@ -214,7 +214,7 @@ void TextEditorActionHandler::createActions()
     command->setDefaultKeySequence(QKeySequence(tr("Ctrl++")));
     connect(m_increaseFontSizeAction, SIGNAL(triggered()), this, SLOT(increaseFontSize()));
     advancedMenu->addAction(command, Core::Constants::G_EDIT_FONT);
-    
+
     m_decreaseFontSizeAction = new QAction(tr("Decrease Font Size"), this);
     command = am->registerAction(m_decreaseFontSizeAction, Constants::DECREASE_FONT_SIZE, m_contextId);
     command->setDefaultKeySequence(QKeySequence(tr("Ctrl+-")));
@@ -225,11 +225,13 @@ void TextEditorActionHandler::createActions()
     command = am->registerAction(m_gotoBlockStartAction, Constants::GOTO_BLOCK_START, m_contextId);
     command->setDefaultKeySequence(QKeySequence(tr("Ctrl+[")));
     connect(m_gotoBlockStartAction, SIGNAL(triggered()), this, SLOT(gotoBlockStart()));
+    advancedMenu->addAction(command, Core::Constants::G_EDIT_BLOCKS);
 
     m_gotoBlockEndAction = new QAction(tr("Goto Block End"), this);
     command = am->registerAction(m_gotoBlockEndAction, Constants::GOTO_BLOCK_END, m_contextId);
     command->setDefaultKeySequence(QKeySequence(tr("Ctrl+]")));
     connect(m_gotoBlockEndAction, SIGNAL(triggered()), this, SLOT(gotoBlockEnd()));
+    advancedMenu->addAction(command, Core::Constants::G_EDIT_BLOCKS);
 
     m_gotoBlockStartWithSelectionAction = new QAction(tr("Goto Block Start With Selection"), this);
     command = am->registerAction(m_gotoBlockStartWithSelectionAction, Constants::GOTO_BLOCK_START_WITH_SELECTION, m_contextId);
@@ -245,11 +247,12 @@ void TextEditorActionHandler::createActions()
     command = am->registerAction(m_selectBlockUpAction, Constants::SELECT_BLOCK_UP, m_contextId);
     command->setDefaultKeySequence(QKeySequence(tr("Ctrl+U")));
     connect(m_selectBlockUpAction, SIGNAL(triggered()), this, SLOT(selectBlockUp()));
+    advancedMenu->addAction(command, Core::Constants::G_EDIT_BLOCKS);
 
     m_selectBlockDownAction= new QAction(tr("Select Block Down"), this);
     command = am->registerAction(m_selectBlockDownAction, Constants::SELECT_BLOCK_DOWN, m_contextId);
-    command->setDefaultKeySequence(QKeySequence(tr("Ctrl+Shift+U")));
     connect(m_selectBlockDownAction, SIGNAL(triggered()), this, SLOT(selectBlockDown()));
+    advancedMenu->addAction(command, Core::Constants::G_EDIT_BLOCKS);
 
     m_moveLineUpAction= new QAction(tr("Move Line Up"), this);
     command = am->registerAction(m_moveLineUpAction, Constants::MOVE_LINE_UP, m_contextId);
@@ -322,7 +325,6 @@ void TextEditorActionHandler::updateActions(UpdateMode um)
     m_moveLineDownAction->setEnabled(um != ReadOnlyMode);
 
     m_formatAction->setEnabled((m_optionalActions & Format));
-    m_unCommentSelectionAction->setEnabled((m_optionalActions & UnCommentSelection));
     m_unCollapseAllAction->setEnabled((m_optionalActions & UnCollapseAll));
     m_visualizeWhitespaceAction->setChecked(m_currentEditor->displaySettings().m_visualizeWhitespace);
     if (m_textWrappingAction) {
@@ -358,11 +360,13 @@ void TextEditorActionHandler::updateCopyAction()
 
 void TextEditorActionHandler::gotoAction()
 {
-    QuickOpen::QuickOpenManager *quickopen = QuickOpen::QuickOpenManager::instance();
-    QTC_ASSERT(quickopen, return);
-    const QString shortcut = TextEditorPlugin::instance()->lineNumberFilter()->shortcutString();
-    const QString text = tr(" <line number>");
-    quickopen->show(shortcut + text, 2, text.length()-1);
+    Locator::LocatorManager *locatorManager = Locator::LocatorManager::instance();
+    QTC_ASSERT(locatorManager, return);
+    QString locatorString = TextEditorPlugin::instance()->lineNumberFilter()->shortcutString();
+    locatorString += QLatin1Char(' ');
+    const int selectionStart = locatorString.size();
+    locatorString += tr("<line number>");
+    locatorManager->show(locatorString, selectionStart, locatorString.size() - selectionStart);
 }
 
 void TextEditorActionHandler::printAction()

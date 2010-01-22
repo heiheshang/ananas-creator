@@ -46,7 +46,7 @@
          </spacer>
         </item>
         <item>
-         <widget class="Core::Utils::QtColorButton" name="colorButton">
+         <widget class="Utils::QtColorButton" name="colorButton">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
             <horstretch>0</horstretch>
@@ -59,7 +59,7 @@
             <height>0</height>
            </size>
           </property>
-          <property name="alphaAllowed" stdset="0">
+          <property name="alphaAllowed">
            <bool>false</bool>
           </property>
          </widget>
@@ -163,6 +163,9 @@
           <property name="text">
            <string>When files are externally modified:</string>
           </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
          </widget>
         </item>
         <item>
@@ -193,19 +196,6 @@
           </item>
          </widget>
         </item>
-        <item>
-         <spacer name="horizontalSpacer_3">
-          <property name="orientation">
-           <enum>Qt::Horizontal</enum>
-          </property>
-          <property name="sizeHint" stdset="0">
-           <size>
-            <width>40</width>
-            <height>20</height>
-           </size>
-          </property>
-         </spacer>
-        </item>
        </layout>
       </item>
      </layout>
@@ -228,7 +218,7 @@
  </widget>
  <customwidgets>
   <customwidget>
-   <class>Core::Utils::QtColorButton</class>
+   <class>Utils::QtColorButton</class>
    <extends>QToolButton</extends>
    <header location="global">utils/qtcolorbutton.h</header>
   </customwidget>

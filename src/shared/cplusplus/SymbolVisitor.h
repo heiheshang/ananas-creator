@@ -51,8 +51,8 @@
 
 #include "CPlusPlusForwardDeclarations.h"
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
+
+namespace CPlusPlus {
 
 class CPLUSPLUS_EXPORT SymbolVisitor
 {
@@ -81,6 +81,8 @@ public:
     virtual bool visit(ForwardClassDeclaration *) { return true; }
 
     // Objective-C
+    virtual bool visit(ObjCBaseClass *) { return true; }
+    virtual bool visit(ObjCBaseProtocol *) { return true; }
     virtual bool visit(ObjCClass *) { return true; }
     virtual bool visit(ObjCForwardClassDeclaration *) { return true; }
     virtual bool visit(ObjCProtocol *) { return true; }
@@ -88,7 +90,7 @@ public:
     virtual bool visit(ObjCMethod *) { return true; }
 };
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // SYMBOLVISITOR_H

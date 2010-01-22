@@ -68,6 +68,7 @@ CodepasterPlugin::CodepasterPlugin()
 
 CodepasterPlugin::~CodepasterPlugin()
 {
+    qDeleteAll(m_protocols);
 }
 
 bool CodepasterPlugin::initialize(const QStringList &arguments, QString *error_message)
@@ -106,24 +107,20 @@ bool CodepasterPlugin::initialize(const QStringList &arguments, QString *error_m
 
     Core::ActionContainer *cpContainer =
         actionManager->createMenu(QLatin1String("CodePaster"));
-    cpContainer->menu()->setTitle(tr("&CodePaster"));
+    cpContainer->menu()->setTitle(tr("&Code Pasting"));
     toolsContainer->addMenu(cpContainer);
 
     Core::Command *command;
 
     m_postAction = new QAction(tr("Paste Snippet..."), this);
     command = actionManager->registerAction(m_postAction, "CodePaster.Post", globalcontext);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+C,Alt+P")));
-#endif
     connect(m_postAction, SIGNAL(triggered()), this, SLOT(post()));
     cpContainer->addAction(command);
 
     m_fetchAction = new QAction(tr("Fetch Snippet..."), this);
     command = actionManager->registerAction(m_fetchAction, "CodePaster.Fetch", globalcontext);
-#ifndef Q_WS_MAC
     command->setDefaultKeySequence(QKeySequence(tr("Alt+C,Alt+F")));
-#endif
     connect(m_fetchAction, SIGNAL(triggered()), this, SLOT(fetch()));
     cpContainer->addAction(command);
 

@@ -32,12 +32,16 @@
 #include "qmlmakestep.h"
 
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/persistentsettings.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <extensionsystem/pluginmanager.h>
 #include <utils/pathchooser.h>
 #include <utils/qtcassert.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/editormanager/editormanager.h>
+#include <coreplugin/editormanager/ieditor.h>
+
+#include <qmleditor/qmlmodelmanagerinterface.h>
 
 #include <utils/synchronousprocess.h>
 #include <utils/pathchooser.h>
@@ -52,9 +56,11 @@
 #include <QtGui/QMainWindow>
 #include <QtGui/QComboBox>
 #include <QtGui/QMessageBox>
+#include <QtGui/QLineEdit>
 
 using namespace QmlProjectManager;
 using namespace QmlProjectManager::Internal;
+using namespace ProjectExplorer;
 
 ////////////////////////////////////////////////////////////////////////////////////
 // QmlProject
@@ -62,7 +68,8 @@ using namespace QmlProjectManager::Internal;
 
 QmlProject::QmlProject(Manager *manager, const QString &fileName)
     : m_manager(manager),
-      m_fileName(fileName)
+      m_fileName(fileName),
+      m_modelManager(ExtensionSystem::PluginManager::instance()->getObject<QmlEditor::QmlModelManagerInterface>())
 {
     QFileInfo fileInfo(m_fileName);
     m_projectName = fileInfo.completeBaseName();
@@ -118,6 +125,7 @@ void QmlProject::parseProject(RefreshOptions options)
     if (options & Files) {
         m_files = convertToAbsoluteFiles(readLines(filesFileName()));
         m_files.removeDuplicates();
+        m_modelManager->updateSourceFiles(m_files);
     }
 
     if (options & Configuration) {
@@ -155,8 +163,9 @@ QStringList QmlProject::convertToAbsoluteFiles(const QStringList &paths) const
 QStringList QmlProject::files() const
 { return m_files; }
 
-QString QmlProject::buildParser(const QString &) const
+QString QmlProject::buildParser(BuildConfiguration *configuration) const
 {
+    Q_UNUSED(configuration)
     return QString();
 }
 
@@ -190,13 +199,15 @@ bool QmlProject::hasBuildSettings() const
     return false;
 }
 
-ProjectExplorer::Environment QmlProject::environment(const QString &) const
+ProjectExplorer::Environment QmlProject::environment(BuildConfiguration *configuration) const
 {
+    Q_UNUSED(configuration)
     return ProjectExplorer::Environment::systemEnvironment();
 }
 
-QString QmlProject::buildDirectory(const QString &) const
+QString QmlProject::buildDirectory(BuildConfiguration *configuration) const
 {
+    Q_UNUSED(configuration)
     return QString();
 }
 
@@ -210,8 +221,9 @@ QList<ProjectExplorer::BuildConfigWidget*> QmlProject::subConfigWidgets()
     return QList<ProjectExplorer::BuildConfigWidget*>();
 }
 
-void QmlProject::newBuildConfiguration(const QString &)
+ProjectExplorer::IBuildConfigurationFactory *QmlProject::buildConfigurationFactory() const
 {
+    return 0;
 }
 
 QmlProjectNode *QmlProject::rootProjectNode() const
@@ -320,13 +332,18 @@ void QmlProjectFile::modified(ReloadBehavior *)
 }
 
 QmlRunConfiguration::QmlRunConfiguration(QmlProject *pro)
-    : ProjectExplorer::ApplicationRunConfiguration(pro),
+    : ProjectExplorer::LocalApplicationRunConfiguration(pro),
       m_project(pro),
       m_type(Constants::QMLRUNCONFIGURATION)
 {
     setName(tr("QML Viewer"));
 
-    m_qmlViewer = Core::Utils::SynchronousProcess::locateBinary(QLatin1String("qmlviewer"));
+    // append creator/bin dir to search path (only useful for special creator-qml package)
+    const QString searchPath = QString(qgetenv("PATH"))
+                               + Utils::SynchronousProcess::pathSeparator()
+                               + QCoreApplication::applicationDirPath()
+;
+    m_qmlViewerDefaultPath = Utils::SynchronousProcess::locateBinary(searchPath, QLatin1String("qmlviewer"));
 }
 
 QmlRunConfiguration::~QmlRunConfiguration()
@@ -340,13 +357,9 @@ QString QmlRunConfiguration::type() const
 
 QString QmlRunConfiguration::executable() const
 {
-    if (! QFile::exists(m_qmlViewer)) {
-        QMessageBox::information(Core::ICore::instance()->mainWindow(),
-                                 tr("QML Viewer"),
-                                 tr("Could not find the qmlviewer executable, please specify one."));
-    }
-
-    return m_qmlViewer;
+    if (!m_qmlViewerCustomPath.isEmpty())
+        return m_qmlViewerCustomPath;
+    return m_qmlViewerDefaultPath;
 }
 
 QmlRunConfiguration::RunMode QmlRunConfiguration::runMode() const
@@ -363,6 +376,9 @@ QString QmlRunConfiguration::workingDirectory() const
 QStringList QmlRunConfiguration::commandLineArguments() const
 {
     QStringList args;
+
+    if (!m_qmlViewerArgs.isEmpty())
+        args.append(m_qmlViewerArgs);
 
     const QString s = mainScript();
     if (! s.isEmpty())
@@ -418,12 +434,17 @@ QWidget *QmlRunConfiguration::configurationWidget()
 
     connect(combo, SIGNAL(activated(QString)), this, SLOT(setMainScript(QString)));
 
-    Core::Utils::PathChooser *qmlViewer = new Core::Utils::PathChooser;
-    qmlViewer->setExpectedKind(Core::Utils::PathChooser::Command);
+    Utils::PathChooser *qmlViewer = new Utils::PathChooser;
+    qmlViewer->setExpectedKind(Utils::PathChooser::Command);
     qmlViewer->setPath(executable());
     connect(qmlViewer, SIGNAL(changed(QString)), this, SLOT(onQmlViewerChanged()));
 
+    QLineEdit *qmlViewerArgs = new QLineEdit;
+    qmlViewerArgs->setText(m_qmlViewerArgs);
+    connect(qmlViewerArgs, SIGNAL(textChanged(QString)), this, SLOT(onQmlViewerArgsChanged()));
+
     form->addRow(tr("QML Viewer"), qmlViewer);
+    form->addRow(tr("QML Viewer arguments:"), qmlViewerArgs);
     form->addRow(tr("Main QML File:"), combo);
 
     return config;
@@ -448,28 +469,33 @@ void QmlRunConfiguration::setMainScript(const QString &scriptFile)
 
 void QmlRunConfiguration::onQmlViewerChanged()
 {
-    if (Core::Utils::PathChooser *chooser = qobject_cast<Core::Utils::PathChooser *>(sender())) {
-        m_qmlViewer = chooser->path();
+    if (Utils::PathChooser *chooser = qobject_cast<Utils::PathChooser *>(sender())) {
+        m_qmlViewerCustomPath = chooser->path();
     }
+}
+
+void QmlRunConfiguration::onQmlViewerArgsChanged()
+{
+    if (QLineEdit *lineEdit = qobject_cast<QLineEdit*>(sender()))
+        m_qmlViewerArgs = lineEdit->text();
 }
 
 void QmlRunConfiguration::save(ProjectExplorer::PersistentSettingsWriter &writer) const
 {
-    ProjectExplorer::ApplicationRunConfiguration::save(writer);
+    ProjectExplorer::LocalApplicationRunConfiguration::save(writer);
 
-    writer.saveValue(QLatin1String("qmlviewer"), m_qmlViewer);
+    writer.saveValue(QLatin1String("qmlviewer"), m_qmlViewerCustomPath);
+    writer.saveValue(QLatin1String("qmlviewerargs"), m_qmlViewerArgs);
     writer.saveValue(QLatin1String("mainscript"), m_scriptFile);
 }
 
 void QmlRunConfiguration::restore(const ProjectExplorer::PersistentSettingsReader &reader)
 {
-    ProjectExplorer::ApplicationRunConfiguration::restore(reader);
+    ProjectExplorer::LocalApplicationRunConfiguration::restore(reader);
 
-    m_qmlViewer = reader.restoreValue(QLatin1String("qmlviewer")).toString();
+    m_qmlViewerCustomPath = reader.restoreValue(QLatin1String("qmlviewer")).toString();
+    m_qmlViewerArgs = reader.restoreValue(QLatin1String("qmlviewerargs")).toString();
     m_scriptFile = reader.restoreValue(QLatin1String("mainscript")).toString();
-
-    if (m_qmlViewer.isEmpty())
-        m_qmlViewer = Core::Utils::SynchronousProcess::locateBinary(QLatin1String("qmlviewer"));
 
     if (m_scriptFile.isEmpty())
         m_scriptFile = tr("<Current File>");

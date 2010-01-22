@@ -31,22 +31,30 @@
 
 #include "CPlusPlusForwardDeclarations.h"
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
+
+namespace CPlusPlus {
 
 enum {
   Token_in,
   Token_out,
+  Token_copy,
   Token_byref,
   Token_inout,
+  Token_assign,
   Token_bycopy,
+  Token_getter,
+  Token_retain,
+  Token_setter,
   Token_oneway,
+  Token_readonly,
+  Token_nonatomic,
+  Token_readwrite,
   Token_identifier
 };
 
 CPLUSPLUS_EXPORT int classifyObjectiveCTypeQualifiers(const char *s, int n);
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // CPLUSPLUS_OBJC_TYPEQUALIFIERS_H

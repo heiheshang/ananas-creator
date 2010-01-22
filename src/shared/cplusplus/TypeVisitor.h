@@ -51,8 +51,8 @@
 
 #include "CPlusPlusForwardDeclarations.h"
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
+
+namespace CPlusPlus {
 
 class CPLUSPLUS_EXPORT TypeVisitor
 {
@@ -84,9 +84,11 @@ public:
     virtual void visit(ObjCClass *) {}
     virtual void visit(ObjCProtocol *) {}
     virtual void visit(ObjCMethod *) {}
+    virtual void visit(ObjCForwardClassDeclaration *) {}
+    virtual void visit(ObjCForwardProtocolDeclaration*) {}
 };
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // CPLUSPLUS_TYPEVISITOR_H

@@ -33,6 +33,7 @@
 
 #include <projectexplorer/toolchain.h>
 #include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/persistentsettings.h>
 #include <cpptools/cppmodelmanagerinterface.h>
 #include <extensionsystem/pluginmanager.h>
 #include <utils/pathchooser.h>
@@ -47,6 +48,7 @@
 
 #include <QtGui/QFormLayout>
 #include <QtGui/QMainWindow>
+#include <QtGui/QInputDialog>
 #include <QtGui/QComboBox>
 #include <QtGui/QStringListModel>
 #include <QtGui/QListWidget>
@@ -54,6 +56,7 @@
 
 using namespace GenericProjectManager;
 using namespace GenericProjectManager::Internal;
+using namespace ProjectExplorer;
 
 namespace {
 
@@ -104,6 +107,50 @@ public:
 
 } // end of anonymous namespace
 
+/*!
+  \class GenericBuildConfigurationFactory
+*/
+
+GenericBuildConfigurationFactory::GenericBuildConfigurationFactory(GenericProject *project)
+    : IBuildConfigurationFactory(project),
+    m_project(project)
+{
+}
+
+GenericBuildConfigurationFactory::~GenericBuildConfigurationFactory()
+{
+}
+
+QStringList GenericBuildConfigurationFactory::availableCreationTypes() const
+{
+    return QStringList() << "Create";
+}
+
+QString GenericBuildConfigurationFactory::displayNameForType(const QString & /* type */) const
+{
+    return tr("Create");
+}
+
+bool GenericBuildConfigurationFactory::create(const QString &type) const
+{
+    QTC_ASSERT(type == "Create", return false);
+    //TODO asking for name is duplicated everywhere, but maybe more
+    // wizards will show up, that incorporate choosing the name
+    bool ok;
+    QString buildConfigurationName = QInputDialog::getText(0,
+                          tr("New configuration"),
+                          tr("New Configuration Name:"),
+                          QLineEdit::Normal,
+                          QString(),
+                          &ok);
+    if (!ok || buildConfigurationName.isEmpty())
+        return false;
+    BuildConfiguration *bc = new BuildConfiguration(buildConfigurationName);
+    m_project->addBuildConfiguration(bc); // also makes the name unique...
+    m_project->makeStep()->setBuildTarget(bc->name(), "all", true);
+    return true;
+}
+
 ////////////////////////////////////////////////////////////////////////////////////
 // GenericProject
 ////////////////////////////////////////////////////////////////////////////////////
@@ -111,6 +158,7 @@ public:
 GenericProject::GenericProject(Manager *manager, const QString &fileName)
     : m_manager(manager),
       m_fileName(fileName),
+      m_buildConfigurationFactory(new GenericBuildConfigurationFactory(this)),
       m_toolChain(0)
 {
     QFileInfo fileInfo(m_fileName);
@@ -133,6 +181,11 @@ GenericProject::~GenericProject()
 
     delete m_rootNode;
     delete m_toolChain;
+}
+
+IBuildConfigurationFactory *GenericProject::buildConfigurationFactory() const
+{
+    return m_buildConfigurationFactory;
 }
 
 QString GenericProject::filesFileName() const
@@ -354,9 +407,9 @@ void GenericProject::setToolChainType(ProjectExplorer::ToolChain::ToolChainType 
     }
 }
 
-QString GenericProject::buildParser(const QString &buildConfiguration) const
+QString GenericProject::buildParser(BuildConfiguration *configuration) const
 {
-    Q_UNUSED(buildConfiguration)
+    Q_UNUSED(configuration)
     if (m_toolChain) {
         switch (m_toolChain->type()) {
         case ProjectExplorer::ToolChain::GCC:
@@ -409,14 +462,15 @@ bool GenericProject::isApplication() const
     return true;
 }
 
-ProjectExplorer::Environment GenericProject::environment(const QString &) const
+ProjectExplorer::Environment GenericProject::environment(BuildConfiguration *configuration) const
 {
+    Q_UNUSED(configuration)
     return ProjectExplorer::Environment::systemEnvironment();
 }
 
-QString GenericProject::buildDirectory(const QString &buildConfiguration) const
+QString GenericProject::buildDirectory(BuildConfiguration *configuration) const
 {
-    QString buildDirectory = value(buildConfiguration, "buildDirectory").toString();
+    QString buildDirectory = configuration->value("buildDirectory").toString();
 
     if (buildDirectory.isEmpty()) {
         QFileInfo fileInfo(m_fileName);
@@ -436,11 +490,6 @@ QList<ProjectExplorer::BuildConfigWidget*> GenericProject::subConfigWidgets()
 {
     return QList<ProjectExplorer::BuildConfigWidget*>();
 }
-
- void GenericProject::newBuildConfiguration(const QString &buildConfiguration)
- {
-     makeStep()->setBuildTarget(buildConfiguration, "all", true);
- }
 
 GenericProjectNode *GenericProject::rootProjectNode() const
 {
@@ -480,14 +529,15 @@ bool GenericProject::restoreSettingsImpl(ProjectExplorer::PersistentSettingsRead
 
         const QLatin1String all("all");
 
-        addBuildConfiguration(all);
-        setActiveBuildConfiguration(all);
+        ProjectExplorer::BuildConfiguration *bc = new BuildConfiguration(all);
+        addBuildConfiguration(bc);
+        setActiveBuildConfiguration(bc);
         makeStep->setBuildTarget(all, all, /* on = */ true);
 
         const QLatin1String buildDirectory("buildDirectory");
 
         const QFileInfo fileInfo(file()->fileName());
-        setValue(all, buildDirectory, fileInfo.absolutePath());
+        bc->setValue(buildDirectory, fileInfo.absolutePath());
     }
 
     using namespace ProjectExplorer;
@@ -537,7 +587,7 @@ GenericBuildSettingsWidget::GenericBuildSettingsWidget(GenericProject *project)
     fl->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
     // build directory
-    m_pathChooser = new Core::Utils::PathChooser(this);
+    m_pathChooser = new Utils::PathChooser(this);
     m_pathChooser->setEnabled(true);
     fl->addRow(tr("Build directory:"), m_pathChooser);
     connect(m_pathChooser, SIGNAL(changed(QString)), this, SLOT(buildDirectoryChanged()));
@@ -566,15 +616,15 @@ GenericBuildSettingsWidget::~GenericBuildSettingsWidget()
 QString GenericBuildSettingsWidget::displayName() const
 { return tr("Generic Manager"); }
 
-void GenericBuildSettingsWidget::init(const QString &buildConfiguration)
+void GenericBuildSettingsWidget::init(const QString &buildConfigurationName)
 {
-    m_buildConfiguration = buildConfiguration;
-    m_pathChooser->setPath(m_project->buildDirectory(buildConfiguration));
+    m_buildConfiguration = buildConfigurationName;
+    m_pathChooser->setPath(m_project->buildDirectory(m_project->buildConfiguration(buildConfigurationName)));
 }
 
 void GenericBuildSettingsWidget::buildDirectoryChanged()
 {
-    m_project->setValue(m_buildConfiguration, "buildDirectory", m_pathChooser->path());
+    m_project->buildConfiguration(m_buildConfiguration)->setValue("buildDirectory", m_pathChooser->path());
 }
 
 void GenericBuildSettingsWidget::toolChainSelected(int index)

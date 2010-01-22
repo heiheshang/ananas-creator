@@ -33,17 +33,20 @@
 
 #include <QtGui/QApplication>
 #include <QtGui/QFont>
+#include <QtGui/QFontMetrics>
 #include <QtGui/QColor>
 #include <QtGui/QPalette>
 #include <QtCore/QDir>
+#include <QtCore/QDebug>
 
 using namespace Find::Internal;
 
 SearchResultTreeModel::SearchResultTreeModel(QObject *parent)
     : QAbstractItemModel(parent)
     , m_lastAppendedResultFile(0)
+    , m_showReplaceUI(false)
 {
-    m_rootItem = new SearchResultTreeItem();
+    m_rootItem = new SearchResultTreeItem;
     m_textEditorFont = QFont("Courier");
 }
 
@@ -52,9 +55,31 @@ SearchResultTreeModel::~SearchResultTreeModel()
     delete m_rootItem;
 }
 
+void SearchResultTreeModel::setShowReplaceUI(bool show)
+{
+    m_showReplaceUI = show;
+}
+
 void SearchResultTreeModel::setTextEditorFont(const QFont &font)
 {
+    layoutAboutToBeChanged();
     m_textEditorFont = font;
+    layoutChanged();
+}
+
+Qt::ItemFlags SearchResultTreeModel::flags(const QModelIndex &index) const
+{
+    Qt::ItemFlags flags = QAbstractItemModel::flags(index);
+
+    if (index.isValid()) {
+        if (const SearchResultTreeItem *item = static_cast<const SearchResultTreeItem*>(index.internalPointer())) {
+            if (item->itemType() == SearchResultTreeItem::ResultRow && item->isUserCheckable()) {
+                flags |= Qt::ItemIsUserCheckable;
+            }
+        }
+    }
+
+    return flags;
 }
 
 QModelIndex SearchResultTreeModel::index(int row, int column,
@@ -121,7 +146,13 @@ QVariant SearchResultTreeModel::data(const QModelIndex &index, int role) const
 
     QVariant result;
 
-    if (item->itemType() == SearchResultTreeItem::ResultRow)
+    if (role == Qt::SizeHintRole)
+    {
+        const int appFontHeight = QApplication::fontMetrics().height();
+        const int editorFontHeight = QFontMetrics(m_textEditorFont).height();
+        result = QSize(0, qMax(appFontHeight, editorFontHeight));
+    }
+    else if (item->itemType() == SearchResultTreeItem::ResultRow)
     {
         const SearchResultTextRow *row = static_cast<const SearchResultTextRow *>(item);
         result = data(row, role);
@@ -135,12 +166,28 @@ QVariant SearchResultTreeModel::data(const QModelIndex &index, int role) const
     return result;
 }
 
+bool SearchResultTreeModel::setData(const QModelIndex &index, const QVariant &value, int role)
+{
+    if (role == Qt::CheckStateRole) {
+        SearchResultTreeItem *item = static_cast<SearchResultTreeItem*>(index.internalPointer());
+        SearchResultTextRow *row = static_cast<SearchResultTextRow *>(item);
+        Qt::CheckState checkState = static_cast<Qt::CheckState>(value.toInt());
+        row->setCheckState(checkState);
+        return true;
+    }
+    return QAbstractItemModel::setData(index, value, role);
+}
+
 QVariant SearchResultTreeModel::data(const SearchResultTextRow *row, int role) const
 {
     QVariant result;
 
     switch (role)
     {
+    case Qt::CheckStateRole:
+        if (row->isUserCheckable())
+            result = row->checkState();
+        break;
     case Qt::ToolTipRole:
         result = row->rowText().trimmed();
         break;
@@ -168,8 +215,10 @@ QVariant SearchResultTreeModel::data(const SearchResultTextRow *row, int role) c
         break;
     case ItemDataRoles::FileNameRole:
         {
-            const SearchResultFile *file = dynamic_cast<const SearchResultFile *>(row->parent());
-            result = file->fileName();
+            if (row->parent()->itemType() == SearchResultTreeItem::ResultFile) {
+                const SearchResultFile *file = static_cast<const SearchResultFile *>(row->parent());
+                result = file->fileName();
+            }
             break;
         }
     default:
@@ -186,6 +235,12 @@ QVariant SearchResultTreeModel::data(const SearchResultFile *file, int role) con
 
     switch (role)
     {
+#if 0
+    case Qt::CheckStateRole:
+        if (file->isUserCheckable())
+            result = file->checkState();
+        break;
+#endif
     case Qt::BackgroundRole: {
         const QColor baseColor = QApplication::palette().base().color();
         result = baseColor.darker(105);
@@ -197,7 +252,7 @@ QVariant SearchResultTreeModel::data(const SearchResultFile *file, int role) con
         break;
     case ItemDataRoles::FileNameRole:
     case Qt::ToolTipRole:
-        result = file->fileName();
+        result = QDir::toNativeSeparators(file->fileName());
         break;
     case ItemDataRoles::ResultLinesCountRole:
         result = file->childrenCount();
@@ -224,7 +279,16 @@ QVariant SearchResultTreeModel::headerData(int section, Qt::Orientation orientat
 
 void SearchResultTreeModel::appendResultFile(const QString &fileName)
 {
+#ifdef Q_OS_WIN
+    if (fileName.contains(QLatin1Char('\\')))
+        qWarning("SearchResultTreeModel::appendResultFile: File name with native separators added %s.\n", qPrintable(fileName));
+#endif
     m_lastAppendedResultFile = new SearchResultFile(fileName, m_rootItem);
+
+    if (m_showReplaceUI) {
+        m_lastAppendedResultFile->setIsUserCheckable(true);
+        m_lastAppendedResultFile->setCheckState(Qt::Checked);
+    }
 
     const int childrenCount = m_rootItem->childrenCount();
     beginInsertRows(QModelIndex(), childrenCount, childrenCount);

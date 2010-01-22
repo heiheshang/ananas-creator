@@ -29,6 +29,10 @@
 
 #include "project.h"
 
+#include "persistentsettings.h"
+#include "buildconfiguration.h"
+#include "environment.h"
+#include "projectnodes.h"
 #include "buildstep.h"
 #include "projectexplorer.h"
 #include "runconfiguration.h"
@@ -62,9 +66,9 @@ void Project::insertBuildStep(int position, BuildStep *step)
 {
     m_buildSteps.insert(position, step);
     // check that the step has all the configurations
-    foreach (const QString &name, buildConfigurations())
-        if (!step->getBuildConfiguration(name))
-            step->addBuildConfiguration(name);
+    foreach (const BuildConfiguration *bc, buildConfigurations())
+        if (!step->getBuildConfiguration(bc->name()))
+            step->addBuildConfiguration(bc->name());
 }
 
 void Project::removeBuildStep(int position)
@@ -83,9 +87,9 @@ void Project::insertCleanStep(int position, BuildStep *step)
 {
     m_cleanSteps.insert(position, step);
     // check that the step has all the configurations
-    foreach (const QString &name, buildConfigurations())
-        if (!step->getBuildConfiguration(name))
-            step->addBuildConfiguration(name);
+    foreach (const BuildConfiguration *bc, buildConfigurations())
+        if (!step->getBuildConfiguration(bc->name()))
+            step->addBuildConfiguration(bc->name());
 }
 
 void Project::removeCleanStep(int position)
@@ -100,61 +104,85 @@ void Project::moveCleanStepUp(int position)
     m_cleanSteps.insert(position - 1, bs);
 }
 
-void Project::addBuildConfiguration(const QString &name)
+QString Project::makeUnique(const QString &preferedName, const QStringList &usedNames)
 {
-    if (buildConfigurations().contains(name) )
-        return;
-
-    m_buildConfigurationValues.push_back(new BuildConfiguration(name));
-
-    for (int i = 0; i != m_buildSteps.size(); ++i)
-        m_buildSteps.at(i)->addBuildConfiguration(name);
-
-    for (int i = 0; i != m_cleanSteps.size(); ++i)
-        m_cleanSteps.at(i)->addBuildConfiguration(name);
+    if (!usedNames.contains(preferedName))
+        return preferedName;
+    int i = 2;
+    QString tryName = preferedName + QString::number(i);
+    while (usedNames.contains(tryName))
+        tryName = preferedName + QString::number(++i);
+    return tryName;
 }
 
-void Project::removeBuildConfiguration(const QString &name)
+
+void Project::addBuildConfiguration(BuildConfiguration *configuration)
 {
-    if (!buildConfigurations().contains(name))
+    QStringList buildConfigurationNames;
+    foreach (const BuildConfiguration *bc, buildConfigurations())
+        buildConfigurationNames << bc->name();
+
+    // Check that the internal name is not taken and use a different one otherwise
+    QString configurationName = configuration->name();
+    configurationName = makeUnique(configurationName, buildConfigurationNames);
+    configuration->setName(configurationName);
+
+    // Check that we don't have a configuration with the same displayName
+    QString configurationDisplayName = configuration->displayName();
+    QStringList displayNames;
+    foreach (const BuildConfiguration *bc, m_buildConfigurationValues)
+        displayNames << bc->displayName();
+    configurationDisplayName = makeUnique(configurationDisplayName, displayNames);
+    configuration->setDisplayName(configurationDisplayName);
+
+    // add it
+    m_buildConfigurationValues.push_back(configuration);
+
+    // update build steps
+    for (int i = 0; i != m_buildSteps.size(); ++i)
+        m_buildSteps.at(i)->addBuildConfiguration(configuration->name());
+    for (int i = 0; i != m_cleanSteps.size(); ++i)
+        m_cleanSteps.at(i)->addBuildConfiguration(configuration->name());
+
+    emit addedBuildConfiguration(this, configuration->name());
+}
+
+void Project::removeBuildConfiguration(BuildConfiguration *configuration)
+{
+    //todo: this might be error prone
+    if (!m_buildConfigurationValues.contains(configuration))
         return;
 
-    for (int i = 0; i != m_buildConfigurationValues.size(); ++i)
-        if (m_buildConfigurationValues.at(i)->name() == name) {
-            delete m_buildConfigurationValues.at(i);
-            m_buildConfigurationValues.removeAt(i);
-            break;
-        }
+    m_buildConfigurationValues.removeOne(configuration);
 
     for (int i = 0; i != m_buildSteps.size(); ++i)
-        m_buildSteps.at(i)->removeBuildConfiguration(name);
+        m_buildSteps.at(i)->removeBuildConfiguration(configuration->name());
     for (int i = 0; i != m_cleanSteps.size(); ++i)
-        m_cleanSteps.at(i)->removeBuildConfiguration(name);
+        m_cleanSteps.at(i)->removeBuildConfiguration(configuration->name());
 
+    emit removedBuildConfiguration(this, configuration->name());
+    delete configuration;
 }
 
 void Project::copyBuildConfiguration(const QString &source, const QString &dest)
 {
-    if (!buildConfigurations().contains(source))
+    BuildConfiguration *sourceConfiguration = buildConfiguration(source);
+    if (!sourceConfiguration)
         return;
 
-    for (int i = 0; i != m_buildConfigurationValues.size(); ++i)
-        if (m_buildConfigurationValues.at(i)->name() == source)
-            m_buildConfigurationValues.push_back(new BuildConfiguration(dest, m_buildConfigurationValues.at(i)));
+    m_buildConfigurationValues.push_back(new BuildConfiguration(dest, sourceConfiguration));
 
     for (int i = 0; i != m_buildSteps.size(); ++i)
         m_buildSteps.at(i)->copyBuildConfiguration(source, dest);
 
     for (int i = 0; i != m_cleanSteps.size(); ++i)
         m_cleanSteps.at(i)->copyBuildConfiguration(source, dest);
+    emit addedBuildConfiguration(this, dest);
 }
 
-QStringList Project::buildConfigurations() const
+QList<BuildConfiguration *> Project::buildConfigurations() const
 {
-    QStringList result;
-    foreach (BuildConfiguration *bc, m_buildConfigurationValues)
-        result << bc->name();
-    return result;
+    return m_buildConfigurationValues;
 }
 
 bool Project::hasBuildSettings() const
@@ -186,8 +214,8 @@ bool Project::restoreSettings()
     if (!restoreSettingsImpl(reader))
         return false;
 
-    if (m_activeBuildConfiguration.isEmpty() && !m_buildConfigurations.isEmpty())
-        setActiveBuildConfiguration(m_buildConfigurations.at(0));
+    if (m_activeBuildConfiguration.isEmpty() && !m_buildConfigurationValues.isEmpty())
+        setActiveBuildConfiguration(m_buildConfigurationValues.at(0));
 
     if (!m_activeRunConfiguration && !m_runConfigurations.isEmpty())
         setActiveRunConfiguration(m_runConfigurations.at(0));
@@ -206,10 +234,11 @@ void Project::saveSettingsImpl(PersistentSettingsWriter &writer)
     writer.saveValue("project", m_values);
 
     //save buildsettings
-    foreach (const QString &buildConfigurationName, buildConfigurations()) {
-        QMap<QString, QVariant> temp =
-            getBuildConfiguration(buildConfigurationName)->toMap();
-        writer.saveValue("buildConfiguration-" + buildConfigurationName, temp);
+    QStringList buildConfigurationNames;
+    foreach (const BuildConfiguration *bc, buildConfigurations()) {
+        QMap<QString, QVariant> temp = bc->toMap();
+        writer.saveValue("buildConfiguration-" + bc->name(), temp);
+        buildConfigurationNames << bc->name();
     }
 
     QStringList buildStepNames;
@@ -221,7 +250,6 @@ void Project::saveSettingsImpl(PersistentSettingsWriter &writer)
     foreach (BuildStep *cleanStep, cleanSteps())
         cleanStepNames << cleanStep->name();
     writer.saveValue("cleansteps", cleanStepNames);
-    QStringList buildConfigurationNames = buildConfigurations();
     writer.saveValue("buildconfigurations", buildConfigurationNames );
 
     //save buildstep configuration
@@ -287,10 +315,11 @@ bool Project::restoreSettingsImpl(PersistentSettingsReader &reader)
     // restoring BuldConfigurations from settings
     const QStringList buildConfigurationNames = reader.restoreValue("buildconfigurations").toStringList();
     foreach (const QString &buildConfigurationName, buildConfigurationNames) {
-        addBuildConfiguration(buildConfigurationName);
+        BuildConfiguration *bc = new BuildConfiguration(buildConfigurationName);
+        addBuildConfiguration(bc);
         QMap<QString, QVariant> temp =
             reader.restoreValue("buildConfiguration-" + buildConfigurationName).toMap();
-        getBuildConfiguration(buildConfigurationName)->setValuesFromMap(temp);
+        bc->setValuesFromMap(temp);
     }
 
     const QList<IBuildStepFactory *> buildStepFactories =
@@ -403,7 +432,7 @@ QVariant Project::value(const QString &name) const
         return QVariant();
 }
 
-BuildConfiguration * Project::getBuildConfiguration(const QString &name) const
+BuildConfiguration *Project::buildConfiguration(const QString &name) const
 {
     for (int i = 0; i != m_buildConfigurationValues.size(); ++i)
         if (m_buildConfigurationValues.at(i)->name() == name)
@@ -411,35 +440,18 @@ BuildConfiguration * Project::getBuildConfiguration(const QString &name) const
     return 0;
 }
 
-void Project::setValue(const QString &buildConfiguration, const QString &name, const QVariant &value)
+BuildConfiguration *Project::activeBuildConfiguration() const
 {
-    BuildConfiguration *bc = getBuildConfiguration(buildConfiguration);
-    Q_ASSERT(bc);
-    bc->setValue(name, value);
+    return buildConfiguration(m_activeBuildConfiguration); //TODO
 }
 
-QVariant Project::value(const QString &buildConfiguration, const QString &name) const
+void Project::setActiveBuildConfiguration(BuildConfiguration *configuration)
 {
-    BuildConfiguration *bc = getBuildConfiguration(buildConfiguration);
-    if (bc)
-        return bc->getValue(name);
-    else
-        return QVariant();
-}
-
-QString Project::activeBuildConfiguration() const
-{
-    return m_activeBuildConfiguration;
-}
-
-void Project::setActiveBuildConfiguration(const QString &config)
-{
-    if (m_activeBuildConfiguration != config && buildConfigurations().contains(config)) {
-        m_activeBuildConfiguration = config;
+    if (m_activeBuildConfiguration != configuration->name() && m_buildConfigurationValues.contains(configuration)) {
+        m_activeBuildConfiguration = configuration->name();
         emit activeBuildConfigurationChanged();
     }
 }
-
 
 QList<QSharedPointer<RunConfiguration> > Project::runConfigurations() const
 {
@@ -453,7 +465,7 @@ void Project::addRunConfiguration(QSharedPointer<RunConfiguration> runConfigurat
         return;
     }
     m_runConfigurations.push_back(runConfiguration);
-    emit addedRunConfiguration(runConfiguration->name());
+    emit addedRunConfiguration(this, runConfiguration->name());
 }
 
 void Project::removeRunConfiguration(QSharedPointer<RunConfiguration> runConfiguration)
@@ -461,7 +473,7 @@ void Project::removeRunConfiguration(QSharedPointer<RunConfiguration> runConfigu
     if(!m_runConfigurations.contains(runConfiguration)) {
         qWarning()<<"Not removing runConfiguration"<<runConfiguration->name()<<"becasue it doesn't exist";
         return;
-    }   
+    }
 
     if (m_activeRunConfiguration == runConfiguration) {
         if (m_runConfigurations.size() <= 1)
@@ -473,7 +485,7 @@ void Project::removeRunConfiguration(QSharedPointer<RunConfiguration> runConfigu
     }
 
     m_runConfigurations.removeOne(runConfiguration);
-    emit removedRunConfiguration(runConfiguration->name());    
+    emit removedRunConfiguration(this, runConfiguration->name());
 }
 
 QSharedPointer<RunConfiguration> Project::activeRunConfiguration() const
@@ -495,27 +507,21 @@ EditorConfiguration *Project::editorConfiguration() const
     return m_editorConfiguration;
 }
 
-QString Project::displayNameFor(const QString &buildConfiguration)
+void Project::setDisplayNameFor(BuildConfiguration *configuration, const QString &displayName)
 {
-    return getBuildConfiguration(buildConfiguration)->displayName();
-}
-
-void Project::setDisplayNameFor(const QString &buildConfiguration, const QString &displayName)
-{
+    if (configuration->displayName() == displayName)
+        return;
+    QString dn = displayName;
     QStringList displayNames;
-    foreach (const QString &bc, buildConfigurations()) {
-        if (bc != buildConfiguration)
-            displayNames << displayNameFor(bc);
+    foreach (BuildConfiguration *bc, m_buildConfigurationValues) {
+        if (bc != configuration)
+            displayNames << bc->displayName();
     }
-    if (displayNames.contains(displayName)) {
-        int i = 2;
-        while (displayNames.contains(displayName + QString::number(i)))
-            ++i;
-        getBuildConfiguration(buildConfiguration)->setDisplayName(displayName + QString::number(i));
-    } else {
-        getBuildConfiguration(buildConfiguration)->setDisplayName(displayName);
-    }
-    emit buildConfigurationDisplayNameChanged(buildConfiguration);
+    dn = makeUnique(displayName, displayNames);
+
+    configuration->setDisplayName(displayName);
+
+    emit buildConfigurationDisplayNameChanged(configuration->name());
 }
 
 QByteArray Project::predefinedMacros(const QString &) const

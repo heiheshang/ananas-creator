@@ -32,12 +32,14 @@
 #include "ananasmakestep.h"
 
 #include <projectexplorer/toolchain.h>
+#include <projectexplorer/persistentsettings.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <extensionsystem/pluginmanager.h>
 #include <utils/pathchooser.h>
 #include <utils/qtcassert.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/editormanager/editormanager.h>
+#include <coreplugin/editormanager/ieditor.h>
 
 #include <utils/synchronousprocess.h>
 #include <utils/pathchooser.h>
@@ -52,10 +54,11 @@
 #include <QtGui/QMainWindow>
 #include <QtGui/QComboBox>
 #include <QtGui/QMessageBox>
+#include <QtGui/QLineEdit>
 
 using namespace AnanasProjectManager;
 using namespace AnanasProjectManager::Internal;
-
+using namespace ProjectExplorer;
 ////////////////////////////////////////////////////////////////////////////////////
 // AnanasProject
 ////////////////////////////////////////////////////////////////////////////////////
@@ -190,13 +193,21 @@ bool AnanasProject::hasBuildSettings() const
     return false;
 }
 
-ProjectExplorer::Environment AnanasProject::environment(const QString &) const
+ProjectExplorer::IBuildConfigurationFactory *AnanasProject::buildConfigurationFactory() const
 {
+    return 0;
+}
+
+ProjectExplorer::Environment AnanasProject::environment(ProjectExplorer::BuildConfiguration *configuration) const
+{
+    Q_UNUSED(configuration)
     return ProjectExplorer::Environment::systemEnvironment();
 }
 
-QString AnanasProject::buildDirectory(const QString &) const
+
+QString AnanasProject::buildDirectory(ProjectExplorer::BuildConfiguration *configuration) const
 {
+    Q_UNUSED(configuration)
     return QString();
 }
 
@@ -320,13 +331,14 @@ void AnanasProjectFile::modified(ReloadBehavior *)
 }
 
 AnanasRunConfiguration::AnanasRunConfiguration(AnanasProject *pro)
-    : ProjectExplorer::ApplicationRunConfiguration(pro),
+    : ProjectExplorer::LocalApplicationRunConfiguration(pro),
       m_project(pro),
       m_type(Constants::ANANASRUNCONFIGURATION)
 {
     setName(tr("Ananas Viewer"));
 
-    m_qmlViewer = Core::Utils::SynchronousProcess::locateBinary(QLatin1String("ananasviewer"));
+    m_qmlViewer = Utils::SynchronousProcess::locateBinary(QLatin1String("ananasviewer"));
+    //Utils::SynchronousProcess::locateBinary(searchPath, QLatin1String("qmlviewer"));
 }
 
 AnanasRunConfiguration::~AnanasRunConfiguration()
@@ -418,10 +430,15 @@ QWidget *AnanasRunConfiguration::configurationWidget()
 
     connect(combo, SIGNAL(activated(QString)), this, SLOT(setMainScript(QString)));
 
-    Core::Utils::PathChooser *qmlViewer = new Core::Utils::PathChooser;
-    qmlViewer->setExpectedKind(Core::Utils::PathChooser::Command);
+    Utils::PathChooser *qmlViewer = new Utils::PathChooser;
+    qmlViewer->setExpectedKind(Utils::PathChooser::Command);
     qmlViewer->setPath(executable());
     connect(qmlViewer, SIGNAL(changed(QString)), this, SLOT(onQmlViewerChanged()));
+
+    QLineEdit *qmlViewerArgs = new QLineEdit;
+    qmlViewerArgs->setText(m_qmlViewerArgs);
+    connect(qmlViewerArgs, SIGNAL(textChanged(QString)), this, SLOT(onQmlViewerArgsChanged()));
+
 
     form->addRow(tr("Ananas Viewer"), qmlViewer);
     form->addRow(tr("Main Ananas File:"), combo);
@@ -448,14 +465,14 @@ void AnanasRunConfiguration::setMainScript(const QString &scriptFile)
 
 void AnanasRunConfiguration::onQmlViewerChanged()
 {
-    if (Core::Utils::PathChooser *chooser = qobject_cast<Core::Utils::PathChooser *>(sender())) {
+    if (Utils::PathChooser *chooser = qobject_cast<Utils::PathChooser *>(sender())) {
         m_qmlViewer = chooser->path();
     }
 }
 
 void AnanasRunConfiguration::save(ProjectExplorer::PersistentSettingsWriter &writer) const
 {
-    ProjectExplorer::ApplicationRunConfiguration::save(writer);
+    ProjectExplorer::LocalApplicationRunConfiguration::save(writer);
 
     writer.saveValue(QLatin1String("ananasviewer"), m_qmlViewer);
     writer.saveValue(QLatin1String("mainscript"), m_scriptFile);
@@ -463,13 +480,13 @@ void AnanasRunConfiguration::save(ProjectExplorer::PersistentSettingsWriter &wri
 
 void AnanasRunConfiguration::restore(const ProjectExplorer::PersistentSettingsReader &reader)
 {
-    ProjectExplorer::ApplicationRunConfiguration::restore(reader);
+    ProjectExplorer::LocalApplicationRunConfiguration::restore(reader);
 
     m_qmlViewer = reader.restoreValue(QLatin1String("ananasviewer")).toString();
     m_scriptFile = reader.restoreValue(QLatin1String("mainscript")).toString();
 
     if (m_qmlViewer.isEmpty())
-        m_qmlViewer = Core::Utils::SynchronousProcess::locateBinary(QLatin1String("qmlviewer"));
+        m_qmlViewer = Utils::SynchronousProcess::locateBinary(QLatin1String("ananasviewer"));
 
     if (m_scriptFile.isEmpty())
         m_scriptFile = tr("<Current File>");

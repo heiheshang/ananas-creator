@@ -41,7 +41,7 @@
 #include <QtGui/QCheckBox>
 #include <QtGui/QLineEdit>
 
-using namespace Core::Utils;
+using namespace Utils;
 
 namespace Debugger {
 namespace Internal {
@@ -84,7 +84,7 @@ void DebuggerSettings::writeSettings(QSettings *settings) const
    
 SavedAction *DebuggerSettings::item(int code) const
 {
-    QTC_ASSERT(m_items.value(code, 0), return 0);
+    QTC_ASSERT(m_items.value(code, 0), qDebug() << "CODE: " << code; return 0);
     return m_items.value(code, 0);
 }
 
@@ -152,11 +152,25 @@ DebuggerSettings *DebuggerSettings::instance()
     instance->insertItem(LogTimeStamps, item);
 
     item = new SavedAction(instance);
-    item->setText(tr("Step by instruction"));
+    item->setText(tr("Operate by instruction"));
     item->setCheckable(true);
     item->setDefaultValue(false);
     item->setIcon(QIcon(":/debugger/images/debugger_stepoverproc_small.png"));
-    instance->insertItem(StepByInstruction, item);
+    item->setToolTip(tr("This switches the debugger to instruction-wise "
+        "operation mode. In this mode, stepping operates on single "
+        "instructions and the source location view also shows the "
+        "disassembled instructions."));
+    instance->insertItem(OperateByInstruction, item);
+
+    item = new SavedAction(instance);
+    item->setText(tr("Dereference pointers automatically"));
+    item->setCheckable(true);
+    item->setDefaultValue(true);
+    item->setToolTip(tr("This switches the Locals&Watchers view to "
+        "automatically derefence pointers. This saves a level in the "
+        "tree view, but also loses data for the now-missing intermediate "
+        "level."));
+    instance->insertItem(AutoDerefPointers, item);
 
     //
     // Locals & Watchers
@@ -215,6 +229,13 @@ DebuggerSettings *DebuggerSettings::instance()
     item->setValue(false);
     instance->insertItem(DebugDebuggingHelpers, item);
 
+    item = new SavedAction(instance);
+    item->setSettingsKey(debugModeGroup, QLatin1String("UseCodeModel"));
+    item->setText(tr("Use code model"));
+    item->setCheckable(true);
+    item->setDefaultValue(true);
+    item->setValue(true);
+    instance->insertItem(UseCodeModel, item);
 
     item = new SavedAction(instance);
     item->setText(tr("Recheck debugging helper availability"));
@@ -226,6 +247,14 @@ DebuggerSettings *DebuggerSettings::instance()
     item = new SavedAction(instance);
     item->setText(tr("Synchronize breakpoints"));
     instance->insertItem(SynchronizeBreakpoints, item);
+
+    item = new SavedAction(instance);
+    item->setText(tr("Use precise breakpoints"));
+    item->setCheckable(true);
+    item->setDefaultValue(true);
+    item->setValue(true);
+    item->setSettingsKey(debugModeGroup, QLatin1String("UsePreciseBreakpoints"));
+    instance->insertItem(UsePreciseBreakpoints, item);
 
     //
     // Settings
@@ -254,12 +283,53 @@ DebuggerSettings *DebuggerSettings::instance()
 
     item = new SavedAction(instance);
     item->setSettingsKey(debugModeGroup, QLatin1String("UseToolTips"));
-    item->setText(tr("Use tooltips when debugging"));
+    item->setText(tr("Use tooltips in main editor when debugging"));
+    item->setToolTip(tr("Checking this will enable tooltips for variable "
+        "values during debugging. Since this can slow down debugging and "
+        "does not provide reliable information as it does not use scope "
+        "information, it is switched off by default."));
     item->setCheckable(true);
     item->setDefaultValue(false);
-    instance->insertItem(UseToolTips, item);
+    instance->insertItem(UseToolTipsInMainEditor, item);
 
     item = new SavedAction(instance);
+    item->setSettingsKey(debugModeGroup, QLatin1String("UseToolTipsInLocalsView"));
+    item->setText(tr("Use tooltips in locals view when debugging"));
+    item->setToolTip(tr("Checking this will enable tooltips in the locals "
+        "view during debugging."));
+    item->setCheckable(true);
+    item->setDefaultValue(false);
+    instance->insertItem(UseToolTipsInLocalsView, item);
+
+    item = new SavedAction(instance);
+    item->setSettingsKey(debugModeGroup, QLatin1String("UseToolTipsInBreakpointsView"));
+    item->setText(tr("Use tooltips in breakpoints view when debugging"));
+    item->setToolTip(tr("Checking this will enable tooltips in the breakpoints "
+        "view during debugging."));
+    item->setCheckable(true);
+    item->setDefaultValue(false);
+    instance->insertItem(UseToolTipsInBreakpointsView, item);
+
+    item = new SavedAction(instance);
+    item->setSettingsKey(debugModeGroup, QLatin1String("UseAddressInBreakpointsView"));
+    item->setText(tr("Show address data in breakpoints view when debugging"));
+    item->setToolTip(tr("Checking this will show a column with address "
+        "information in the breakpoint view during debugging."));
+    item->setCheckable(true);
+    item->setDefaultValue(false);
+    instance->insertItem(UseAddressInBreakpointsView, item);
+    item = new SavedAction(instance);
+
+    item = new SavedAction(instance);
+    item->setSettingsKey(debugModeGroup, QLatin1String("UseAddressInStackView"));
+    item->setText(tr("Show address data in stack view when debugging"));
+    item->setToolTip(tr("Checking this will show a column with address "
+        "information in the stack view during debugging."));
+    item->setCheckable(true);
+    item->setDefaultValue(false);
+    instance->insertItem(UseAddressInStackView, item);
+    item = new SavedAction(instance);
+
     item->setSettingsKey(debugModeGroup, QLatin1String("ListSourceFiles"));
     item->setText(tr("List source files"));
     item->setCheckable(true);
@@ -312,6 +382,12 @@ DebuggerSettings *DebuggerSettings::instance()
     item = new SavedAction(instance);
     item->setText(tr("Execute line"));
     instance->insertItem(ExecuteCommand, item);
+
+    item = new SavedAction(instance);
+    item->setSettingsKey(debugModeGroup, QLatin1String("WatchdogTimeout"));
+    item->setDefaultValue(20);
+    instance->insertItem(GdbWatchdogTimeout, item);
+
 
     return instance;
 }

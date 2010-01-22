@@ -1,4 +1,4 @@
-<plugin name="Debugger" version="1.2.90" compatVersion="1.2.90">
+<plugin name="Debugger" version="1.3.1" compatVersion="1.3.1">
     <vendor>Nokia Corporation</vendor>
     <copyright>(C) 2008-2009 Nokia Corporation</copyright>
     <license>
@@ -19,17 +19,16 @@ will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.</license>
     <description>Debugger integration.</description>
     <url>http://qt.nokia.com</url>
     <dependencyList>
-        <dependency name="CppEditor" version="1.2.90"/><!-- Debugger plugin adds items to the editor's context menu -->
-        <dependency name="ProjectExplorer" version="1.2.90"/>
-        <dependency name="Core" version="1.2.90"/>
-        <dependency name="Find" version="1.2.90"/>
+        <dependency name="CppEditor" version="1.3.1"/><!-- Debugger plugin adds items to the editor's context menu -->
+        <dependency name="ProjectExplorer" version="1.3.1"/>
+        <dependency name="Core" version="1.3.1"/>
+        <dependency name="Find" version="1.3.1"/>
     </dependencyList>
     <argumentList>
         <argument name="-disable-cdb">Disable Cdb debugger engine</argument>
         <argument name="-disable-gdb">Disable Gdb debugger engine</argument>
         <argument name="-disable-sdb">Disable Qt Script debugger engine</argument>
-        <argument name="-disable-tcf">Disable Tcf debugger engine</argument>
-        <argument name="-debug" parameter="process-id">Attach to Process-Id</argument>
+        <argument name="-debug" parameter="pid-or-corefile">Attach to Process-Id or Core file</argument>
         <argument name="-wincrashevent" parameter="event-handle">Event handle used for attaching to crashed processes</argument>
     </argumentList>
 </plugin>

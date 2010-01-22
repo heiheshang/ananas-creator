@@ -33,6 +33,8 @@
 #include <coreplugin/icore.h>
 #include <coreplugin/coreconstants.h>
 
+#include <utils/pathchooser.h>
+
 #include <extensionsystem/pluginmanager.h>
 
 #include <help/helpplugin.h>
@@ -42,8 +44,12 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QDebug>
 #include <QtCore/QUrl>
+#include <QtCore/QSettings>
 #include <QtCore/QXmlStreamReader>
+#include <QtGui/QDialogButtonBox>
 #include <QtGui/QFont>
+#include <QtGui/QMessageBox>
+#include <QtGui/QPushButton>
 
 namespace Qt4ProjectManager {
 namespace Internal {
@@ -159,17 +165,92 @@ void GettingStartedWelcomePageWidget::slotEnableExampleButton(int index)
     ui->openExampleButton->setEnabled(!fileName.isEmpty());
 }
 
+namespace {
+void copyRecursive(const QDir& from, const QDir& to, const QString& dir)
+{
+    QDir dest(to);
+    dest.mkdir(dir);
+    dest.cd(dir);
+    QDir src(from);
+    src.cd(dir);
+    foreach(const QFileInfo& roFile, src.entryInfoList(QDir::Files)) {
+        QFile::copy(roFile.absoluteFilePath(), dest.absolutePath() + '/' + roFile.fileName());
+    }
+    foreach(const QString& roDir, src.entryList(QDir::NoDotAndDotDot|QDir::Dirs)) {
+        copyRecursive(src, dest, QDir(roDir).dirName());
+    }   
+}
+} // namespace
+
 void GettingStartedWelcomePageWidget::slotOpenExample()
 {
     QComboBox *box = ui->examplesComboBox;
     QString proFile = box->itemData(box->currentIndex(), Qt::UserRole).toString();
     QString helpFile = box->itemData(box->currentIndex(), Qt::UserRole + 1).toString();
     QStringList files;
-    QFileInfo fi(proFile);
-    QString tryFile = fi.path() + "/main.cpp";
+    QFileInfo proFileInfo(proFile);
+    // If the Qt is a distro Qt on Linux, it will not be writable, hence compilation will fail
+    if (!proFileInfo.isWritable())
+    {
+        QDialog d;
+        QGridLayout *lay = new QGridLayout(&d);
+        QLabel *descrLbl = new QLabel;
+        d.setWindowTitle(tr("Copy Project to writable Location?"));
+        descrLbl->setTextFormat(Qt::RichText);
+        descrLbl->setWordWrap(true);
+        descrLbl->setText(tr("<p>The project you are about to open is located in the "
+                             "write-protected location:</p><blockquote>%1</blockquote>"
+                             "<p>Please select a writable location below and click \"Copy Project and Open\" "
+                             "to open a modifiable copy of the project or click \"Keep Project and Open\" "
+                             "to open the project in location.</p><p><b>Note:</b> You will not "
+                             "be able to alter or compile your project in the current location.</p>")
+                          .arg(QDir::toNativeSeparators(proFileInfo.dir().absolutePath())));
+        lay->addWidget(descrLbl, 0, 0, 1, 2);
+        QLabel *txt = new QLabel(tr("&Location:"));
+        Utils::PathChooser *chooser = new Utils::PathChooser;
+        txt->setBuddy(chooser);
+        chooser->setExpectedKind(Utils::PathChooser::Directory);
+        QSettings *settings = Core::ICore::instance()->settings();
+        chooser->setPath(settings->value(
+                QString::fromLatin1("General/ProjectsFallbackRoot"), QDir::homePath()).toString());
+        lay->addWidget(txt, 1, 0);
+        lay->addWidget(chooser, 1, 1);
+        QDialogButtonBox *bb = new QDialogButtonBox;
+        connect(bb, SIGNAL(accepted()), &d, SLOT(accept()));
+        connect(bb, SIGNAL(rejected()), &d, SLOT(reject()));
+        QPushButton *copyBtn = bb->addButton(tr("&Copy Project and Open"), QDialogButtonBox::AcceptRole);
+        copyBtn->setDefault(true);
+        bb->addButton(tr("&Keep Project and Open"), QDialogButtonBox::RejectRole);
+        lay->addWidget(bb, 2, 0, 1, 2);
+        connect(chooser, SIGNAL(validChanged(bool)), copyBtn, SLOT(setEnabled(bool)));
+        if (d.exec() == QDialog::Accepted) {
+            QString exampleDirName = proFileInfo.dir().dirName();
+            QString toDir = chooser->path();
+            settings->setValue(QString::fromLatin1("General/ProjectsFallbackRoot"), toDir);
+            QDir toDirWithExamplesDir(toDir);
+            if (toDirWithExamplesDir.cd(exampleDirName)) {
+                toDirWithExamplesDir.cdUp(); // step out, just to not be in the way
+                QMessageBox::warning(topLevelWidget(), tr("Warning"),
+                                     tr("The specified location already exists. "
+                                        "Please specify a valid location."),
+                                     QMessageBox::Ok, QMessageBox::NoButton);
+                return;
+            } else {
+                QDir from = proFileInfo.dir();
+                from.cdUp();
+                copyRecursive(from, toDir, exampleDirName);
+                // set vars to new location
+                proFileInfo = QFileInfo(toDir + '/'+ exampleDirName + '/' + proFileInfo.fileName());
+                proFile = proFileInfo.absoluteFilePath();
+            }
+        }
+    }
+
+
+    QString tryFile = proFileInfo.path() + "/main.cpp";
     files << proFile;
     if(!QFile::exists(tryFile))
-        tryFile = fi.path() + '/' + fi.baseName() + ".cpp";
+        tryFile = proFileInfo.path() + '/' + proFileInfo.baseName() + ".cpp";
     if(QFile::exists(tryFile))
         files << tryFile;
     Core::ICore::instance()->openFiles(files);
@@ -215,6 +296,15 @@ QStringList GettingStartedWelcomePageWidget::tipsOfTheDay()
 #else
             tr("Alt", "Shortcut key");
 #endif
+
+        QString ctrlShortcut =
+#ifdef Q_WS_MAC
+            tr("Cmd", "Shortcut key");
+#else
+            tr("Ctrl", "Shortcut key");
+#endif
+
+
         tips.append(tr("You can switch between Qt Creator's modes using <tt>Ctrl+number</tt>:<ul>"
                        "<li>1 - Welcome</li><li>2 - Edit</li><li>3 - Debug</li><li>4 - Projects</li><li>5 - Help</li>"
                        "<li></li><li>6 - Output</li></ul>"));
@@ -236,18 +326,16 @@ QStringList GettingStartedWelcomePageWidget::tipsOfTheDay()
                        "<ul><li>1 - Build Issues</li><li>2 - Search Results</li><li>3 - Application Output</li>"
                        "<li>4 - Compile Output</li></ul>").arg(altShortcut));
         tips.append(tr("You can quickly search methods, classes, help and more using the "
-                       "<a href=\"qthelp://com.nokia.qtcreator/doc/creator-navigation.html\">Locator bar</a> (<tt>Ctrl+K</tt>)."));
+                       "<a href=\"qthelp://com.nokia.qtcreator/doc/creator-navigation.html\">Locator bar</a> (<tt>%1+K</tt>).").arg(ctrlShortcut));
         tips.append(tr("You can add custom build steps in the "
-                       "<a href=\"qthelp://com.nokia.qtcreator/doc/creator-build-settings.html\">build settings</a>."));
+                       "<a href=\"qthelp://com.nokia.qtcreator/doc/creator-project-pane.html#build-settings\">build settings</a>."));
         tips.append(tr("Within a session, you can add "
-                       "<a href=\"qthelp://com.nokia.qtcreator/doc/creator-build-settings.html#dependencies\">dependencies</a> between projects."));
+                       "<a href=\"qthelp://com.nokia.qtcreator/doc/creator-project-pane.html#dependencies\">dependencies</a> between projects."));
         tips.append(tr("You can set the preferred editor encoding for every project in <tt>Projects -> Editor Settings -> Default Encoding</tt>."));
-        tips.append(tr("You can modify the binary that is being executed when you press the <tt>Run</tt> button: Add a <tt>Custom Executable</tt> "
-                       "by clicking the <tt>+</tt> button in <tt>Projects -> Run Settings -> Run Configuration</tt> and then select the new "
-                       "target in the combo box."));
         tips.append(tr("You can use Qt Creator with a number of <a href=\"qthelp://com.nokia.qtcreator/doc/creator-version-control.html\">"
                        "revision control systems</a> such as Subversion, Perforce, CVS and Git."));
-        tips.append(tr("In the editor, <tt>F2</tt> toggles declaration and definition while <tt>F4</tt> toggles header file and source file."));
+        tips.append(tr("In the editor, <tt>F2</tt> follows symbol definition, <tt>Shift+F2</tt> toggles declaration and definition "
+                       "while <tt>F4</tt> toggles header file and source file."));
     }
     return tips;
 }

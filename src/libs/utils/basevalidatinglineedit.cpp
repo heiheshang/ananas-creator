@@ -33,7 +33,6 @@
 
 enum { debug = 0 };
 
-namespace Core {
 namespace Utils {
 
 struct BaseValidatingLineEditPrivate {
@@ -139,8 +138,10 @@ void BaseValidatingLineEdit::slotChanged(const QString &t)
         m_bd->m_state = newState;
         m_bd->m_firstChange = false;
         setTextColor(this, newState == Invalid ? m_bd->m_errorTextColor : m_bd->m_okTextColor);
-        if (validHasChanged)
+        if (validHasChanged) {
+            emit validChanged(newState == Valid);
             emit validChanged();
+        }
     }
 }
 
@@ -156,4 +157,3 @@ void BaseValidatingLineEdit::triggerChanged()
 }
 
 } // namespace Utils
-} // namespace Core

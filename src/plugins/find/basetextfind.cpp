@@ -32,6 +32,7 @@
 #include <utils/qtcassert.h>
 
 #include <QtGui/QTextBlock>
+#include <QtGui/QPlainTextEdit>
 
 using namespace Find;
 
@@ -125,7 +126,7 @@ QString BaseTextFind::completedFindString() const
     return cursor.selectedText();
 }
 
-bool BaseTextFind::findIncremental(const QString &txt, IFindSupport::FindFlags findFlags)
+IFindSupport::Result BaseTextFind::findIncremental(const QString &txt, IFindSupport::FindFlags findFlags)
 {
     QTextCursor cursor = textCursor();
     if (m_incrementalStartPos < 0)
@@ -137,15 +138,15 @@ bool BaseTextFind::findIncremental(const QString &txt, IFindSupport::FindFlags f
         emit highlightAll(txt, findFlags);
     else
         emit highlightAll(QString(), 0);
-    return found;
+    return found ? Found : NotFound;
 }
 
-bool BaseTextFind::findStep(const QString &txt, IFindSupport::FindFlags findFlags)
+IFindSupport::Result BaseTextFind::findStep(const QString &txt, IFindSupport::FindFlags findFlags)
 {
     bool found = find(txt, findFlags, textCursor());
     if (found)
         m_incrementalStartPos = textCursor().selectionStart();
-    return found;
+    return found ? Found : NotFound;
 }
 
 namespace {

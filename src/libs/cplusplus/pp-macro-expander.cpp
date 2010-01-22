@@ -66,9 +66,11 @@ inline static bool comment_p (const char *__first, const char *__last)
     return (*__first == '/' || *__first == '*');
 }
 
-MacroExpander::MacroExpander(Environment *env, pp_frame *frame)
+MacroExpander::MacroExpander(Environment *env, pp_frame *frame, Client *client, unsigned start_offset)
     : env(env),
       frame(frame),
+      client(client),
+      start_offset(start_offset),
       lines(0)
 { }
 
@@ -97,6 +99,7 @@ const char *MacroExpander::operator()(const char *first, const char *last,
 const char *MacroExpander::expand(const char *__first, const char *__last,
                                   QByteArray *__result)
 {
+    const char *start = __first;
     __first = skip_blanks (__first, __last);
     lines = skip_blanks.lines;
 
@@ -330,6 +333,7 @@ const char *MacroExpander::expand(const char *__first, const char *__last,
             }
 
             QVector<QByteArray> actuals;
+            QVector<MacroArgumentReference> actuals_ref;
             actuals.reserve (5);
             ++arg_it; // skip '('
 
@@ -338,6 +342,7 @@ const char *MacroExpander::expand(const char *__first, const char *__last,
             const char *arg_end = skip_argument_variadics (actuals, macro, arg_it, __last);
             if (arg_it != arg_end)
             {
+                actuals_ref.append(MacroArgumentReference(start_offset + (arg_it-start), arg_end - arg_it));
                 const QByteArray actual (arg_it, arg_end - arg_it);
                 QByteArray expanded;
                 expand_actual (actual.constBegin (), actual.constEnd (), &expanded);
@@ -350,6 +355,7 @@ const char *MacroExpander::expand(const char *__first, const char *__last,
                 ++arg_it; // skip ','
 
                 arg_end = skip_argument_variadics (actuals, macro, arg_it, __last);
+                actuals_ref.append(MacroArgumentReference(start_offset + (arg_it-start), arg_end - arg_it));
                 const QByteArray actual (arg_it, arg_end - arg_it);
                 QByteArray expanded;
                 expand_actual (actual.constBegin (), actual.constEnd (), &expanded);

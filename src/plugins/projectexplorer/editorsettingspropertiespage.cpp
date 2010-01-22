@@ -29,6 +29,7 @@
 
 #include "editorsettingspropertiespage.h"
 #include "editorconfiguration.h"
+#include "project.h"
 
 #include <QtCore/QTextCodec>
 
@@ -54,7 +55,7 @@ EditorSettingsPanel::EditorSettingsPanel(Project *project)
 
 EditorSettingsPanel::~EditorSettingsPanel()
 {
-    delete m_widget;
+
 }
 
 QString EditorSettingsPanel::name() const

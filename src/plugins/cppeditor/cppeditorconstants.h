@@ -39,7 +39,12 @@ const char * const C_CPPEDITOR  = "C++ Editor";
 const char * const CPPEDITOR_KIND = QT_TRANSLATE_NOOP("OpenWith::Editors", "C++ Editor");
 const char * const SWITCH_DECLARATION_DEFINITION = "CppEditor.SwitchDeclarationDefinition";
 const char * const RENAME_SYMBOL_UNDER_CURSOR = "CppEditor.RenameSymbolUnderCursor";
+const char * const FIND_USAGES = "CppEditor.FindUsages";
+const char * const SEPARATOR = "CppEditor.Separator";
+const char * const SEPARATOR2 = "CppEditor.Separator2";
+const char * const FIND_REFERENCES = "CppEditor.FindReferences";
 const char * const JUMP_TO_DEFINITION = "CppEditor.JumpToDefinition";
+const char * const UPDATE_CODEMODEL = "CppEditor.UpdateCodeModel";
 
 const char * const HEADER_FILE_TYPE = "CppHeaderFiles";
 const char * const SOURCE_FILE_TYPE = "CppSourceFiles";

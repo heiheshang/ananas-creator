@@ -51,14 +51,15 @@ public:
     ~ExpressionUnderCursor();
 
     QString operator()(const QTextCursor &cursor);
-    int startOfFunctionCall(const QTextCursor &cursor);
+    int startOfFunctionCall(const QTextCursor &cursor) const;
 
 private:
-    int startOfMatchingBrace(BackwardsScanner &tk, int index);
     int startOfExpression(BackwardsScanner &tk, int index);
+    int startOfExpression_helper(BackwardsScanner &tk, int index);
     int previousBlockState(const QTextBlock &block);
     bool isAccessToken(const SimpleToken &tk);
 
+private:
     bool _jumpedComma;
 };
 

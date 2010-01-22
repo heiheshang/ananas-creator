@@ -34,8 +34,8 @@ namespace Core {
 namespace Constants {
 
 #define IDE_VERSION_MAJOR 1
-#define IDE_VERSION_MINOR 2
-#define IDE_VERSION_RELEASE 90
+#define IDE_VERSION_MINOR 3
+#define IDE_VERSION_RELEASE 1
 
 #define STRINGIFY_INTERNAL(x) #x
 #define STRINGIFY(x) STRINGIFY_INTERNAL(x)
@@ -181,6 +181,7 @@ const char * const G_EDIT_OTHER          = "QtCreator.Group.Edit.Other";
 
 const char * const G_EDIT_FORMAT         = "QtCreator.Group.Edit.Format";
 const char * const G_EDIT_COLLAPSING     = "QtCreator.Group.Edit.Collapsing";
+const char * const G_EDIT_BLOCKS         = "QtCreator.Group.Edit.Blocks";
 const char * const G_EDIT_FONT           = "QtCreator.Group.Edit.Font";
 const char * const G_EDIT_EDITOR         = "QtCreator.Group.Edit.Editor";
 

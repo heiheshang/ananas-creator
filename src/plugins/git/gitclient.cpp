@@ -34,6 +34,7 @@
 #include "gitconstants.h"
 #include "gitplugin.h"
 #include "gitsubmiteditor.h"
+#include "gitversioncontrol.h"
 
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/coreconstants.h>
@@ -43,14 +44,22 @@
 #include <coreplugin/progressmanager/progressmanager.h>
 #include <coreplugin/uniqueidmanager.h>
 #include <coreplugin/filemanager.h>
+#include <coreplugin/filemanager.h>
+#include <coreplugin/iversioncontrol.h>
+
 #include <texteditor/itexteditor.h>
 #include <utils/qtcassert.h>
 #include <vcsbase/vcsbaseeditor.h>
 #include <vcsbase/vcsbaseoutputwindow.h>
 
+#include <projectexplorer/environment.h>
+
 #include <QtCore/QRegExp>
 #include <QtCore/QTemporaryFile>
 #include <QtCore/QTime>
+#include <QtCore/QFileInfo>
+#include <QtCore/QDir>
+#include <QtCore/QSignalMapper>
 
 #include <QtGui/QMainWindow> // for msg box parent
 #include <QtGui/QMessageBox>
@@ -98,7 +107,8 @@ static QString formatCommand(const QString &binary, const QStringList &args)
 GitClient::GitClient(GitPlugin* plugin)
   : m_msgWait(tr("Waiting for data...")),
     m_plugin(plugin),
-    m_core(Core::ICore::instance())
+    m_core(Core::ICore::instance()),
+    m_repositoryChangedSignalMapper(0)
 {
     if (QSettings *s = m_core->settings()) {
         m_settings.fromSettings(s);
@@ -294,10 +304,10 @@ void GitClient::show(const QString &source, const QString &id)
     executeGit(workDir, arguments, editor);
 }
 
-void GitClient::blame(const QString &workingDirectory, const QString &fileName)
+void GitClient::blame(const QString &workingDirectory, const QString &fileName, int lineNumber /* = -1 */)
 {
     if (Git::Constants::debug)
-        qDebug() << "blame" << workingDirectory << fileName;
+        qDebug() << "blame" << workingDirectory << fileName << lineNumber;
     QStringList arguments(QLatin1String("blame"));
     arguments << QLatin1String("--") << fileName;
 
@@ -306,14 +316,15 @@ void GitClient::blame(const QString &workingDirectory, const QString &fileName)
     const QString sourceFile = source(workingDirectory, fileName);
 
     VCSBase::VCSBaseEditor *editor = createVCSEditor(kind, title, sourceFile, true, "blameFileName", sourceFile);
-    executeGit(workingDirectory, arguments, editor);
+    executeGit(workingDirectory, arguments, editor, false, GitCommand::NoReport, lineNumber);
 }
 
 void GitClient::checkoutBranch(const QString &workingDirectory, const QString &branch)
 {
     QStringList arguments(QLatin1String("checkout"));
     arguments <<  branch;
-    executeGit(workingDirectory, arguments, 0, true);
+    GitCommand *cmd = executeGit(workingDirectory, arguments, 0, true);
+    connectRepositoryChanged(workingDirectory, cmd);
 }
 
 void GitClient::checkout(const QString &workingDirectory, const QString &fileName)
@@ -337,7 +348,8 @@ void GitClient::hardReset(const QString &workingDirectory, const QString &commit
     if (!commit.isEmpty())
         arguments << commit;
 
-    executeGit(workingDirectory, arguments, 0, true);
+    GitCommand *cmd = executeGit(workingDirectory, arguments, 0, true);
+    connectRepositoryChanged(workingDirectory, cmd);
 }
 
 void GitClient::addFile(const QString &workingDirectory, const QString &fileName)
@@ -469,13 +481,16 @@ bool GitClient::synchronousShow(const QString &workingDirectory, const QString &
 // Factory function to create an asynchronous command
 GitCommand *GitClient::createCommand(const QString &workingDirectory,
                              VCSBase::VCSBaseEditor* editor,
-                             bool outputToWindow)
+                             bool outputToWindow,
+                             int editorLineNumber)
 {
     if (Git::Constants::debug)
         qDebug() << Q_FUNC_INFO << workingDirectory << editor;
 
     VCSBase::VCSBaseOutputWindow *outputWindow = VCSBase::VCSBaseOutputWindow::instance();
-    GitCommand* command = new GitCommand(binary(), workingDirectory, processEnvironment());
+    GitCommand* command = new GitCommand(binary(), workingDirectory, processEnvironment(), QVariant(editorLineNumber));
+    if (editor)
+        connect(command, SIGNAL(finished(bool,QVariant)), editor, SLOT(commandFinishedGotoLine(bool,QVariant)));
     if (outputToWindow) {
         if (editor) { // assume that the commands output is the important thing
             connect(command, SIGNAL(outputData(QByteArray)), outputWindow, SLOT(appendDataSilently(QByteArray)));
@@ -493,17 +508,19 @@ GitCommand *GitClient::createCommand(const QString &workingDirectory,
 }
 
 // Execute a single command
-void GitClient::executeGit(const QString &workingDirectory,
-                           const QStringList &arguments,
-                           VCSBase::VCSBaseEditor* editor,
-                           bool outputToWindow,
-                           GitCommand::TerminationReportMode tm)
+GitCommand *GitClient::executeGit(const QString &workingDirectory,
+                                  const QStringList &arguments,
+                                  VCSBase::VCSBaseEditor* editor,
+                                  bool outputToWindow,
+                                  GitCommand::TerminationReportMode tm,
+                                  int editorLineNumber)
 {
     VCSBase::VCSBaseOutputWindow::instance()->appendCommand(formatCommand(QLatin1String(Constants::GIT_BINARY), arguments));
-    GitCommand *command = createCommand(workingDirectory, editor, outputToWindow);
+    GitCommand *command = createCommand(workingDirectory, editor, outputToWindow, editorLineNumber);
     command->addJob(arguments, m_settings.timeout);
     command->setTerminationReportMode(tm);
     command->execute();
+    return command;
 }
 
 // Return fixed arguments required to run
@@ -895,6 +912,8 @@ void GitClient::revert(const QStringList &files)
     QString errorMessage;
     switch (revertI(files, &isDirectory, &errorMessage)) {
     case RevertOk:
+        m_plugin->versionControl()->emitFilesChanged(files);
+        break;
     case RevertCanceled:
         break;
     case RevertUnchanged: {
@@ -910,7 +929,8 @@ void GitClient::revert(const QStringList &files)
 
 void GitClient::pull(const QString &workingDirectory)
 {
-    executeGit(workingDirectory, QStringList(QLatin1String("pull")), 0, true, GitCommand::ReportStderr);
+    GitCommand *cmd = executeGit(workingDirectory, QStringList(QLatin1String("pull")), 0, true, GitCommand::ReportStderr);
+    connectRepositoryChanged(workingDirectory, cmd);
 }
 
 void GitClient::push(const QString &workingDirectory)
@@ -944,7 +964,8 @@ void GitClient::stashPop(const QString &workingDirectory)
 {
     QStringList arguments(QLatin1String("stash"));
     arguments << QLatin1String("pop");
-    executeGit(workingDirectory, arguments, 0, true);
+    GitCommand *cmd = executeGit(workingDirectory, arguments, 0, true);
+    connectRepositoryChanged(workingDirectory, cmd);
 }
 
 void GitClient::branchList(const QString &workingDirectory)
@@ -991,4 +1012,17 @@ void GitClient::setSettings(const GitSettings &s)
             m_settings.toSettings(s);
         m_binaryPath = m_settings.gitBinaryPath();
     }
+}
+
+void GitClient::connectRepositoryChanged(const QString & repository, GitCommand *cmd)
+{
+    // Bind command success termination with repository to changed signal
+    if (!m_repositoryChangedSignalMapper) {
+        m_repositoryChangedSignalMapper = new QSignalMapper(this);
+        connect(m_repositoryChangedSignalMapper, SIGNAL(mapped(QString)),
+                m_plugin->versionControl(), SIGNAL(repositoryChanged(QString)));
+    }
+    m_repositoryChangedSignalMapper->setMapping(cmd, repository);
+    connect(cmd, SIGNAL(success()), m_repositoryChangedSignalMapper, SLOT(map()),
+            Qt::QueuedConnection);
 }

@@ -31,6 +31,15 @@
 
 #include "gdbengine.h"
 #include "gdboptionspage.h"
+#include "trkoptions.h"
+#include "trkoptionspage.h"
+
+#include "attachgdbadapter.h"
+#include "coregdbadapter.h"
+#include "plaingdbadapter.h"
+#include "termgdbadapter.h"
+#include "remotegdbadapter.h"
+#include "trkgdbadapter.h"
 
 #include "watchutils.h"
 #include "debuggeractions.h"
@@ -38,8 +47,8 @@
 #include "debuggerconstants.h"
 #include "debuggermanager.h"
 #include "debuggertooltip.h"
+#include "debuggerstringutils.h"
 #include "gdbmi.h"
-#include "procinterrupt.h"
 
 #include "breakhandler.h"
 #include "moduleshandler.h"
@@ -51,12 +60,15 @@
 #include "debuggerdialogs.h"
 
 #include <utils/qtcassert.h>
+#include <utils/fancymainwindow.h>
 #include <texteditor/itexteditor.h>
+#include <projectexplorer/toolchain.h>
 #include <coreplugin/icore.h>
 
 #include <QtCore/QDebug>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
+#include <QtCore/QMetaObject>
 #include <QtCore/QTime>
 #include <QtCore/QTimer>
 #include <QtCore/QTextStream>
@@ -80,7 +92,6 @@
 
 namespace Debugger {
 namespace Internal {
-using namespace Debugger::Constants;
 
 //#define DEBUG_PENDING  1
 //#define DEBUG_SUBITEM  1
@@ -90,10 +101,37 @@ using namespace Debugger::Constants;
 #else
 #   define PENDING_DEBUG(s)
 #endif
+#define PENDING_DEBUGX(s) qDebug() << s
 
-#define STRINGIFY_INTERNAL(x) #x
-#define STRINGIFY(x) STRINGIFY_INTERNAL(x)
 #define CB(callback) &GdbEngine::callback, STRINGIFY(callback)
+
+static bool stateAcceptsGdbCommands(DebuggerState state)
+{
+    switch (state) {
+    case AdapterStarting:
+    case AdapterStarted:
+    case AdapterStartFailed:
+    case InferiorUnrunnable:
+    case InferiorStarting:
+    case InferiorStartFailed:
+    case InferiorRunningRequested:
+    case InferiorRunningRequested_Kill:
+    case InferiorRunning:
+    case InferiorStopping:
+    case InferiorStopping_Kill:
+    case InferiorStopped:
+    case InferiorShuttingDown:
+    case InferiorShutDown:
+    case InferiorShutdownFailed:
+        return true;
+    case DebuggerNotReady:
+    case EngineStarting:
+    case InferiorStopFailed:
+    case EngineShuttingDown:
+        break;
+    }
+    return false;
+}
 
 static int &currentToken()
 {
@@ -102,9 +140,9 @@ static int &currentToken()
 }
 
 // reads a MI-encoded item frome the consolestream
-static bool parseConsoleStream(const GdbResultRecord &record, GdbMi *contents)
+static bool parseConsoleStream(const GdbResponse &response, GdbMi *contents)
 {
-    GdbMi output = record.data.findChild("consolestreamoutput");
+    GdbMi output = response.data.findChild("consolestreamoutput");
     QByteArray out = output.data();
 
     int markerPos = out.indexOf('"') + 1; // position of 'success marker'
@@ -124,9 +162,9 @@ static bool parseConsoleStream(const GdbResultRecord &record, GdbMi *contents)
     return contents->isValid();
 }
 
-static QByteArray parsePlainConsoleStream(const GdbResultRecord &record)
+static QByteArray parsePlainConsoleStream(const GdbResponse &response)
 {
-    GdbMi output = record.data.findChild("consolestreamoutput");
+    GdbMi output = response.data.findChild("consolestreamoutput");
     QByteArray out = output.data();
     // FIXME: proper decoding needed
     if (out.endsWith("\\n"))
@@ -143,76 +181,80 @@ static QByteArray parsePlainConsoleStream(const GdbResultRecord &record)
 //
 ///////////////////////////////////////////////////////////////////////
 
-GdbEngine::GdbEngine(DebuggerManager *parent) :
+GdbEngine::GdbEngine(DebuggerManager *manager) :
+    IDebuggerEngine(manager),
 #ifdef Q_OS_WIN // Do injection loading with MinGW (call loading does not work with 64bit)
-    m_dumperInjectionLoad(true),
+    m_dumperInjectionLoad(true)
 #else
-    m_dumperInjectionLoad(false),
+    m_dumperInjectionLoad(false)
 #endif
-    q(parent),
-    qq(parent->engineInterface())
 {
-    m_stubProc.setMode(Core::Utils::ConsoleProcess::Debug);
-#ifdef Q_OS_UNIX
-    m_stubProc.setSettings(Core::ICore::instance()->settings());
-#endif
-    initializeVariables();
-    initializeConnections();
+    m_trkOptions = QSharedPointer<TrkOptions>(new TrkOptions);
+    m_trkOptions->fromSettings(Core::ICore::instance()->settings());
+    m_gdbAdapter = 0;
+
+    m_commandTimer = new QTimer(this);
+    m_commandTimer->setSingleShot(true);
+    connect(m_commandTimer, SIGNAL(timeout()), SLOT(commandTimeout()));
+
+    // Needs no resetting in initializeVariables()
+    m_busy = false;
+
+    connect(theDebuggerAction(AutoDerefPointers), SIGNAL(valueChanged(QVariant)),
+            this, SLOT(setAutoDerefPointers(QVariant)));
+}
+
+void GdbEngine::connectDebuggingHelperActions()
+{
+    connect(theDebuggerAction(UseDebuggingHelpers), SIGNAL(valueChanged(QVariant)),
+            this, SLOT(setUseDebuggingHelpers(QVariant)));
+    connect(theDebuggerAction(DebugDebuggingHelpers), SIGNAL(valueChanged(QVariant)),
+            this, SLOT(setDebugDebuggingHelpers(QVariant)));
+    connect(theDebuggerAction(RecheckDebuggingHelpers), SIGNAL(triggered()),
+            this, SLOT(recheckDebuggingHelperAvailability()));
+}
+   
+void GdbEngine::disconnectDebuggingHelperActions()
+{
+    disconnect(theDebuggerAction(UseDebuggingHelpers), 0, this, 0);
+    disconnect(theDebuggerAction(DebugDebuggingHelpers), 0, this, 0);
+    disconnect(theDebuggerAction(RecheckDebuggingHelpers), 0, this, 0);
+}
+
+DebuggerStartMode GdbEngine::startMode() const
+{
+    QTC_ASSERT(!m_startParameters.isNull(), return NoStartMode);
+    return m_startParameters->startMode;
+}
+
+QMainWindow *GdbEngine::mainWindow() const
+{
+    return m_manager->mainWindow();
 }
 
 GdbEngine::~GdbEngine()
 {
     // prevent sending error messages afterwards
-    m_gdbProc.disconnect(this);
+    disconnect(&m_gdbProc, 0, this, 0);
+    delete m_gdbAdapter;
+    m_gdbAdapter = 0;
 }
 
-void GdbEngine::initializeConnections()
+void GdbEngine::connectAdapter()
 {
-    // Gdb Process interaction
-    connect(&m_gdbProc, SIGNAL(error(QProcess::ProcessError)),
-        this, SLOT(gdbProcError(QProcess::ProcessError)));
-    connect(&m_gdbProc, SIGNAL(readyReadStandardOutput()),
-        this, SLOT(readGdbStandardOutput()));
-    connect(&m_gdbProc, SIGNAL(readyReadStandardError()),
-        this, SLOT(readGdbStandardError()));
-    connect(&m_gdbProc, SIGNAL(finished(int, QProcess::ExitStatus)),
-        q, SLOT(exitDebugger()));
+    connect(m_gdbAdapter, SIGNAL(adapterStarted()),
+        this, SLOT(handleAdapterStarted()));
+    connect(m_gdbAdapter, SIGNAL(adapterStartFailed(QString,QString)),
+        this, SLOT(handleAdapterStartFailed(QString,QString)));
 
-    connect(&m_stubProc, SIGNAL(processError(QString)),
-        this, SLOT(stubError(QString)));
-    connect(&m_stubProc, SIGNAL(processStarted()),
-        this, SLOT(stubStarted()));
-    connect(&m_stubProc, SIGNAL(wrapperStopped()),
-        q, SLOT(exitDebugger()));
+    connect(m_gdbAdapter, SIGNAL(inferiorPrepared()),
+        this, SLOT(handleInferiorPrepared()));
 
-    connect(&m_uploadProc, SIGNAL(error(QProcess::ProcessError)),
-        this, SLOT(uploadProcError(QProcess::ProcessError)));
-    connect(&m_uploadProc, SIGNAL(readyReadStandardOutput()),
-        this, SLOT(readUploadStandardOutput()));
-    connect(&m_uploadProc, SIGNAL(readyReadStandardError()),
-        this, SLOT(readUploadStandardError()));
+    connect(m_gdbAdapter, SIGNAL(inferiorStartFailed(QString)),
+        this, SLOT(handleInferiorStartFailed(QString)));
 
-    // Output
-    connect(&m_outputCollector, SIGNAL(byteDelivery(QByteArray)),
-        this, SLOT(readDebugeeOutput(QByteArray)));
-
-    connect(this, SIGNAL(gdbOutputAvailable(int,QString)),
-        q, SLOT(showDebuggerOutput(int,QString)),
-        Qt::QueuedConnection);
-    connect(this, SIGNAL(gdbInputAvailable(int,QString)),
-        q, SLOT(showDebuggerInput(int,QString)),
-        Qt::QueuedConnection);
-    connect(this, SIGNAL(applicationOutputAvailable(QString)),
-        q, SLOT(showApplicationOutput(QString)),
-        Qt::QueuedConnection);
-
-    // FIXME: These trigger even if the engine is not active
-    connect(theDebuggerAction(UseDebuggingHelpers), SIGNAL(valueChanged(QVariant)),
-        this, SLOT(setUseDebuggingHelpers(QVariant)));
-    connect(theDebuggerAction(DebugDebuggingHelpers), SIGNAL(valueChanged(QVariant)),
-        this, SLOT(setDebugDebuggingHelpers(QVariant)));
-    connect(theDebuggerAction(RecheckDebuggingHelpers), SIGNAL(triggered()),
-        this, SLOT(recheckDebuggingHelperAvailability()));
+    connect(m_gdbAdapter, SIGNAL(adapterCrashed(QString)),
+        this, SLOT(handleAdapterCrashed(QString)));
 }
 
 void GdbEngine::initializeVariables()
@@ -220,129 +262,68 @@ void GdbEngine::initializeVariables()
     m_debuggingHelperState = DebuggingHelperUninitialized;
     m_gdbVersion = 100;
     m_gdbBuildVersion = -1;
+    m_isMacGdb = false;
+    m_isSynchroneous = false;
+    m_registerNamesListed = false;
 
     m_fullToShortName.clear();
     m_shortToFullName.clear();
     m_varToType.clear();
 
-    m_modulesListOutdated = true;
+    invalidateSourcesList();
+    m_sourcesListUpdating = false;
+    m_breakListUpdating = false;
     m_oldestAcceptableToken = -1;
     m_outputCodec = QTextCodec::codecForLocale();
     m_pendingRequests = 0;
-    m_autoContinue = false;
-    m_waitingForFirstBreakpointToBeHit = false;
+    m_commandsDoneCallback = 0;
     m_commandsToRunOnTemporaryBreak.clear();
     m_cookieForToken.clear();
-    m_customOutputForToken.clear();
 
     m_pendingConsoleStreamOutput.clear();
-    m_pendingTargetStreamOutput.clear();
     m_pendingLogStreamOutput.clear();
 
     m_inbuffer.clear();
 
+    m_commandTimer->stop();
+
+    // ConverterState has no reset() function.
+    m_outputCodecState.~ConverterState();
+    new (&m_outputCodecState) QTextCodec::ConverterState();
+
     m_currentFunctionArgs.clear();
     m_currentFrame.clear();
     m_dumperHelper.clear();
-
-    // FIXME: unhandled:
-    //m_outputCodecState = QTextCodec::ConverterState();
-    //OutputCollector m_outputCollector;
-    //QProcess m_gdbProc;
-    //QProcess m_uploadProc;
-    //Core::Utils::ConsoleProcess m_stubProc;
+#ifdef Q_OS_LINUX
+    m_entryPoint.clear();
+#endif
 }
 
-void GdbEngine::gdbProcError(QProcess::ProcessError error)
+QString GdbEngine::errorMessage(QProcess::ProcessError error)
 {
-    QString msg;
-    bool kill = true;
     switch (error) {
         case QProcess::FailedToStart:
-            kill = false;
-            msg = tr("The Gdb process failed to start. Either the "
+            return tr("The Gdb process failed to start. Either the "
                 "invoked program '%1' is missing, or you may have insufficient "
                 "permissions to invoke the program.")
                 .arg(theDebuggerStringSetting(GdbLocation));
-            break;
         case QProcess::Crashed:
-            kill = false;
-            msg = tr("The Gdb process crashed some time after starting "
+            return tr("The Gdb process crashed some time after starting "
                 "successfully.");
-            break;
         case QProcess::Timedout:
-            msg = tr("The last waitFor...() function timed out. "
+            return tr("The last waitFor...() function timed out. "
                 "The state of QProcess is unchanged, and you can try calling "
                 "waitFor...() again.");
-            break;
         case QProcess::WriteError:
-            msg = tr("An error occurred when attempting to write "
+            return tr("An error occurred when attempting to write "
                 "to the Gdb process. For example, the process may not be running, "
                 "or it may have closed its input channel.");
-            break;
         case QProcess::ReadError:
-            msg = tr("An error occurred when attempting to read from "
+            return tr("An error occurred when attempting to read from "
                 "the Gdb process. For example, the process may not be running.");
-            break;
         default:
-            msg = tr("An unknown error in the Gdb process occurred. "
-                "This is the default return value of error().");
+            return tr("An unknown error in the Gdb process occurred. ");
     }
-
-    q->showStatusMessage(msg);
-    QMessageBox::critical(q->mainWindow(), tr("Error"), msg);
-    // act as if it was closed by the core
-    if (kill)
-        q->exitDebugger();
-}
-
-void GdbEngine::uploadProcError(QProcess::ProcessError error)
-{
-    QString msg;
-    switch (error) {
-        case QProcess::FailedToStart:
-            msg = tr("The upload process failed to start. Either the "
-                "invoked script '%1' is missing, or you may have insufficient "
-                "permissions to invoke the program.")
-                .arg(theDebuggerStringSetting(GdbLocation));
-            break;
-        case QProcess::Crashed:
-            msg = tr("The upload process crashed some time after starting "
-                "successfully.");
-            break;
-        case QProcess::Timedout:
-            msg = tr("The last waitFor...() function timed out. "
-                "The state of QProcess is unchanged, and you can try calling "
-                "waitFor...() again.");
-            break;
-        case QProcess::WriteError:
-            msg = tr("An error occurred when attempting to write "
-                "to the upload process. For example, the process may not be running, "
-                "or it may have closed its input channel.");
-            break;
-        case QProcess::ReadError:
-            msg = tr("An error occurred when attempting to read from "
-                "the upload process. For example, the process may not be running.");
-            break;
-        default:
-            msg = tr("An unknown error in the upload process occurred. "
-                "This is the default return value of error().");
-    }
-
-    q->showStatusMessage(msg);
-    QMessageBox::critical(q->mainWindow(), tr("Error"), msg);
-}
-
-void GdbEngine::readUploadStandardOutput()
-{
-    QByteArray ba = m_uploadProc.readAllStandardOutput();
-    gdbOutputAvailable(LogOutput, QString::fromLocal8Bit(ba, ba.length()));
-}
-
-void GdbEngine::readUploadStandardError()
-{
-    QByteArray ba = m_uploadProc.readAllStandardError();
-    gdbOutputAvailable(LogError, QString::fromLocal8Bit(ba, ba.length()));
 }
 
 #if 0
@@ -363,13 +344,13 @@ static void dump(const char *first, const char *middle, const QString & to)
 
 void GdbEngine::readDebugeeOutput(const QByteArray &data)
 {
-    emit applicationOutputAvailable(m_outputCodec->toUnicode(
+    m_manager->showApplicationOutput(m_outputCodec->toUnicode(
             data.constData(), data.length(), &m_outputCodecState));
 }
 
 void GdbEngine::debugMessage(const QString &msg)
 {
-    emit gdbOutputAvailable(LogDebug, msg);
+    gdbOutputAvailable(LogDebug, msg);
 }
 
 void GdbEngine::handleResponse(const QByteArray &buff)
@@ -377,8 +358,8 @@ void GdbEngine::handleResponse(const QByteArray &buff)
     static QTime lastTime;
 
     if (theDebuggerBoolSetting(LogTimeStamps))
-        emit gdbOutputAvailable(LogTime, currentTime());
-    emit gdbOutputAvailable(LogOutput, QString::fromLocal8Bit(buff, buff.length()));
+        gdbOutputAvailable(LogTime, currentTime());
+    gdbOutputAvailable(LogOutput, QString::fromLocal8Bit(buff, buff.length()));
 
 #if 0
     qDebug() // << "#### start response handling #### "
@@ -411,7 +392,7 @@ void GdbEngine::handleResponse(const QByteArray &buff)
         //qDebug() << "found token" << token;
     }
 
-    // next char decides kind of record
+    // next char decides kind of response
     const char c = *from++;
     //qDebug() << "CODE:" << c;
     switch (c) {
@@ -427,25 +408,27 @@ void GdbEngine::handleResponse(const QByteArray &buff)
             }
             //qDebug() << "ASYNCCLASS" << asyncClass;
 
-            GdbMi record;
+            GdbMi result;
             while (from != to) {
                 GdbMi data;
                 if (*from != ',') {
                     // happens on archer where we get 
                     // 23^running <NL> *running,thread-id="all" <NL> (gdb) 
-                    record.m_type = GdbMi::Tuple;
+                    result.m_type = GdbMi::Tuple;
                     break;
                 }
                 ++from; // skip ','
                 data.parseResultOrValue(from, to);
                 if (data.isValid()) {
-                    //qDebug() << "parsed response:" << data.toString();
-                    record.m_children += data;
-                    record.m_type = GdbMi::Tuple;
+                    //qDebug() << "parsed result:" << data.toString();
+                    result.m_children += data;
+                    result.m_type = GdbMi::Tuple;
                 }
             }
             if (asyncClass == "stopped") {
-                handleAsyncOutput(record);
+                handleStopResponse(result);
+                m_pendingLogStreamOutput.clear();
+                m_pendingConsoleStreamOutput.clear();
             } else if (asyncClass == "running") {
                 // Archer has 'thread-id="all"' here
             } else if (asyncClass == "library-loaded") {
@@ -453,40 +436,46 @@ void GdbEngine::handleResponse(const QByteArray &buff)
                 // target-name="/usr/lib/libdrm.so.2",
                 // host-name="/usr/lib/libdrm.so.2",
                 // symbols-loaded="0"
-                QByteArray id = record.findChild("id").data();
+                QByteArray id = result.findChild("id").data();
                 if (!id.isEmpty())
-                    q->showStatusMessage(tr("Library %1 loaded.").arg(_(id)));
+                    showStatusMessage(tr("Library %1 loaded.").arg(_(id)));
+                invalidateSourcesList();
             } else if (asyncClass == "library-unloaded") {
                 // Archer has 'id="/usr/lib/libdrm.so.2",
                 // target-name="/usr/lib/libdrm.so.2",
                 // host-name="/usr/lib/libdrm.so.2"
-                QByteArray id = record.findChild("id").data();
-                q->showStatusMessage(tr("Library %1 unloaded.").arg(_(id)));
+                QByteArray id = result.findChild("id").data();
+                showStatusMessage(tr("Library %1 unloaded.").arg(_(id)));
+                invalidateSourcesList();
             } else if (asyncClass == "thread-group-created") {
                 // Archer has "{id="28902"}" 
-                QByteArray id = record.findChild("id").data();
-                q->showStatusMessage(tr("Thread group %1 created.").arg(_(id)));
+                QByteArray id = result.findChild("id").data();
+                showStatusMessage(tr("Thread group %1 created.").arg(_(id)));
+                int pid = id.toInt();
+                if (pid != inferiorPid())
+                    handleInferiorPidChanged(pid);
             } else if (asyncClass == "thread-created") {
                 //"{id="1",group-id="28902"}" 
-                QByteArray id = record.findChild("id").data();
-                q->showStatusMessage(tr("Thread %1 created.").arg(_(id)));
+                QByteArray id = result.findChild("id").data();
+                showStatusMessage(tr("Thread %1 created.").arg(_(id)));
             } else if (asyncClass == "thread-group-exited") {
                 // Archer has "{id="28902"}" 
-                QByteArray id = record.findChild("id").data();
-                q->showStatusMessage(tr("Thread group %1 exited.").arg(_(id)));
+                QByteArray id = result.findChild("id").data();
+                showStatusMessage(tr("Thread group %1 exited.").arg(_(id)));
             } else if (asyncClass == "thread-exited") {
                 //"{id="1",group-id="28902"}" 
-                QByteArray id = record.findChild("id").data();
-                QByteArray groupid = record.findChild("group-id").data();
-                q->showStatusMessage(tr("Thread %1 in group %2 exited.")
+                QByteArray id = result.findChild("id").data();
+                QByteArray groupid = result.findChild("group-id").data();
+                showStatusMessage(tr("Thread %1 in group %2 exited.")
                     .arg(_(id)).arg(_(groupid)));
             } else if (asyncClass == "thread-selected") {
-                QByteArray id = record.findChild("id").data();
-                q->showStatusMessage(tr("Thread %1 selected.").arg(_(id)));
+                QByteArray id = result.findChild("id").data();
+                showStatusMessage(tr("Thread %1 selected.").arg(_(id)));
                 //"{id="2"}" 
             #if defined(Q_OS_MAC)
             } else if (asyncClass == "shlibs-updated") {
                 // MAC announces updated libs
+                invalidateSourcesList();
             } else if (asyncClass == "shlibs-added") {
                 // MAC announces added libs
                 // {shlib-info={num="2", name="libmathCommon.A_debug.dylib",
@@ -494,10 +483,11 @@ void GdbEngine::handleResponse(const QByteArray &buff)
                 // state="Y", path="/usr/lib/system/libmathCommon.A_debug.dylib",
                 // description="/usr/lib/system/libmathCommon.A_debug.dylib",
                 // loaded_addr="0x7f000", slide="0x7f000", prefix=""}}
+                invalidateSourcesList();
             #endif
             } else {
                 qDebug() << "IGNORED ASYNC OUTPUT"
-                    << asyncClass << record.toString();
+                    << asyncClass << result.toString();
             }
             break;
         }
@@ -505,15 +495,39 @@ void GdbEngine::handleResponse(const QByteArray &buff)
         case '~': {
             QByteArray data = GdbMi::parseCString(from, to);
             m_pendingConsoleStreamOutput += data;
+
+            // Parse pid from noise.
+            if (!inferiorPid()) {
+                // Linux/Mac gdb: [New [Tt]hread 0x545 (LWP 4554)]
+                static QRegExp re1(_("New .hread 0x[0-9a-f]+ \\(LWP ([0-9]*)\\)"));
+                // MinGW 6.8: [New thread 2437.0x435345]
+                static QRegExp re2(_("New .hread ([0-9]+)\\.0x[0-9a-f]*"));
+                // Mac: [Switching to process 9294 local thread 0x2e03] or
+                // [Switching to process 31773]
+                static QRegExp re3(_("Switching to process ([0-9]+)"));
+                QTC_ASSERT(re1.isValid() && re2.isValid(), return);
+                if (re1.indexIn(_(data)) != -1)
+                    maybeHandleInferiorPidChanged(re1.cap(1));
+                else if (re2.indexIn(_(data)) != -1)
+                    maybeHandleInferiorPidChanged(re2.cap(1));
+                else if (re3.indexIn(_(data)) != -1)
+                    maybeHandleInferiorPidChanged(re3.cap(1));
+            }
+
+            // Show some messages to give the impression something happens.
             if (data.startsWith("Reading symbols from ")) {
-                q->showStatusMessage(tr("Reading %1...").arg(_(data.mid(21))));
+                showStatusMessage(tr("Reading %1...").arg(_(data.mid(21))), 1000);
+                invalidateSourcesList();
+            } else if (data.startsWith("[New ") || data.startsWith("[Thread ")) {
+                if (data.endsWith('\n'))
+                    data.chop(1);
+                showStatusMessage(_(data), 1000);
             }
             break;
         }
 
         case '@': {
-            QByteArray data = GdbMi::parseCString(from, to);
-            m_pendingTargetStreamOutput += data;
+            readDebugeeOutput(GdbMi::parseCString(from, to));
             break;
         }
 
@@ -523,66 +537,65 @@ void GdbEngine::handleResponse(const QByteArray &buff)
             // On Windows, the contents seem to depend on the debugger
             // version and/or OS version used.
             if (data.startsWith("warning:"))
-                qq->showApplicationOutput(_(data.mid(9))); // cut "warning: "
+                manager()->showApplicationOutput(_(data.mid(9))); // cut "warning: "
             break;
         }
 
         case '^': {
-            GdbResultRecord record;
+            GdbResponse response;
 
-            record.token = token;
+            response.token = token;
 
             for (inner = from; inner != to; ++inner)
                 if (*inner < 'a' || *inner > 'z')
                     break;
 
             QByteArray resultClass = QByteArray::fromRawData(from, inner - from);
-            if (resultClass == "done")
-                record.resultClass = GdbResultDone;
-            else if (resultClass == "running")
-                record.resultClass = GdbResultRunning;
-            else if (resultClass == "connected")
-                record.resultClass = GdbResultConnected;
-            else if (resultClass == "error")
-                record.resultClass = GdbResultError;
-            else if (resultClass == "exit")
-                record.resultClass = GdbResultExit;
-            else
-                record.resultClass = GdbResultUnknown;
+            if (resultClass == "done") {
+                response.resultClass = GdbResultDone;
+            } else if (resultClass == "running") {
+                if (state() == InferiorStopped) { // Result of manual command.
+                    m_manager->resetLocation();
+                    setTokenBarrier();
+                    setState(InferiorRunningRequested);
+                }
+                setState(InferiorRunning);
+                showStatusMessage(tr("Running..."));
+                response.resultClass = GdbResultRunning;
+            } else if (resultClass == "connected") {
+                response.resultClass = GdbResultConnected;
+            } else if (resultClass == "error") {
+                response.resultClass = GdbResultError;
+            } else if (resultClass == "exit") {
+                response.resultClass = GdbResultExit;
+            } else {
+                response.resultClass = GdbResultUnknown;
+            }
 
             from = inner;
             if (from != to) {
                 if (*from == ',') {
                     ++from;
-                    record.data.parseTuple_helper(from, to);
-                    record.data.m_type = GdbMi::Tuple;
-                    record.data.m_name = "data";
+                    response.data.parseTuple_helper(from, to);
+                    response.data.m_type = GdbMi::Tuple;
+                    response.data.m_name = "data";
                 } else {
                     // Archer has this
-                    record.data.m_type = GdbMi::Tuple;
-                    record.data.m_name = "data";
+                    response.data.m_type = GdbMi::Tuple;
+                    response.data.m_name = "data";
                 }
             }
 
             //qDebug() << "\nLOG STREAM:" + m_pendingLogStreamOutput;
-            //qDebug() << "\nTARGET STREAM:" + m_pendingTargetStreamOutput;
             //qDebug() << "\nCONSOLE STREAM:" + m_pendingConsoleStreamOutput;
-            record.data.setStreamOutput("logstreamoutput",
+            response.data.setStreamOutput("logstreamoutput",
                 m_pendingLogStreamOutput);
-            record.data.setStreamOutput("targetstreamoutput",
-                m_pendingTargetStreamOutput);
-            record.data.setStreamOutput("consolestreamoutput",
+            response.data.setStreamOutput("consolestreamoutput",
                 m_pendingConsoleStreamOutput);
-            QByteArray custom = m_customOutputForToken[token];
-            if (!custom.isEmpty())
-                record.data.setStreamOutput("customvaluecontents",
-                    '{' + custom + '}');
-            //m_customOutputForToken.remove(token);
             m_pendingLogStreamOutput.clear();
-            m_pendingTargetStreamOutput.clear();
             m_pendingConsoleStreamOutput.clear();
 
-            handleResultRecord(record);
+            handleResultRecord(&response);
             break;
         }
         default: {
@@ -592,36 +605,27 @@ void GdbEngine::handleResponse(const QByteArray &buff)
     }
 }
 
-void GdbEngine::handleStubAttached(const GdbResultRecord &, const QVariant &)
-{
-    qq->notifyInferiorStopped();
-    handleAqcuiredInferior();
-    m_autoContinue = true;
-}
-
-void GdbEngine::stubStarted()
-{
-    const qint64 attachedPID = m_stubProc.applicationPID();
-    qq->notifyInferiorPidChanged(attachedPID);
-    postCommand(_("attach %1").arg(attachedPID), CB(handleStubAttached));
-}
-
-void GdbEngine::stubError(const QString &msg)
-{
-    QMessageBox::critical(q->mainWindow(), tr("Debugger Error"), msg);
-}
-
 void GdbEngine::readGdbStandardError()
 {
-    qWarning() << "Unexpected gdb stderr:" << m_gdbProc.readAllStandardError();
+    QByteArray err = m_gdbProc.readAllStandardError();
+    if (err == "Undefined command: \"bb\".  Try \"help\".\n")
+        return;
+    qWarning() << "Unexpected gdb stderr:" << err;
 }
 
 void GdbEngine::readGdbStandardOutput()
 {
+    if (m_commandTimer->isActive()) 
+        m_commandTimer->start(); // Retrigger
+
     int newstart = 0;
     int scan = m_inbuffer.size();
 
     m_inbuffer.append(m_gdbProc.readAllStandardOutput());
+
+    // This can trigger when a dialog starts a nested event loop
+    if (m_busy)
+        return;
 
     while (newstart < m_inbuffer.size()) {
         int start = newstart;
@@ -641,34 +645,32 @@ void GdbEngine::readGdbStandardOutput()
                 continue;
         }
         #endif
+        m_busy = true;
         handleResponse(QByteArray::fromRawData(m_inbuffer.constData() + start, end - start));
+        m_busy = false;
     }
     m_inbuffer.clear();
 }
 
 void GdbEngine::interruptInferior()
 {
-    qq->notifyInferiorStopRequested();
+    QTC_ASSERT(state() == InferiorRunning, qDebug() << state(); return);
 
-    if (m_gdbProc.state() == QProcess::NotRunning) {
-        debugMessage(_("TRYING TO INTERRUPT INFERIOR WITHOUT RUNNING GDB"));
-        qq->notifyInferiorExited();
-        return;
-    }
+    setState(InferiorStopping);
+    showStatusMessage(tr("Stop requested..."), 5000);
 
-    if (q->startMode() == StartRemote) {
-        postCommand(_("-exec-interrupt"));
-        return;
-    }
+    debugMessage(_("TRYING TO INTERRUPT INFERIOR"));
+    m_gdbAdapter->interruptInferior();
+}
 
-    const qint64 attachedPID = q->inferiorPid();
-    if (attachedPID <= 0) {
-        debugMessage(_("TRYING TO INTERRUPT INFERIOR BEFORE PID WAS OBTAINED"));
-        return;
-    }
-
-    if (!interruptProcess(attachedPID))
-        debugMessage(_("CANNOT INTERRUPT %1").arg(attachedPID));
+void GdbEngine::interruptInferiorTemporarily()
+{
+    interruptInferior();
+    foreach (const GdbCommand &cmd, m_commandsToRunOnTemporaryBreak)
+        if (cmd.flags & LosesChild) {
+            setState(InferiorStopping_Kill);
+            break;
+        }
 }
 
 void GdbEngine::maybeHandleInferiorPidChanged(const QString &pid0)
@@ -678,13 +680,32 @@ void GdbEngine::maybeHandleInferiorPidChanged(const QString &pid0)
         debugMessage(_("Cannot parse PID from %1").arg(pid0));
         return;
     }
-    if (pid == q->inferiorPid())
+    if (pid == inferiorPid())
         return;
     debugMessage(_("FOUND PID %1").arg(pid));    
 
-    qq->notifyInferiorPidChanged(pid);
+    handleInferiorPidChanged(pid);
     if (m_dumperInjectionLoad)
         tryLoadDebuggingHelpers();
+}
+
+void GdbEngine::postCommand(const QString &command, AdapterCallback callback,
+                            const char *callbackName, const QVariant &cookie)
+{
+    postCommand(command, NoFlags, callback, callbackName, cookie);
+}
+
+void GdbEngine::postCommand(const QString &command, GdbCommandFlags flags,
+                            AdapterCallback callback,
+                            const char *callbackName, const QVariant &cookie)
+{
+    GdbCommand cmd;
+    cmd.command = command;
+    cmd.flags = flags;
+    cmd.adapterCallback = callback;
+    cmd.callbackName = callbackName;
+    cmd.cookie = cookie;
+    postCommandHelper(cmd);
 }
 
 void GdbEngine::postCommand(const QString &command, GdbCommandCallback callback,
@@ -697,239 +718,329 @@ void GdbEngine::postCommand(const QString &command, GdbCommandFlags flags,
                             GdbCommandCallback callback, const char *callbackName,
                             const QVariant &cookie)
 {
-    if (m_gdbProc.state() == QProcess::NotRunning) {
-        debugMessage(_("NO GDB PROCESS RUNNING, CMD IGNORED: ") + command);
-        return;
-    }
-
-    if (flags & RebuildModel) {
-        ++m_pendingRequests;
-        PENDING_DEBUG("   CALLBACK" << callbackName << "INCREMENTS PENDING TO:"
-            << m_pendingRequests << command);
-    } else {
-        PENDING_DEBUG("   UNKNOWN CALLBACK" << callbackName << "LEAVES PENDING AT:"
-            << m_pendingRequests << command);
-    }
-
     GdbCommand cmd;
     cmd.command = command;
     cmd.flags = flags;
     cmd.callback = callback;
     cmd.callbackName = callbackName;
     cmd.cookie = cookie;
+    postCommandHelper(cmd);
+}
 
-    if ((flags & NeedsStop) && q->status() != DebuggerInferiorStopped
-            && q->status() != DebuggerProcessStartingUp) {
-        // queue the commands that we cannot send at once
-        QTC_ASSERT(q->status() == DebuggerInferiorRunning,
-            qDebug() << "STATUS:" << q->status());
-        q->showStatusMessage(tr("Stopping temporarily."));
-        debugMessage(_("QUEUING COMMAND ") + cmd.command);
-        m_commandsToRunOnTemporaryBreak.append(cmd);
-        interruptInferior();
-    } else if (!command.isEmpty()) {
+void GdbEngine::postCommandHelper(const GdbCommand &cmd)
+{
+    if (!stateAcceptsGdbCommands(state())) {
+        PENDING_DEBUG(_("NO GDB PROCESS RUNNING, CMD IGNORED: ") + cmd.command);
+        debugMessage(_("NO GDB PROCESS RUNNING, CMD IGNORED: %1 %2")
+            .arg(cmd.command).arg(state()));
+        return;
+    }
+
+    if (cmd.flags & RebuildModel) {
+        ++m_pendingRequests;
+        PENDING_DEBUG("   MODEL:" << cmd.command << "=>" << cmd.callbackName
+                      << "INCREMENTS PENDING TO" << m_pendingRequests);
+    } else {
+        PENDING_DEBUG("   OTHER (IN):" << cmd.command << "=>" << cmd.callbackName
+                      << "LEAVES PENDING AT" << m_pendingRequests);
+    }
+
+    if ((cmd.flags & NeedsStop) || !m_commandsToRunOnTemporaryBreak.isEmpty()) {
+        if (state() == InferiorStopped || state() == InferiorUnrunnable
+            || state() == InferiorStarting || state() == AdapterStarted) {
+            // Can be safely sent now.
+            flushCommand(cmd);
+        } else {
+            // Queue the commands that we cannot send at once.
+            debugMessage(_("QUEUING COMMAND ") + cmd.command);
+            m_commandsToRunOnTemporaryBreak.append(cmd);
+            if (state() == InferiorStopping) {
+                if (cmd.flags & LosesChild)
+                    setState(InferiorStopping_Kill);
+                debugMessage(_("CHILD ALREADY BEING INTERRUPTED"));
+            } else if (state() == InferiorStopping_Kill) {
+                debugMessage(_("CHILD ALREADY BEING INTERRUPTED (KILL PENDING)"));
+            } else if (state() == InferiorRunningRequested) {
+                if (cmd.flags & LosesChild)
+                    setState(InferiorRunningRequested_Kill);
+                debugMessage(_("RUNNING REQUESTED; POSTPONING INTERRUPT"));
+            } else if (state() == InferiorRunningRequested_Kill) {
+                debugMessage(_("RUNNING REQUESTED; POSTPONING INTERRUPT (KILL PENDING)"));
+            } else if (state() == InferiorRunning) {
+                showStatusMessage(tr("Stopping temporarily."), 1000);
+                interruptInferiorTemporarily();
+            } else {
+                qDebug() << "ATTEMPTING TO QUEUE COMMAND IN INAPPROPRIATE STATE" << state();
+            }
+        }
+    } else if (!cmd.command.isEmpty()) {
         flushCommand(cmd);
     }
 }
 
-void GdbEngine::flushCommand(GdbCommand &cmd)
+void GdbEngine::flushQueuedCommands()
 {
+    showStatusMessage(tr("Processing queued commands."), 1000);
+    while (!m_commandsToRunOnTemporaryBreak.isEmpty()) {
+        GdbCommand cmd = m_commandsToRunOnTemporaryBreak.takeFirst();
+        debugMessage(_("RUNNING QUEUED COMMAND %1 %2")
+            .arg(cmd.command).arg(_(cmd.callbackName)));
+        flushCommand(cmd);
+    }
+}
+
+void GdbEngine::flushCommand(const GdbCommand &cmd0)
+{
+    GdbCommand cmd = cmd0;
+    if (state() == DebuggerNotReady) {
+        gdbInputAvailable(LogInput, cmd.command);
+        debugMessage(_("GDB PROCESS NOT RUNNING, PLAIN CMD IGNORED: ") + cmd.command);
+        return;
+    }
+
     ++currentToken();
     cmd.postTime = QTime::currentTime();
     m_cookieForToken[currentToken()] = cmd;
     cmd.command = QString::number(currentToken()) + cmd.command;
     if (cmd.flags & EmbedToken)
         cmd.command = cmd.command.arg(currentToken());
+    gdbInputAvailable(LogInput, cmd.command);
 
-    m_gdbProc.write(cmd.command.toLatin1() + "\r\n");
-    //emit gdbInputAvailable(QString(), "         " +  currentTime());
-    //emit gdbInputAvailable(QString(), "[" + currentTime() + "]    " + cmd.command);
-    emit gdbInputAvailable(LogInput, cmd.command);
+    m_gdbAdapter->write(cmd.command.toLatin1() + "\r\n");
+
+    m_commandTimer->start();
+
+    if (cmd.flags & LosesChild)
+        setState(InferiorShuttingDown);
 }
 
-void GdbEngine::handleResultRecord(const GdbResultRecord &record)
+int GdbEngine::commandTimeoutTime() const
 {
-    //qDebug() << "TOKEN:" << record.token
-    //    << " ACCEPTABLE:" << m_oldestAcceptableToken;
-    //qDebug() << "";
-    //qDebug() << "\nRESULT" << record.token << record.toString();
+    int time = theDebuggerAction(GdbWatchdogTimeout)->value().toInt();
+    return 1000 * qMax(20, time);
+}
 
-    int token = record.token;
+void GdbEngine::commandTimeout()
+{
+    QList<int> keys = m_cookieForToken.keys();
+    qSort(keys);
+    bool killIt = false;
+    foreach (int key, keys) {
+        const GdbCommand &cmd = m_cookieForToken.value(key);
+        if (!(cmd.flags & NonCriticalResponse))
+            killIt = true;
+        debugMessage(_("  %1: %2 => %3").arg(key).arg(cmd.command).arg(_(cmd.callbackName)));
+    }
+    if (killIt) {
+        debugMessage(_("TIMED OUT WAITING FOR GDB REPLY. COMMANDS STILL IN PROGRESS:"));
+        int timeOut = m_commandTimer->interval();
+        //m_commandTimer->stop();
+        const QString msg = tr("The gdb process has not responded "
+            "to a command within %1 seconds. This could mean it is stuck "
+            "in an endless loop or taking longer than expected to perform "
+            "the operation.\nYou can choose between waiting "
+            "longer or abort debugging.").arg(timeOut / 1000);
+        QMessageBox *mb = showMessageBox(QMessageBox::Critical,
+            tr("Gdb not responding"), msg, 
+            QMessageBox::Ok | QMessageBox::Cancel);
+        mb->button(QMessageBox::Cancel)->setText(tr("Give gdb more time"));
+        mb->button(QMessageBox::Ok)->setText(tr("Stop debugging"));
+        if (mb->exec() == QMessageBox::Ok) {
+            debugMessage(_("KILLING DEBUGGER AS REQUESTED BY USER"));
+            // This is an undefined state, so we just pull the emergency brake.
+            manager()->watchHandler()->endCycle();
+            setState(EngineShuttingDown, true);
+            m_gdbProc.kill();
+        } else {
+            debugMessage(_("CONTINUE DEBUGGER AS REQUESTED BY USER"));
+        }
+    }
+}
+
+void GdbEngine::handleResultRecord(GdbResponse *response)
+{
+    //qDebug() << "TOKEN:" << response.token
+    //    << " ACCEPTABLE:" << m_oldestAcceptableToken;
+    //qDebug() << "\nRESULT" << response.token << response.toString();
+
+    int token = response->token;
     if (token == -1)
         return;
 
     if (!m_cookieForToken.contains(token)) {
-        // In theory this should not happen, in practice it does.
+        // In theory this should not happen (rather the error should be
+        // reported in the "first" response to the command) in practice it
+        // does. We try to handle a few situations we are aware of gracefully.
+        // Ideally, this code should not be present at all.
         debugMessage(_("COOKIE FOR TOKEN %1 ALREADY EATEN. "
             "TWO RESPONSES FOR ONE COMMAND?").arg(token));
-        // handle a case known to occur on Linux/gdb 6.8 when debugging moc
-        // with helpers enabled. In this case we get a second response with
-        // msg="Cannot find new threads: generic error"
-        if (record.resultClass == GdbResultError) {
-            QByteArray msg = record.data.findChild("msg").data();
-            QMessageBox::critical(q->mainWindow(), tr("Error"),
-                tr("Executable failed:\n") + QString::fromLocal8Bit(msg));
-            q->showStatusMessage(tr("Process failed to start."));
-            exitDebugger();
-            //qq->notifyInferiorStopped();
-            //qq->notifyInferiorExited();
+        if (response->resultClass == GdbResultError) {
+            QByteArray msg = response->data.findChild("msg").data();
+            if (msg == "Cannot find new threads: generic error") {
+                // Handle a case known to occur on Linux/gdb 6.8 when debugging moc
+                // with helpers enabled. In this case we get a second response with
+                // msg="Cannot find new threads: generic error"
+                debugMessage(_("APPLYING WORKAROUND #1"));
+                showMessageBox(QMessageBox::Critical,
+                    tr("Executable failed"), QString::fromLocal8Bit(msg));
+                showStatusMessage(tr("Process failed to start."));
+                shutdown();
+            } else if (msg == "\"finish\" not meaningful in the outermost frame.") { 
+                // Handle a case known to appear on gdb 6.4 symbianelf when
+                // the stack is cut due to access to protected memory.
+                debugMessage(_("APPLYING WORKAROUND #2"));
+                setState(InferiorStopping);
+                setState(InferiorStopped);
+            } else if (msg.startsWith("Cannot find bounds of current function")) {
+                // Happens when running "-exec-next" in a function for which
+                // there is no debug information. Divert to "-exec-next-step"
+                debugMessage(_("APPLYING WORKAROUND #3"));
+                setState(InferiorStopping);
+                setState(InferiorStopped);
+                nextIExec();
+            } else if (msg.startsWith("Couldn't get registers: No such process.")) {
+                // Happens on archer-tromey-python 6.8.50.20090910-cvs
+                // There might to be a race between a process shutting down
+                // and library load messages.
+                debugMessage(_("APPLYING WORKAROUND #4"));
+                setState(InferiorStopping);
+                setState(InferiorStopped);
+                setState(InferiorShuttingDown);
+                setState(InferiorShutDown);
+                showStatusMessage(tr("Executable failed: %1")
+                    .arg(QString::fromLocal8Bit(msg)));
+                shutdown();
+                showMessageBox(QMessageBox::Critical,
+                    tr("Executable failed"), QString::fromLocal8Bit(msg));
+            } else {
+                showMessageBox(QMessageBox::Critical,
+                    tr("Executable failed"), QString::fromLocal8Bit(msg));
+                showStatusMessage(tr("Executable failed: %1")
+                    .arg(QString::fromLocal8Bit(msg)));
+            }
         }
         return;
     }
 
     GdbCommand cmd = m_cookieForToken.take(token);
     if (theDebuggerBoolSetting(LogTimeStamps)) {
-        emit gdbOutputAvailable(LogTime, _("Response time: %1: %2 s")
+        gdbOutputAvailable(LogTime, _("Response time: %1: %2 s")
             .arg(cmd.command)
             .arg(cmd.postTime.msecsTo(QTime::currentTime()) / 1000.));
     }
 
-    if (record.token < m_oldestAcceptableToken && (cmd.flags & Discardable)) {
-        //qDebug() << "### SKIPPING OLD RESULT" << record.toString();
-        //QMessageBox::information(q->mainWindow(), tr("Skipped"), "xxx");
+    if (response->token < m_oldestAcceptableToken && (cmd.flags & Discardable)) {
+        //debugMessage(_("### SKIPPING OLD RESULT") + response.toString());
         return;
     }
 
-#if 0
-    qDebug() << "# handleOutput,"
-        << "cmd name:" << cmd.callbackName
-        << " cmd synchronized:" << cmd.synchronized
-        << "\n record: " << record.toString();
-#endif
+    response->cookie = cmd.cookie;
 
-    // << "\n data: " << record.data.toString(true);
-
-    if (cmd.callback)
-        (this->*(cmd.callback))(record, cmd.cookie);
+    if (response->resultClass != GdbResultError &&
+        response->resultClass != ((cmd.flags & RunRequest) ? GdbResultRunning :
+                                  (cmd.flags & ExitRequest) ? GdbResultExit :
+                                  GdbResultDone)) {
+        QString rsp = _(GdbResponse::stringFromResultClass(response->resultClass));
+        qWarning() << "UNEXPECTED RESPONSE " << rsp << " TO COMMAND" << cmd.command << " AT " __FILE__ ":" STRINGIFY(__LINE__);
+        debugMessage(_("UNEXPECTED RESPONSE %1 TO COMMAND %2").arg(rsp).arg(cmd.command));
+    } else {
+        if (cmd.callback)
+            (this->*cmd.callback)(*response);
+        else if (cmd.adapterCallback)
+            (m_gdbAdapter->*cmd.adapterCallback)(*response);
+    }
 
     if (cmd.flags & RebuildModel) {
         --m_pendingRequests;
-        PENDING_DEBUG("   TYPE " << cmd.callbackName << " DECREMENTS PENDING TO: "
-            << m_pendingRequests << cmd.command);
+        PENDING_DEBUG("   WATCH" << cmd.command << "=>" << cmd.callbackName
+                      << "DECREMENTS PENDING TO" << m_pendingRequests);
         if (m_pendingRequests <= 0) {
-            PENDING_DEBUG("\n\n ....  AND TRIGGERS MODEL UPDATE\n");
+            PENDING_DEBUG("\n\n ... AND TRIGGERS MODEL UPDATE\n");
             rebuildModel();
         }
     } else {
-        PENDING_DEBUG("   UNKNOWN TYPE " << cmd.callbackName << " LEAVES PENDING AT: "
-            << m_pendingRequests << cmd.command);
+        PENDING_DEBUG("   OTHER (OUT):" << cmd.command << "=>" << cmd.callbackName
+                      << "LEAVES PENDING AT" << m_pendingRequests);
     }
 
+    // Commands were queued, but we were in RunningRequested state, so the interrupt
+    // was postponed.
+    // This is done after the command callbacks so the running-requesting commands
+    // can assert on the right state.
+    if (state() == InferiorRunning && !m_commandsToRunOnTemporaryBreak.isEmpty())
+        interruptInferiorTemporarily();
+
+    // Continue only if there are no commands wire anymore, so this will
+    // be fully synchroneous.
     // This is somewhat inefficient, as it makes the last command synchronous.
     // An optimization would be requesting the continue immediately when the
     // event loop is entered, and let individual commands have a flag to suppress
     // that behavior.
-    if (m_cookieForToken.isEmpty() && m_autoContinue) {
-        m_autoContinue = false;
-        continueInferior();
-        q->showStatusMessage(tr("Continuing after temporary stop."));
+    if (m_commandsDoneCallback && m_cookieForToken.isEmpty()) {
+        debugMessage(_("ALL COMMANDS DONE; INVOKING CALLBACK"));
+        CommandsDoneCallback cont = m_commandsDoneCallback;
+        m_commandsDoneCallback = 0;
+        (this->*cont)();
+    } else {
+        PENDING_DEBUG("MISSING TOKENS: " << m_cookieForToken.keys());
     }
+
+    if (m_cookieForToken.isEmpty())
+        m_commandTimer->stop();
 }
 
 void GdbEngine::executeDebuggerCommand(const QString &command)
 {
-    if (m_gdbProc.state() == QProcess::NotRunning) {
-        debugMessage(_("NO GDB PROCESS RUNNING, PLAIN CMD IGNORED: ") + command);
+    if (state() == DebuggerNotReady) {
+        debugMessage(_("GDB PROCESS NOT RUNNING, PLAIN CMD IGNORED: ") + command);
         return;
     }
 
-    m_gdbProc.write(command.toLocal8Bit() + "\r\n");
+    m_gdbAdapter->write(command.toLatin1() + "\r\n");
 }
 
-void GdbEngine::handleTargetCore(const GdbResultRecord &, const QVariant &)
+// Called from CoreAdapter and AttachAdapter
+void GdbEngine::updateAll()
 {
-    qq->notifyInferiorStopped();
-    q->showStatusMessage(tr("Core file loaded."));
-    q->resetLocation();
+    QTC_ASSERT(state() == InferiorUnrunnable || state() == InferiorStopped, /**/);
     tryLoadDebuggingHelpers();
-    qq->stackHandler()->setCurrentIndex(0);
-    updateLocals(); // Quick shot
-    reloadStack();
+    reloadModulesInternal();
+    postCommand(_("-stack-list-frames"), WatchUpdate, CB(handleStackListFrames),
+        QVariant::fromValue<StackCookie>(StackCookie(false, true)));
+    manager()->stackHandler()->setCurrentIndex(0);
     if (supportsThreads())
         postCommand(_("-thread-list-ids"), WatchUpdate, CB(handleStackListThreads), 0);
-    qq->reloadRegisters();
+    manager()->reloadRegisters();
+    updateLocals(); 
 }
 
-void GdbEngine::handleQuerySources(const GdbResultRecord &record, const QVariant &)
+void GdbEngine::handleQuerySources(const GdbResponse &response)
 {
-    if (record.resultClass == GdbResultDone) {
+    m_sourcesListUpdating = false;
+    m_sourcesListOutdated = false;
+    if (response.resultClass == GdbResultDone) {
         QMap<QString, QString> oldShortToFull = m_shortToFullName;
         m_shortToFullName.clear();
         m_fullToShortName.clear();
         // "^done,files=[{file="../../../../bin/gdbmacros/gdbmacros.cpp",
         // fullname="/data5/dev/ide/main/bin/gdbmacros/gdbmacros.cpp"},
-        GdbMi files = record.data.findChild("files");
+        GdbMi files = response.data.findChild("files");
         foreach (const GdbMi &item, files.children()) {
-            QString fileName = QString::fromLocal8Bit(item.findChild("file").data());
             GdbMi fullName = item.findChild("fullname");
-            QString full = QString::fromLocal8Bit(fullName.data());
-            #ifdef Q_OS_WIN
-            full = QDir::cleanPath(full);
-            #endif
-            if (fullName.isValid() && QFileInfo(full).isReadable()) {
-                //qDebug() << "STORING 2:" << fileName << full;
+            if (fullName.isValid()) {
+                QString full = cleanupFullName(QString::fromLocal8Bit(fullName.data()));
+                QString fileName = QString::fromLocal8Bit(item.findChild("file").data());
                 m_shortToFullName[fileName] = full;
                 m_fullToShortName[full] = fileName;
             }
         }
         if (m_shortToFullName != oldShortToFull)
-            qq->sourceFileWindow()->setSourceFiles(m_shortToFullName);
-    }
-}
-
-void GdbEngine::handleInfoThreads(const GdbResultRecord &record, const QVariant &)
-{
-    if (record.resultClass != GdbResultDone)
-        return;
-    // FIXME: use something more robust
-    // WIN:     [New thread 3380.0x2bc]
-    //          * 3 Thread 2312.0x4d0  0x7c91120f in ?? ()
-    // LINUX:   * 1 Thread 0x7f466273c6f0 (LWP 21455)  0x0000000000404542 in ...
-    const QString data = _(record.data.findChild("consolestreamoutput").data());
-    if (data.isEmpty())
-        return;
-    // check "[New thread 3380.0x2bc]"
-    if (data.startsWith(QLatin1Char('['))) {
-        QRegExp ren(_("^\\[New thread (\\d+)\\.0x.*"));
-        Q_ASSERT(ren.isValid());
-        if (ren.indexIn(data) != -1) {
-            maybeHandleInferiorPidChanged(ren.cap(1));
-            return;
-        }
-    }
-    // check "* 3 Thread ..."
-    QRegExp re(_("^\\*? +\\d+ +[Tt]hread (\\d+)\\.0x.* in"));
-    Q_ASSERT(re.isValid());
-    if (re.indexIn(data) != -1)
-        maybeHandleInferiorPidChanged(re.cap(1));
-}
-
-void GdbEngine::handleInfoProc(const GdbResultRecord &record, const QVariant &)
-{
-    if (record.resultClass == GdbResultDone) {
-        #ifdef Q_OS_MAC
-        //^done,process-id="85075"
-        maybeHandleInferiorPidChanged(_(record.data.findChild("process-id").data()));
-        #else
-        // FIXME: use something more robust
-        QRegExp re(__("process (\\d+)"));
-        QString data = __(record.data.findChild("consolestreamoutput").data());
-        if (re.indexIn(data) != -1)
-            maybeHandleInferiorPidChanged(re.cap(1));
-        #endif
-    }
-}
-
-void GdbEngine::handleInfoShared(const GdbResultRecord &record, const QVariant &cookie)
-{
-    if (record.resultClass == GdbResultDone) {
-        // let the modules handler do the parsing
-        handleModulesList(record, cookie);
+            manager()->sourceFileWindow()->setSourceFiles(m_shortToFullName);
     }
 }
 
 #if 0
-void GdbEngine::handleExecJumpToLine(const GdbResultRecord &record)
+void GdbEngine::handleExecJumpToLine(const GdbResponse &response)
 {
     // FIXME: remove this special case as soon as 'jump'
     // is supported by MI
@@ -938,9 +1049,9 @@ void GdbEngine::handleExecJumpToLine(const GdbResultRecord &record)
     // ~"run1 (argc=1, argv=0x7fffb213a478) at test1.cpp:242"
     // ~"242\t x *= 2;"
     //109^done"
-    qq->notifyInferiorStopped();
-    q->showStatusMessage(tr("Jumped. Stopped."));
-    QByteArray output = record.data.findChild("logstreamoutput").data();
+    setState(InferiorStopped);
+    showStatusMessage(tr("Jumped. Stopped."));
+    QByteArray output = response.data.findChild("logstreamoutput").data();
     if (output.isEmpty())
         return;
     int idx1 = output.indexOf(' ') + 1;
@@ -949,29 +1060,27 @@ void GdbEngine::handleExecJumpToLine(const GdbResultRecord &record)
         if (idx2 > 0) {
             QString file = QString::fromLocal8Bit(output.mid(idx1, idx2 - idx1));
             int line = output.mid(idx2 + 1).toInt();
-            q->gotoLocation(file, line, true);
+            gotoLocation(file, line, true);
         }
     }
 }
 #endif
 
-void GdbEngine::handleExecRunToFunction(const GdbResultRecord &record, const QVariant &)
-{
-    // FIXME: remove this special case as soon as there's a real
-    // reason given when the temporary breakpoint is hit.
-    // reight now we get:
-    // 14*stopped,thread-id="1",frame={addr="0x0000000000403ce4",
-    // func="foo",args=[{name="str",value="@0x7fff0f450460"}],
-    // file="main.cpp",fullname="/tmp/g/main.cpp",line="37"}
-    qq->notifyInferiorStopped();
-    q->showStatusMessage(tr("Run to Function finished. Stopped."));
-    GdbMi frame = record.data.findChild("frame");
-    StackFrame f;
-    f.file = QString::fromLocal8Bit(frame.findChild("fullname").data());
-    f.line = frame.findChild("line").data().toInt();
-    f.address = _(frame.findChild("addr").data());
-    q->gotoLocation(f, true);
-}
+//void GdbEngine::handleExecRunToFunction(const GdbResponse &response)
+//{
+//    // FIXME: remove this special case as soon as there's a real
+//    // reason given when the temporary breakpoint is hit.
+//    // reight now we get:
+//    // 14*stopped,thread-id="1",frame={addr="0x0000000000403ce4",
+//    // func="foo",args=[{name="str",value="@0x7fff0f450460"}],
+//    // file="main.cpp",fullname="/tmp/g/main.cpp",line="37"}
+//    QTC_ASSERT(state() == InferiorStopping, qDebug() << state())
+//    setState(InferiorStopped);
+//    showStatusMessage(tr("Function reached. Stopped."));
+//    GdbMi frame = response.data.findChild("frame");
+//    StackFrame f = parseStackFrame(frame, 0);
+//    gotoLocation(f, true);
+//}
 
 static bool isExitedReason(const QByteArray &reason)
 {
@@ -981,36 +1090,12 @@ static bool isExitedReason(const QByteArray &reason)
         || reason == "exited";           // inferior exited
 }
 
-static bool isStoppedReason(const QByteArray &reason)
-{
-    return reason == "function-finished"  // -exec-finish
-        || reason == "signal-received"  // handled as "isExitedReason"
-        || reason == "breakpoint-hit"     // -exec-continue
-        || reason == "end-stepping-range" // -exec-next, -exec-step
-        || reason == "location-reached"   // -exec-until
-        || reason == "access-watchpoint-trigger"
-        || reason == "read-watchpoint-trigger"
-        #ifdef Q_OS_MAC
-        || reason.isEmpty()
-        #endif
-    ;
-}
-
+#if 0
 void GdbEngine::handleAqcuiredInferior()
 {
-    #ifdef Q_OS_WIN
-    postCommand(_("info thread"), CB(handleInfoThreads));
-    #elif defined(Q_OS_MAC)
-    postCommand(_("info pid"), NeedsStop, CB(handleInfoProc));
-    #else
-    postCommand(_("info proc"), CB(handleInfoProc));
-    #endif
-    if (theDebuggerBoolSetting(ListSourceFiles))
-        reloadSourceFiles();
-
     // Reverse debugging. FIXME: Should only be used when available.
     //if (theDebuggerBoolSetting(EnableReverseDebugging))
-    //    postCommand(_("target record"));
+    //    postCommand(_("target response"));
 
     tryLoadDebuggingHelpers();
 
@@ -1034,90 +1119,131 @@ void GdbEngine::handleAqcuiredInferior()
     }
     #endif
 
-    // nicer to see a bit of the world we live in
-    reloadModules();
+    // It's nicer to see a bit of the world we live in.
+    reloadModulesInternal();
     attemptBreakpointSynchronization();
 }
+#endif
 
-void GdbEngine::handleAsyncOutput(const GdbMi &data)
+void GdbEngine::handleStopResponse(const GdbMi &data)
 {
-    const QByteArray &reason = data.findChild("reason").data();
+    // This is gdb 7+'s initial *stopped in response to attach.
+    // For consistency, we just discard it.
+    if (state() == InferiorStarting)
+        return;
+
+    const QByteArray reason = data.findChild("reason").data();
 
     if (isExitedReason(reason)) {
-        qq->notifyInferiorExited();
+        if (state() == InferiorRunning) {
+            setState(InferiorStopping);
+        } else {
+            // The user triggered a stop, but meanwhile the app simply exited ...
+            QTC_ASSERT(state() == InferiorStopping || state() == InferiorStopping_Kill,
+                       qDebug() << state());
+        }
+        setState(InferiorStopped);
         QString msg;
         if (reason == "exited") {
-            msg = tr("Program exited with exit code %1")
+            msg = tr("Program exited with exit code %1.")
                 .arg(_(data.findChild("exit-code").toString()));
         } else if (reason == "exited-signalled" || reason == "signal-received") {
-            msg = tr("Program exited after receiving signal %1")
+            msg = tr("Program exited after receiving signal %1.")
                 .arg(_(data.findChild("signal-name").toString()));
         } else {
-            msg = tr("Program exited normally");
+            msg = tr("Program exited normally.");
         }
-        q->showStatusMessage(msg);
-        postCommand(_("-gdb-exit"), CB(handleExit));
-        return;
-    }
-
-
-    //MAC: bool isFirstStop = data.findChild("bkptno").data() == "1";
-    //!MAC: startSymbolName == data.findChild("frame").findChild("func")
-    if (m_waitingForFirstBreakpointToBeHit) {
-        m_waitingForFirstBreakpointToBeHit = false;
-
-        // If the executable dies already that early we might get something
-        // like >49*stopped,reason="exited",exit-code="0177"
-        // This is handled now above.
-
-        qq->notifyInferiorStopped();
-        handleAqcuiredInferior();
-        m_autoContinue = true;
+        showStatusMessage(msg);
+        setState(InferiorShuttingDown);
+        setState(InferiorShutDown);
+        shutdown();
         return;
     }
 
     if (!m_commandsToRunOnTemporaryBreak.isEmpty()) {
-        QTC_ASSERT(q->status() == DebuggerInferiorStopRequested,
-            qDebug() << "STATUS:" << q->status())
-        qq->notifyInferiorStopped();
-        // FIXME: racy
-        while (!m_commandsToRunOnTemporaryBreak.isEmpty()) {
-            GdbCommand cmd = m_commandsToRunOnTemporaryBreak.takeFirst();
-            debugMessage(_("RUNNING QUEUED COMMAND %1 %2")
-                .arg(cmd.command).arg(_(cmd.callbackName)));
-            flushCommand(cmd);
+        QTC_ASSERT(state() == InferiorStopping || state() == InferiorStopping_Kill,
+                   qDebug() << state())
+        setState(InferiorStopped);
+        flushQueuedCommands();
+        if (state() == InferiorStopped) {
+            QTC_ASSERT(m_commandsDoneCallback == 0, /**/);
+            m_commandsDoneCallback = &GdbEngine::autoContinueInferior;
+        } else {
+            QTC_ASSERT(state() == InferiorShuttingDown, qDebug() << state())
         }
-        q->showStatusMessage(tr("Processing queued commands."));
-        m_autoContinue = true;
         return;
     }
 
-    const QByteArray &msg = data.findChild("consolestreamoutput").data();
-    if (msg.contains("Stopped due to shared library event") || reason.isEmpty()) {
-        if (theDebuggerBoolSetting(SelectedPluginBreakpoints)) {
-            QString dataStr = _(data.toString());
-            debugMessage(_("SHARED LIBRARY EVENT: ") + dataStr);
-            QString pat = theDebuggerStringSetting(SelectedPluginBreakpointsPattern);
-            debugMessage(_("PATTERN: ") + pat);
-            postCommand(_("sharedlibrary ") + pat);
-            continueInferior();
-            q->showStatusMessage(tr("Loading %1...").arg(dataStr));
+    if (state() == InferiorRunning) {
+        // Stop triggered by a breakpoint or otherwise not directly
+        // initiated by the user.
+        setState(InferiorStopping);
+    } else {
+        QTC_ASSERT(state() == InferiorStopping, qDebug() << state());
+    }
+    setState(InferiorStopped);
+
+#if 0 // See http://vladimir_prus.blogspot.com/2007/12/debugger-stories-pending-breakpoints.html
+    // Due to LD_PRELOADing the dumpers, these events can occur even before
+    // reaching the entry point. So handle it before the entry point hacks below.
+    if (reason.isEmpty() && m_gdbVersion < 70000 && !m_isMacGdb) {
+        // On Linux it reports "Stopped due to shared library event\n", but
+        // on Windows it simply forgets about it. Thus, we identify the response
+        // based on it having no frame information.
+        if (!data.findChild("frame").isValid()) {
+            invalidateSourcesList();
+            // Each stop causes a roundtrip and button flicker, so prevent
+            // a flood of useless stops. Will be automatically re-enabled.
+            postCommand(_("set stop-on-solib-events 0"));
+#if 0
+            // The related code (handleAqcuiredInferior()) is disabled as well.
+            if (theDebuggerBoolSetting(SelectedPluginBreakpoints)) {
+                QString dataStr = _(data.toString());
+                debugMessage(_("SHARED LIBRARY EVENT: ") + dataStr);
+                QString pat = theDebuggerStringSetting(SelectedPluginBreakpointsPattern);
+                debugMessage(_("PATTERN: ") + pat);
+                postCommand(_("sharedlibrary ") + pat);
+                showStatusMessage(tr("Loading %1...").arg(dataStr));
+            }
+#endif
+            continueInferiorInternal();
             return;
         }
-        m_modulesListOutdated = true;
-        // fall through
     }
+#endif
+
+#ifdef Q_OS_LINUX
+    if (!m_entryPoint.isEmpty()) {
+        GdbMi frameData = data.findChild("frame");
+        if (frameData.findChild("addr").data() == m_entryPoint) {
+            // There are two expected reasons for getting here:
+            // 1) For some reason, attaching to a stopped process causes *two* SIGSTOPs
+            //    when trying to continue (kernel i386 2.6.24-23-ubuntu, gdb 6.8).
+            //    Interestingly enough, on MacOSX no signal is delivered at all.
+            // 2) The explicit tbreak at the entry point we set to query the PID.
+            //    Gdb <= 6.8 reports a frame but no reason, 6.8.50+ reports everything.
+            // The case of the user really setting a breakpoint at _start is simply
+            // unsupported.
+            if (!inferiorPid()) // For programs without -pthread under gdb <= 6.8.
+                postCommand(_("info proc"), CB(handleInfoProc));
+            continueInferiorInternal();
+            return;
+        }
+        // We are past the initial stop(s). No need to waste time on further checks.
+        m_entryPoint.clear();
+    }
+#endif
 
     // seen on XP after removing a breakpoint while running
     //  >945*stopped,reason="signal-received",signal-name="SIGTRAP",
     //  signal-meaning="Trace/breakpoint trap",thread-id="2",
     //  frame={addr="0x7c91120f",func="ntdll!DbgUiConnectToDbg",
     //  args=[],from="C:\\WINDOWS\\system32\\ntdll.dll"}
-    if (reason == "signal-received"
-          && data.findChild("signal-name").toString() == "SIGTRAP") {
-        continueInferior();
-        return;
-    }
+    //if (reason == "signal-received"
+    //      && data.findChild("signal-name").data() == "SIGTRAP") {
+    //    continueInferiorInternal();
+    //    return;
+    //}
 
     // jump over well-known frames
     static int stepCounter = 0;
@@ -1125,22 +1251,19 @@ void GdbEngine::handleAsyncOutput(const GdbMi &data)
         if (reason == "end-stepping-range" || reason == "function-finished") {
             GdbMi frame = data.findChild("frame");
             //debugMessage(frame.toString());
-            m_currentFrame = _(frame.findChild("addr").data() + '%' +
-                 frame.findChild("func").data() + '%');
-
             QString funcName = _(frame.findChild("func").data());
             QString fileName = QString::fromLocal8Bit(frame.findChild("file").data());
             if (isLeavableFunction(funcName, fileName)) {
                 //debugMessage(_("LEAVING ") + funcName);
                 ++stepCounter;
-                q->stepOutExec();
+                m_manager->stepOutExec();
                 //stepExec();
                 return;
             }
             if (isSkippableFunction(funcName, fileName)) {
                 //debugMessage(_("SKIPPING ") + funcName);
                 ++stepCounter;
-                q->stepExec();
+                m_manager->stepExec();
                 return;
             }
             //if (stepCounter)
@@ -1149,150 +1272,122 @@ void GdbEngine::handleAsyncOutput(const GdbMi &data)
         }
     }
 
-    if (isStoppedReason(reason) || reason.isEmpty()) {
-        if (m_modulesListOutdated) {
-            reloadModules();
-            m_modulesListOutdated = false;
-        }
-        // Need another round trip
-        if (reason == "breakpoint-hit") {
-            q->showStatusMessage(tr("Stopped at breakpoint."));
-            GdbMi frame = data.findChild("frame");
-            //debugMessage(_("HIT BREAKPOINT: " + frame.toString()));
-            m_currentFrame = _(frame.findChild("addr").data() + '%' +
-                 frame.findChild("func").data() + '%');
+    bool initHelpers = m_debuggingHelperState == DebuggingHelperUninitialized
+                       || m_debuggingHelperState == DebuggingHelperLoadTried;
+    // Don't load helpers on stops triggered by signals unless it's
+    // an intentional trap.
+    if (initHelpers
+            && m_gdbAdapter->dumperHandling() != AbstractGdbAdapter::DumperLoadedByGdbPreload
+            && reason == "signal-received"
+            && data.findChild("signal-name").data() != "SIGTRAP")
+        initHelpers = false;
+    if (isSynchroneous())
+        initHelpers = false;
+    if (initHelpers) {
+        tryLoadDebuggingHelpers();
+        QVariant var = QVariant::fromValue<GdbMi>(data);
+        postCommand(_("p 4"), CB(handleStop1), var);  // dummy
+    } else {
+        handleStop1(data);
+    }
+    // Dumper loading is sequenced, as otherwise the display functions
+    // will start requesting data without knowing that dumpers are available.
+}
 
-            if (theDebuggerAction(ListSourceFiles)->value().toBool())
-                reloadSourceFiles();
-            postCommand(_("-break-list"), CB(handleBreakList));
-            QVariant var = QVariant::fromValue<GdbMi>(data);
-            postCommand(_("p 0"), CB(handleAsyncOutput2), var);  // dummy
-        } else {
-#ifdef Q_OS_LINUX
-            // For some reason, attaching to a stopped process causes *two* stops
-            // when trying to continue (kernel 2.6.24-23-ubuntu).
-            // Interestingly enough, on MacOSX no signal is delivered at all.
-            if (reason == "signal-received"
-                && data.findChild("signal-name").data() == "SIGSTOP") {
-                GdbMi frameData = data.findChild("frame");
-                if (frameData.findChild("func").data() == "_start"
-                    && frameData.findChild("from").data() == "/lib/ld-linux.so.2") {
-                    postCommand(_("-exec-continue"), CB(handleExecContinue));
-                    return;
-                }
-            }
-#endif
-            if (reason == "signal-received"
-                && theDebuggerBoolSetting(UseMessageBoxForSignals)) {
-                QByteArray name = data.findChild("signal-name").data();
-                // Ignore SIGTRAP as they are showing up regularily when
-                // stopping debugging.
-                if (name != "SIGTRAP") {
-                    QByteArray meaning = data.findChild("signal-meaning").data();
-                    QString msg = tr("<p>The inferior stopped because it received a "
-                        "signal from the Operating System.<p>"
-                        "<table><tr><td>Signal name : </td><td>%1</td></tr>"
-                        "<tr><td>Signal meaning : </td><td>%2</td></tr></table>")
-                        .arg(name.isEmpty() ? tr(" <Unknown> ") : _(name))
-                        .arg(meaning.isEmpty() ? tr(" <Unknown> ") : _(meaning));
-                    QMessageBox *mb = new QMessageBox(QMessageBox::Information,
-                        tr("Signal received"), msg, QMessageBox::NoButton,
-                        q->mainWindow());
-                    mb->setAttribute(Qt::WA_DeleteOnClose);
-                    mb->show();
-                }
-            }
+void GdbEngine::handleStop1(const GdbResponse &response)
+{
+    handleStop1(response.cookie.value<GdbMi>());
+}
 
-            if (reason.isEmpty())
-                q->showStatusMessage(tr("Stopped."));
-            else
-                q->showStatusMessage(tr("Stopped: \"%1\"").arg(_(reason)));
-            handleAsyncOutput2(data);
+void GdbEngine::handleStop1(const GdbMi &data)
+{
+    if (m_modulesListOutdated)
+        reloadModulesInternal(); // This is for display only
+    if (m_sourcesListOutdated && theDebuggerBoolSetting(UsePreciseBreakpoints))
+        reloadSourceFilesInternal(); // This needs to be done before fullName() may need it
+
+    if (m_breakListOutdated)
+        reloadBreakListInternal();
+    else
+        // Older gdb versions do not produce "library loaded" messages
+        // so the breakpoint update is not triggered.
+        if (m_gdbVersion < 70000 && !m_isMacGdb && !m_breakListUpdating
+            && manager()->breakHandler()->size() > 0)
+            reloadBreakListInternal();
+
+    QByteArray reason = data.findChild("reason").data();
+    if (reason == "breakpoint-hit") {
+        showStatusMessage(tr("Stopped at breakpoint."));
+    } else {
+        if (reason == "signal-received"
+            && theDebuggerBoolSetting(UseMessageBoxForSignals)) {
+            QByteArray name = data.findChild("signal-name").data();
+            // Ignore SIGTRAP as they are showing up regularily when
+            // stopping debugging.
+            if (name != "SIGTRAP") {
+                QByteArray meaning = data.findChild("signal-meaning").data();
+                QString msg = tr("<p>The inferior stopped because it received a "
+                    "signal from the Operating System.<p>"
+                    "<table><tr><td>Signal name : </td><td>%1</td></tr>"
+                    "<tr><td>Signal meaning : </td><td>%2</td></tr></table>")
+                    .arg(name.isEmpty() ? tr(" <Unknown> ", "name") : _(name))
+                    .arg(meaning.isEmpty() ? tr(" <Unknown> ", "meaning") : _(meaning));
+                showMessageBox(QMessageBox::Information,
+                    tr("Signal received"), msg);
+            }
         }
-        return;
+
+        if (reason.isEmpty())
+            showStatusMessage(tr("Stopped."));
+        else
+            showStatusMessage(tr("Stopped: \"%1\"").arg(_(reason)));
     }
 
-    debugMessage(_("STOPPED FOR UNKNOWN REASON: " + data.toString()));
-    // Ignore it. Will be handled with full response later in the
-    // JumpToLine or RunToFunction handlers
-#if 1
-    // FIXME: remove this special case as soon as there's a real
-    // reason given when the temporary breakpoint is hit.
-    // reight now we get:
-    // 14*stopped,thread-id="1",frame={addr="0x0000000000403ce4",
-    // func="foo",args=[{name="str",value="@0x7fff0f450460"}],
-    // file="main.cpp",fullname="/tmp/g/main.cpp",line="37"}
-    //
-    // MAC yields sometimes:
-    // >3661*stopped,time={wallclock="0.00658",user="0.00142",
-    // system="0.00136",start="1218810678.805432",end="1218810678.812011"}
-    q->resetLocation();
-    qq->notifyInferiorStopped();
-    q->showStatusMessage(tr("Run to Function finished. Stopped."));
-    GdbMi frame = data.findChild("frame");
-    StackFrame f;
-    f.file = QString::fromLocal8Bit(frame.findChild("fullname").data());
-    f.line = frame.findChild("line").data().toInt();
-    f.address = _(frame.findChild("addr").data());
-    q->gotoLocation(f, true);
-#endif
-}
+    const GdbMi gdbmiFrame = data.findChild("frame");
 
-void GdbEngine::reloadFullStack()
-{
-    QString cmd = _("-stack-list-frames");
-    postCommand(cmd, WatchUpdate, CB(handleStackListFrames), true);
-}
+    m_currentFrame = _(gdbmiFrame.findChild("addr").data() + '%' +
+         gdbmiFrame.findChild("func").data() + '%');
 
-void GdbEngine::reloadStack()
-{
-    QString cmd = _("-stack-list-frames");
-    if (int stackDepth = theDebuggerAction(MaximalStackDepth)->value().toInt())
-        cmd += _(" 0 ") + QString::number(stackDepth);
-    postCommand(cmd, WatchUpdate, CB(handleStackListFrames), false);
-}
-
-void GdbEngine::handleAsyncOutput2(const GdbResultRecord &, const QVariant &cookie)
-{
-    handleAsyncOutput2(cookie.value<GdbMi>());
-}
-
-void GdbEngine::handleAsyncOutput2(const GdbMi &data)
-{
-    qq->notifyInferiorStopped();
-
-    // Sometimes we get some interesting extra information. Grab it.
-    GdbMi frame = data.findChild("frame");
-    GdbMi shortName = frame.findChild("file");
-    GdbMi fullName = frame.findChild("fullname");
-    if (shortName.isValid() && fullName.isValid()) {
-        QString file = QFile::decodeName(shortName.data());
-        QString full = QFile::decodeName(fullName.data());
-        if (file != full) {
-            m_shortToFullName[file] = full;
-            m_fullToShortName[full] = file;
-        }
+    // Quick shot: Jump to stack frame #0.
+    StackFrame frame;
+    if (gdbmiFrame.isValid()) {
+        frame = parseStackFrame(gdbmiFrame, 0);
+        gotoLocation(frame, true);
     }
 
     //
     // Stack
     //
-    qq->stackHandler()->setCurrentIndex(0);
-    updateLocals(); // Quick shot
+    manager()->stackHandler()->setCurrentIndex(0);
+    updateLocals(qVariantFromValue(frame)); // Quick shot
 
-    int currentId = data.findChild("thread-id").data().toInt();
+    reloadStack(false);
 
-    reloadStack();
-    if (supportsThreads())
-        postCommand(_("-thread-list-ids"), WatchUpdate, CB(handleStackListThreads), currentId);
+    if (supportsThreads()) {
+        int currentId = data.findChild("thread-id").data().toInt();
+        postCommand(_("-thread-list-ids"), WatchUpdate,
+            CB(handleStackListThreads), currentId);
+    }
 
     //
     // Registers
     //
-    qq->reloadRegisters();
+    manager()->reloadRegisters();
 }
 
-void GdbEngine::handleShowVersion(const GdbResultRecord &response, const QVariant &)
+#ifdef Q_OS_LINUX
+void GdbEngine::handleInfoProc(const GdbResponse &response)
+{
+    if (response.resultClass == GdbResultDone) {
+        static QRegExp re(_("\\bprocess ([0-9]+)\n"));
+        QTC_ASSERT(re.isValid(), return);
+        if (re.indexIn(_(response.data.findChild("consolestreamoutput").data())) != -1)
+            maybeHandleInferiorPidChanged(re.cap(1));
+    }
+}
+#endif
+
+void GdbEngine::handleShowVersion(const GdbResponse &response)
 {
     //qDebug () << "VERSION 2:" << response.data.findChild("consolestreamoutput").data();
     //qDebug () << "VERSION:" << response.toString();
@@ -1300,10 +1395,12 @@ void GdbEngine::handleShowVersion(const GdbResultRecord &response, const QVarian
     if (response.resultClass == GdbResultDone) {
         m_gdbVersion = 100;
         m_gdbBuildVersion = -1;
+        m_isMacGdb = false;
         QString msg = QString::fromLocal8Bit(response.data.findChild("consolestreamoutput").data());
         QRegExp supported(_("GNU gdb(.*) (\\d+)\\.(\\d+)(\\.(\\d+))?(-(\\d+))?"));
         if (supported.indexIn(msg) == -1) {
             debugMessage(_("UNSUPPORTED GDB VERSION ") + msg);
+#if 0
             QStringList list = msg.split(_c('\n'));
             while (list.size() > 2)
                 list.removeLast();
@@ -1314,563 +1411,388 @@ void GdbEngine::handleShowVersion(const GdbResultRecord &response, const QVarian
                      "Using gdb 6.7 or later is strongly recommended.");
 #if 0
             // ugly, but 'Show again' check box...
-            static QErrorMessage *err = new QErrorMessage(q->mainWindow());
+            static QErrorMessage *err = new QErrorMessage(mainWindow());
             err->setMinimumSize(400, 300);
             err->showMessage(msg);
 #else
-            //QMessageBox::information(q->mainWindow(), tr("Warning"), msg);
+            //showMessageBox(QMessageBox::Information, tr("Warning"), msg);
+#endif
 #endif
         } else {
             m_gdbVersion = 10000 * supported.cap(2).toInt()
                          +   100 * supported.cap(3).toInt()
                          +     1 * supported.cap(5).toInt();
             m_gdbBuildVersion = supported.cap(7).toInt();
-            debugMessage(_("GDB VERSION: %1, BUILD: %2 ").arg(m_gdbVersion)
-                .arg(m_gdbBuildVersion));
+            m_isMacGdb = msg.contains(__("Apple version"));
+            debugMessage(_("GDB VERSION: %1, BUILD: %2%3").arg(m_gdbVersion)
+                .arg(m_gdbBuildVersion).arg(_(m_isMacGdb ? " (APPLE)" : "")));
         }
         //qDebug () << "VERSION 3:" << m_gdbVersion << m_gdbBuildVersion;
     }
 }
 
-void GdbEngine::handleFileExecAndSymbols(const GdbResultRecord &response, const QVariant &)
+void GdbEngine::handleIsSynchroneous(const GdbResponse &response)
 {
+    Q_UNUSED(response);
     if (response.resultClass == GdbResultDone) {
-        //m_breakHandler->clearBreakMarkers();
-    } else if (response.resultClass == GdbResultError) {
-        QString msg = __(response.data.findChild("msg").data());
-        QMessageBox::critical(q->mainWindow(), tr("Error"),
-            tr("Starting executable failed:\n") + msg);
-        QTC_ASSERT(q->status() == DebuggerInferiorRunning, /**/);
-        //interruptInferior();
-        qq->notifyInferiorExited();
+        m_isSynchroneous = true;
+    } else {
+        m_isSynchroneous = false;
     }
 }
 
-void GdbEngine::handleExecRun(const GdbResultRecord &response, const QVariant &)
+void GdbEngine::handleExecContinue(const GdbResponse &response)
 {
     if (response.resultClass == GdbResultRunning) {
-        qq->notifyInferiorRunning();
+        // The "running" state is picked up in handleResponse()
+        QTC_ASSERT(state() == InferiorRunning, /**/);
     } else {
-        QTC_ASSERT(response.resultClass == GdbResultError, /**/);
-        const QByteArray &msg = response.data.findChild("msg").data();
-        QMessageBox::critical(q->mainWindow(), tr("Error"),
-            tr("Starting executable failed:\n") + QString::fromLocal8Bit(msg));
-        QTC_ASSERT(q->status() == DebuggerInferiorRunning, /**/);
-        //interruptInferior();
-        qq->notifyInferiorExited();
-    }
-}
-
-void GdbEngine::handleExecContinue(const GdbResultRecord &response, const QVariant &)
-{
-    if (response.resultClass == GdbResultRunning) {
-        qq->notifyInferiorRunning();
-    } else {
-        QTC_ASSERT(response.resultClass == GdbResultError, /**/);
-        const QByteArray &msg = response.data.findChild("msg").data();
-        if (msg == "Cannot find bounds of current function") {
-            qq->notifyInferiorStopped();
-            //q->showStatusMessage(tr("No debug information available. "
+        if (state() == InferiorRunningRequested_Kill) {
+            setState(InferiorStopped);
+            shutdown();
+            return;
+        }
+        QTC_ASSERT(state() == InferiorRunningRequested, /**/);
+        setState(InferiorStopped);
+        QByteArray msg = response.data.findChild("msg").data();
+        if (msg.startsWith("Cannot find bounds of current function")) {
+            if (!m_commandsToRunOnTemporaryBreak.isEmpty())
+                flushQueuedCommands();
+            showStatusMessage(tr("Stopped."), 5000);
+            //showStatusMessage(tr("No debug information available. "
             //  "Leaving function..."));
             //stepOutExec();
         } else {
-            QMessageBox::critical(q->mainWindow(), tr("Error"),
-                tr("Starting executable failed:\n") + QString::fromLocal8Bit(msg));
-            QTC_ASSERT(q->status() == DebuggerInferiorRunning, /**/);
-            //interruptInferior();
-            qq->notifyInferiorExited();
+            showMessageBox(QMessageBox::Critical, tr("Execution Error"),
+                           tr("Cannot continue debugged process:\n") + QString::fromLocal8Bit(msg));
+            shutdown();
         }
     }
 }
 
 QString GdbEngine::fullName(const QString &fileName)
 {
-    //QString absName = m_manager->currentWorkingDirectory() + "/" + file; ??
     if (fileName.isEmpty())
         return QString();
-    QString full = m_shortToFullName.value(fileName, QString());
-    //debugMessage(_("RESOLVING: ") + fileName + " " +  full);
-    if (!full.isEmpty())
-        return full;
+    QTC_ASSERT(!m_sourcesListOutdated, /* */)
+    QTC_ASSERT(!m_sourcesListUpdating, /* */)
+    return m_shortToFullName.value(fileName, QString());
+}
+
+#ifdef Q_OS_WIN
+QString GdbEngine::cleanupFullName(const QString &fileName)
+{
+    QTC_ASSERT(!fileName.isEmpty(), return QString())
+    // Gdb on windows often delivers "fullnames" which
+    // a) have no drive letter and b) are not normalized.
     QFileInfo fi(fileName);
     if (!fi.isReadable())
         return QString();
-    full = fi.absoluteFilePath();
-    #ifdef Q_OS_WIN
-    full = QDir::cleanPath(full);
-    #endif
-    //debugMessage(_("STORING: ") + fileName + " " + full);
-    m_shortToFullName[fileName] = full;
-    m_fullToShortName[full] = fileName;
-    return full;
+    return QDir::cleanPath(fi.absoluteFilePath());
 }
-
-QString GdbEngine::fullName(const QStringList &candidates)
-{
-    QString full;
-    foreach (const QString &fileName, candidates) {
-        full = fullName(fileName);
-        if (!full.isEmpty())
-            return full;
-    }
-    foreach (const QString &fileName, candidates) {
-        if (!fileName.isEmpty())
-            return fileName;
-    }
-    return full;
-}
+#endif
 
 void GdbEngine::shutdown()
 {
-    exitDebugger();
+    debugMessage(_("INITIATE GDBENGINE SHUTDOWN"));
+    switch (state()) {
+    case DebuggerNotReady: // Nothing to do! :)
+    case EngineStarting: // We can't get here, really
+    case InferiorShuttingDown: // Will auto-trigger further shutdown steps
+    case EngineShuttingDown: // Do not disturb! :)
+    case InferiorRunningRequested_Kill:
+    case InferiorStopping_Kill:
+        break;
+    case AdapterStarting: // GDB is up, adapter is "doing something"
+        setState(AdapterStartFailed);
+        m_gdbAdapter->shutdown();
+        // fall-through
+    case AdapterStartFailed: // Adapter "did something", but it did not help
+        if (m_gdbProc.state() == QProcess::Running) {
+            m_commandsToRunOnTemporaryBreak.clear();
+            postCommand(_("-gdb-exit"), GdbEngine::ExitRequest, CB(handleGdbExit));
+        } else {
+            setState(DebuggerNotReady);
+        }
+        break;
+    case InferiorRunningRequested:
+    case InferiorRunning:
+    case InferiorStopping:
+    case InferiorStopped:
+        m_commandsToRunOnTemporaryBreak.clear();
+        postCommand(_(m_gdbAdapter->inferiorShutdownCommand()),
+                    NeedsStop | LosesChild, CB(handleInferiorShutdown));
+        break;
+    case AdapterStarted: // We can't get here, really
+    case InferiorStartFailed:
+    case InferiorShutDown:
+    case InferiorShutdownFailed: // Whatever
+    case InferiorUnrunnable:
+        m_commandsToRunOnTemporaryBreak.clear();
+        postCommand(_("-gdb-exit"), GdbEngine::ExitRequest, CB(handleGdbExit));
+        setState(EngineShuttingDown); // Do it after posting the command!
+        break;
+    case InferiorStarting: // This may take some time, so just short-circuit it
+        setState(InferiorStartFailed);
+        // fall-through
+    case InferiorStopFailed: // Tough luck, I guess. But unreachable as of now anyway.
+        setState(EngineShuttingDown);
+        m_gdbProc.kill();
+        break;
+    }
+}
+
+void GdbEngine::handleInferiorShutdown(const GdbResponse &response)
+{
+    QTC_ASSERT(state() == InferiorShuttingDown, qDebug() << state());
+    if (response.resultClass == GdbResultDone) {
+        debugMessage(_("INFERIOR SUCCESSFULLY SHUT DOWN"));
+        setState(InferiorShutDown);
+    } else {
+        debugMessage(_("INFERIOR SHUTDOWN FAILED"));
+        setState(InferiorShutdownFailed);
+        QString msg = m_gdbAdapter->msgInferiorStopFailed(
+            QString::fromLocal8Bit(response.data.findChild("msg").data()));
+        showMessageBox(QMessageBox::Critical, tr("Inferior shutdown failed"), msg);
+    }
+    shutdown(); // re-iterate...
+}
+
+void GdbEngine::handleGdbExit(const GdbResponse &response)
+{
+    if (response.resultClass == GdbResultExit) {
+        debugMessage(_("GDB CLAIMS EXIT; WAITING"));
+        m_commandsDoneCallback = 0;
+        // don't set state here, this will be handled in handleGdbFinished()
+    } else {
+        QString msg = m_gdbAdapter->msgGdbStopFailed(
+            QString::fromLocal8Bit(response.data.findChild("msg").data()));
+        debugMessage(_("GDB WON'T EXIT (%1); KILLING IT").arg(msg));
+        m_gdbProc.kill();
+    }
 }
 
 void GdbEngine::detachDebugger()
 {
-    postCommand(_("detach"));
-    postCommand(_("-gdb-exit"), CB(handleExit));
+    QTC_ASSERT(state() == InferiorStopped, /**/);
+    QTC_ASSERT(startMode() != AttachCore, /**/);
+    postCommand(_("detach")); 
+    setState(InferiorShuttingDown);
+    setState(InferiorShutDown);
+    shutdown();
 }
 
-void GdbEngine::exitDebugger()
+void GdbEngine::exitDebugger() // called from the manager
 {
-    debugMessage(_("GDBENGINE EXITDEBUGGER: %1").arg(m_gdbProc.state()));
-    if (m_gdbProc.state() == QProcess::Starting) {
-        debugMessage(_("WAITING FOR GDB STARTUP TO SHUTDOWN: %1")
-            .arg(m_gdbProc.state()));
-        m_gdbProc.waitForStarted();
-    }
-    if (m_gdbProc.state() == QProcess::Running) {
-        debugMessage(_("WAITING FOR RUNNING GDB TO SHUTDOWN: %1")
-            .arg(m_gdbProc.state()));
-        if (q->status() != DebuggerInferiorStopped
-            && q->status() != DebuggerProcessStartingUp) {
-            QTC_ASSERT(q->status() == DebuggerInferiorRunning,
-                qDebug() << "STATUS ON EXITDEBUGGER:" << q->status());
-            interruptInferior();
-        }
-        if (q->startMode() == AttachExternal || q->startMode() == AttachCrashedExternal)
-            postCommand(_("detach"));
-        else
-            postCommand(_("kill"));
-        postCommand(_("-gdb-exit"), CB(handleExit));
-        // 20s can easily happen when loading webkit debug information
-        if (!m_gdbProc.waitForFinished(20000)) {
-            debugMessage(_("FORCING TERMINATION: %1")
-                .arg(m_gdbProc.state()));
-            m_gdbProc.terminate();
-            m_gdbProc.waitForFinished(20000);
-        }
-    }
-    if (m_gdbProc.state() != QProcess::NotRunning) {
-        debugMessage(_("PROBLEM STOPPING DEBUGGER: STATE %1")
-            .arg(m_gdbProc.state()));
-        m_gdbProc.kill();
-    }
-
-    m_outputCollector.shutdown();
-    initializeVariables();
-    //q->settings()->m_debugDebuggingHelpers = false;
+    disconnectDebuggingHelperActions();
+    shutdown();
 }
-
 
 int GdbEngine::currentFrame() const
 {
-    return qq->stackHandler()->currentIndex();
+    return manager()->stackHandler()->currentIndex();
 }
 
-bool GdbEngine::startDebugger(const QSharedPointer<DebuggerStartParameters> &sp)
+bool GdbEngine::checkConfiguration(int toolChain, QString *errorMessage, QString *settingsPage) const
 {
-    // This should be set by the constructor or in exitDebugger().
-    QTC_ASSERT(m_debuggingHelperState == DebuggingHelperUninitialized,
-        initializeVariables());
-
-    QStringList gdbArgs;
-
-    if (m_gdbProc.state() != QProcess::NotRunning) {
-        debugMessage(_("GDB IS ALREADY RUNNING, STATE: %1").arg(m_gdbProc.state()));
-        m_gdbProc.kill();
-        return false;
-    }
-
-    //gdbArgs.prepend(_("--quiet"));
-    gdbArgs.prepend(_("mi"));
-    gdbArgs.prepend(_("-i"));
-
-    if (q->startMode() == AttachCore || q->startMode() == AttachExternal || q->startMode() == AttachCrashedExternal) {
-        // nothing to do
-    } else if (q->startMode() == StartRemote) {
-        // Start the remote server
-        if (sp->serverStartScript.isEmpty()) {
-            q->showStatusMessage(_("No server start script given. "
-                "Assuming server runs already."));
-        } else {
-            if (!sp->workingDir.isEmpty())
-                m_uploadProc.setWorkingDirectory(sp->workingDir);
-            if (!sp->environment.isEmpty())
-                m_uploadProc.setEnvironment(sp->environment);
-            m_uploadProc.start(_("/bin/sh ") + sp->serverStartScript);
-            m_uploadProc.waitForStarted();
-        }
-    } else if (sp->useTerminal) {
-        m_stubProc.stop(); // We leave the console open, so recycle it now.
-
-        m_stubProc.setWorkingDirectory(sp->workingDir);
-        m_stubProc.setEnvironment(sp->environment);
-        if (!m_stubProc.start(sp->executable, sp->processArgs))
-            return false; // Error message for user is delivered via a signal.
-    } else {
-        if (!m_outputCollector.listen()) {
-            QMessageBox::critical(q->mainWindow(), tr("Debugger Startup Failure"),
-                tr("Cannot set up communication with child process: %1")
-                    .arg(m_outputCollector.errorString()));
+    switch (toolChain) {
+    case ProjectExplorer::ToolChain::WINSCW: // S60
+    case ProjectExplorer::ToolChain::GCCE:
+    case ProjectExplorer::ToolChain::RVCT_ARMV5:
+    case ProjectExplorer::ToolChain::RVCT_ARMV6:
+        if (!m_trkOptions->check(errorMessage)) {
+            if (settingsPage)
+                *settingsPage = TrkOptionsPage::settingsId();
             return false;
         }
-        gdbArgs.prepend(_("--tty=") + m_outputCollector.serverName());
-
-        if (!sp->workingDir.isEmpty())
-            m_gdbProc.setWorkingDirectory(sp->workingDir);
-        if (!sp->environment.isEmpty())
-            m_gdbProc.setEnvironment(sp->environment);
+    default:
+        break;
     }
-
-    #if 0
-    qDebug() << "Command:" << q->settings()->m_gdbCmd;
-    qDebug() << "WorkingDirectory:" << m_gdbProc.workingDirectory();
-    qDebug() << "ScriptFile:" << q->settings()->m_scriptFile;
-    qDebug() << "Environment:" << m_gdbProc.environment();
-    qDebug() << "Arguments:" << gdbArgs;
-    qDebug() << "BuildDir:" << sp->buildDir;
-    qDebug() << "ExeFile:" << sp->executable;
-    #endif
-
-    QString loc = theDebuggerStringSetting(GdbLocation);
-    q->showStatusMessage(tr("Starting Debugger: ") + loc + _c(' ') + gdbArgs.join(_(" ")));
-    m_gdbProc.start(loc, gdbArgs);
-    if (!m_gdbProc.waitForStarted()) {
-        QMessageBox::critical(q->mainWindow(), tr("Debugger Startup Failure"),
-                              tr("Cannot start debugger: %1").arg(m_gdbProc.errorString()));
-        m_outputCollector.shutdown();
-        m_stubProc.blockSignals(true);
-        m_stubProc.stop();
-        m_stubProc.blockSignals(false);
-        return false;
-    }
-
-    q->showStatusMessage(tr("Gdb Running..."));
-
-    postCommand(_("show version"), CB(handleShowVersion));
-    //postCommand(_("-enable-timings");
-    postCommand(_("set print static-members off")); // Seemingly doesn't work.
-    //postCommand(_("set debug infrun 1"));
-    //postCommand(_("define hook-stop\n-thread-list-ids\n-stack-list-frames\nend"));
-    //postCommand(_("define hook-stop\nprint 4\nend"));
-    //postCommand(_("define hookpost-stop\nprint 5\nend"));
-    //postCommand(_("define hook-call\nprint 6\nend"));
-    //postCommand(_("define hookpost-call\nprint 7\nend"));
-    //postCommand(_("set print object on")); // works with CLI, but not MI
-    //postCommand(_("set step-mode on"));  // we can't work with that yes
-    //postCommand(_("set exec-done-display on"));
-    //postCommand(_("set print pretty on"));
-    //postCommand(_("set confirm off"));
-    //postCommand(_("set pagination off"));
-    postCommand(_("set print inferior-events 1"));
-    postCommand(_("set breakpoint pending on"));
-    postCommand(_("set print elements 10000"));
-    postCommand(_("-data-list-register-names"), CB(handleRegisterListNames));
-
-    //postCommand(_("set substitute-path /var/tmp/qt-x11-src-4.5.0 "
-    //    "/home/sandbox/qtsdk-2009.01/qt"));
-
-    // one of the following is needed to prevent crashes in gdb on code like:
-    //  template <class T> T foo() { return T(0); }
-    //  int main() { return foo<int>(); }
-    //  (gdb) call 'int foo<int>'()
-    //  /build/buildd/gdb-6.8/gdb/valops.c:2069: internal-error:
-    postCommand(_("set overload-resolution off"));
-    //postCommand(_("set demangle-style none"));
-
-    // From the docs:
-    //  Stop means reenter debugger if this signal happens (implies print).
-    //  Print means print a message if this signal happens.
-    //  Pass means let program see this signal;
-    //  otherwise program doesn't know.
-    //  Pass and Stop may be combined.
-    // We need "print" as otherwise we would get no feedback whatsoever
-    // Custom DebuggingHelper crashs which happen regularily for when accessing
-    // uninitialized variables.
-    postCommand(_("handle SIGSEGV nopass stop print"));
-
-    // This is useful to kill the inferior whenever gdb dies.
-    //postCommand(_("handle SIGTERM pass nostop print"));
-
-    postCommand(_("set unwindonsignal on"));
-    //postCommand(_("pwd"));
-    postCommand(_("set width 0"));
-    postCommand(_("set height 0"));
-
-    #ifdef Q_OS_MAC
-    postCommand(_("-gdb-set inferior-auto-start-cfm off"));
-    postCommand(_("-gdb-set sharedLibrary load-rules "
-            "dyld \".*libSystem.*\" all "
-            "dyld \".*libauto.*\" all "
-            "dyld \".*AppKit.*\" all "
-            "dyld \".*PBGDBIntrospectionSupport.*\" all "
-            "dyld \".*Foundation.*\" all "
-            "dyld \".*CFDataFormatters.*\" all "
-            "dyld \".*libobjc.*\" all "
-            "dyld \".*CarbonDataFormatters.*\" all"));
-    #endif
-
-    QString scriptFileName = theDebuggerStringSetting(GdbScriptFile);
-    if (!scriptFileName.isEmpty()) {
-        if (QFileInfo(scriptFileName).isReadable()) {
-            postCommand(_("source ") + scriptFileName);
-        } else {
-            QMessageBox::warning(q->mainWindow(),
-            tr("Cannot find debugger initialization script"),
-            tr("The debugger settings point to a script file at '%1' "
-               "which is not accessible. If a script file is not needed, "
-               "consider clearing that entry to avoid this warning. "
-              ).arg(scriptFileName));
-        }
-    }
-
-    if (q->startMode() == AttachExternal || q->startMode() == AttachCrashedExternal) {
-        postCommand(_("attach %1").arg(sp->attachPID), CB(handleAttach));
-        // Task 254674 does not want to remove them
-        //qq->breakHandler()->removeAllBreakpoints();
-    } else if (q->startMode() == AttachCore) {
-        QFileInfo fi(sp->executable);
-        QString fileName = _c('"') + fi.absoluteFilePath() + _c('"');
-        QFileInfo fi2(sp->coreFile);
-        // quoting core name below fails in gdb 6.8-debian
-        QString coreName = fi2.absoluteFilePath();
-        postCommand(_("-file-exec-and-symbols ") + fileName, CB(handleFileExecAndSymbols));
-        postCommand(_("target core ") + coreName, CB(handleTargetCore));
-        qq->breakHandler()->removeAllBreakpoints();
-    } else if (q->startMode() == StartRemote) {
-        postCommand(_("set architecture %1").arg(sp->remoteArchitecture));
-        qq->breakHandler()->setAllPending();
-        //QFileInfo fi(sp->executable);
-        //QString fileName = fi.absoluteFileName();
-        QString fileName = sp->executable;
-        postCommand(_("-file-exec-and-symbols \"%1\"").arg(fileName), CB(handleFileExecAndSymbols));
-        // works only for > 6.8
-        postCommand(_("set target-async on"), CB(handleSetTargetAsync));
-    } else if (sp->useTerminal) {
-        qq->breakHandler()->setAllPending();
-    } else if (q->startMode() == StartInternal || q->startMode() == StartExternal) {
-        QFileInfo fi(sp->executable);
-        QString fileName = _c('"') + fi.absoluteFilePath() + _c('"');
-        postCommand(_("-file-exec-and-symbols ") + fileName, CB(handleFileExecAndSymbols));
-        //postCommand(_("file ") + fileName, handleFileExecAndSymbols);
-        #ifdef Q_OS_MAC
-        postCommand(_("sharedlibrary apply-load-rules all"));
-        #endif
-        if (!sp->processArgs.isEmpty())
-            postCommand(_("-exec-arguments ") + sp->processArgs.join(_(" ")));
-        #ifndef Q_OS_MAC        
-        if (!m_dumperInjectionLoad)
-            postCommand(_("set auto-solib-add off"));
-        postCommand(_("info target"), CB(handleStart));
-        #else
-        // On MacOS, breaking in at the entry point wreaks havoc.
-        postCommand(_("tbreak main"));
-        m_waitingForFirstBreakpointToBeHit = true;
-        qq->notifyInferiorRunningRequested();
-        postCommand(_("-exec-run"), CB(handleExecRun));
-        #endif
-        qq->breakHandler()->setAllPending();
-    }
-
     return true;
+}
+
+AbstractGdbAdapter *GdbEngine::createAdapter(const DebuggerStartParametersPtr &sp)
+{
+    switch (sp->toolChainType) {
+    case ProjectExplorer::ToolChain::WINSCW: // S60
+    case ProjectExplorer::ToolChain::GCCE:
+    case ProjectExplorer::ToolChain::RVCT_ARMV5:
+    case ProjectExplorer::ToolChain::RVCT_ARMV6:
+        return new TrkGdbAdapter(this, m_trkOptions);
+    default:
+        break;
+    }
+    // @todo: remove testing hack
+    if (sp->processArgs.size() == 3 && sp->processArgs.at(0) == _("@sym@"))
+        return new TrkGdbAdapter(this, m_trkOptions);
+    switch (sp->startMode) {
+    case AttachCore:
+        return new CoreGdbAdapter(this);
+    case StartRemote:
+        return new RemoteGdbAdapter(this, sp->toolChainType);
+    case AttachExternal:
+        return new AttachGdbAdapter(this);
+    default:
+        if (sp->useTerminal)
+            return new TermGdbAdapter(this);
+        return new PlainGdbAdapter(this);
+    }
+}
+
+void GdbEngine::startDebugger(const DebuggerStartParametersPtr &sp)
+{
+    QTC_ASSERT(state() == EngineStarting, qDebug() << state());
+    // This should be set by the constructor or in exitDebugger() 
+    // via initializeVariables()
+    //QTC_ASSERT(m_debuggingHelperState == DebuggingHelperUninitialized,
+    //    initializeVariables());
+    //QTC_ASSERT(m_gdbAdapter == 0, delete m_gdbAdapter; m_gdbAdapter = 0);
+
+    initializeVariables();
+
+    m_startParameters = sp;
+
+    delete m_gdbAdapter;
+    m_gdbAdapter = createAdapter(sp);
+    connectAdapter();
+
+    if (m_gdbAdapter->dumperHandling() != AbstractGdbAdapter::DumperNotAvailable)
+        connectDebuggingHelperActions();
+
+    m_gdbAdapter->startAdapter();
+}
+
+void GdbEngine::continueInferiorInternal()
+{
+    QTC_ASSERT(state() == InferiorStopped || state() == InferiorStarting,
+               qDebug() << state());
+    setState(InferiorRunningRequested);
+    postCommand(_("-exec-continue"), RunRequest, CB(handleExecContinue));
+}
+
+void GdbEngine::autoContinueInferior()
+{
+    continueInferiorInternal();
+    showStatusMessage(tr("Continuing after temporary stop..."), 1000);
 }
 
 void GdbEngine::continueInferior()
 {
-    q->resetLocation();
+    m_manager->resetLocation();
     setTokenBarrier();
-    qq->notifyInferiorRunningRequested();
-    postCommand(_("-exec-continue"), CB(handleExecContinue));
-}
-
-void GdbEngine::handleStart(const GdbResultRecord &response, const QVariant &)
-{
-#if defined(Q_OS_MAC)
-    Q_UNUSED(response)
-#else
-    if (response.resultClass == GdbResultDone) {
-        // [some leading stdout here]
-        // >&"        Entry point: 0x80831f0  0x08048134 - 0x08048147 is .interp\n"
-        // [some trailing stdout here]
-        QString msg = _(response.data.findChild("consolestreamoutput").data());
-        QRegExp needle(_("\\bEntry point: (0x[0-9a-f]+)\\b"));
-        if (needle.indexIn(msg) != -1) {
-            //debugMessage(_("STREAM: ") + msg + " " + needle.cap(1));
-            postCommand(_("tbreak *") + needle.cap(1));
-            m_waitingForFirstBreakpointToBeHit = true;
-            qq->notifyInferiorRunningRequested();
-            postCommand(_("-exec-run"), CB(handleExecRun));
-        } else {
-            debugMessage(_("PARSING START ADDRESS FAILED: ") + msg);
-        }
-    } else if (response.resultClass == GdbResultError) {
-        debugMessage(_("FETCHING START ADDRESS FAILED: " + response.toString()));
-    }
-#endif
-}
-
-void GdbEngine::handleAttach(const GdbResultRecord &, const QVariant &)
-{
-    qq->notifyInferiorStopped();
-    q->showStatusMessage(tr("Attached to running process. Stopped."));
-    handleAqcuiredInferior();
-
-    q->resetLocation();
-    recheckDebuggingHelperAvailability();
-
-    //
-    // Stack
-    //
-    qq->stackHandler()->setCurrentIndex(0);
-    updateLocals(); // Quick shot
-
-    reloadStack();
-    if (supportsThreads())
-        postCommand(_("-thread-list-ids"), WatchUpdate, CB(handleStackListThreads), 0);
-
-    //
-    // Registers
-    //
-    qq->reloadRegisters();
-}
-
-void GdbEngine::handleSetTargetAsync(const GdbResultRecord &record, const QVariant &)
-{
-    if (record.resultClass == GdbResultDone) {
-        //postCommand(_("info target"), handleStart);
-        qq->notifyInferiorRunningRequested();
-        postCommand(_("target remote %1").arg(q->startParameters()->remoteChannel),
-            CB(handleTargetRemote));
-    } else if (record.resultClass == GdbResultError) {
-        // a typical response on "old" gdb is:
-        // &"set target-async on\n"
-        //&"No symbol table is loaded.  Use the \"file\" command.\n"
-        //^error,msg="No symbol table is loaded.  Use the \"file\" command."
-        postCommand(_("detach"));
-        postCommand(_("-gdb-exit"), CB(handleExit));
-    }
-}
-
-void GdbEngine::handleTargetRemote(const GdbResultRecord &record, const QVariant &)
-{
-    if (record.resultClass == GdbResultDone) {
-        //postCommand(_("-exec-continue"), CB(handleExecContinue));
-        handleAqcuiredInferior();
-        m_autoContinue = true;
-    } else if (record.resultClass == GdbResultError) {
-        // 16^error,msg="hd:5555: Connection timed out."
-        QString msg = __(record.data.findChild("msg").data());
-        QString msg1 = tr("Connecting to remote server failed:");
-        q->showStatusMessage(msg1 + _c(' ') + msg);
-        QMessageBox::critical(q->mainWindow(), tr("Error"), msg1 + _c('\n') + msg);
-        postCommand(_("-gdb-exit"), CB(handleExit));
-    }
-}
-
-void GdbEngine::handleExit(const GdbResultRecord &, const QVariant &)
-{
-    q->showStatusMessage(tr("Debugger exited."));
+    continueInferiorInternal();
+    showStatusMessage(tr("Running requested..."), 5000);
 }
 
 void GdbEngine::stepExec()
 {
+    QTC_ASSERT(state() == InferiorStopped, qDebug() << state());
     setTokenBarrier();
-    qq->notifyInferiorRunningRequested();
-    if (qq->isReverseDebugging())
-        postCommand(_("-reverse-step"), CB(handleExecContinue));
+    setState(InferiorRunningRequested);
+    showStatusMessage(tr("Step requested..."), 5000);
+    if (manager()->isReverseDebugging())
+        postCommand(_("-reverse-step"), RunRequest, CB(handleExecContinue));
     else
-        postCommand(_("-exec-step"), CB(handleExecContinue));
+        postCommand(_("-exec-step"), RunRequest, CB(handleExecContinue));
 }
 
 void GdbEngine::stepIExec()
 {
+    QTC_ASSERT(state() == InferiorStopped, qDebug() << state());
     setTokenBarrier();
-    qq->notifyInferiorRunningRequested();
-    if (qq->isReverseDebugging())
-        postCommand(_("-reverse-stepi"), CB(handleExecContinue));
+    setState(InferiorRunningRequested);
+    showStatusMessage(tr("Step by instruction requested..."), 5000);
+    if (manager()->isReverseDebugging())
+        postCommand(_("-reverse-stepi"), RunRequest, CB(handleExecContinue));
     else
-        postCommand(_("-exec-step-instruction"), CB(handleExecContinue));
+        postCommand(_("-exec-step-instruction"), RunRequest, CB(handleExecContinue));
 }
 
 void GdbEngine::stepOutExec()
 {
+    QTC_ASSERT(state() == InferiorStopped, qDebug() << state());
     setTokenBarrier();
-    qq->notifyInferiorRunningRequested();
-    postCommand(_("-exec-finish"), CB(handleExecContinue));
+    setState(InferiorRunningRequested);
+    showStatusMessage(tr("Finish function requested..."), 5000);
+    postCommand(_("-exec-finish"), RunRequest, CB(handleExecContinue));
 }
 
 void GdbEngine::nextExec()
 {
+    QTC_ASSERT(state() == InferiorStopped, qDebug() << state());
     setTokenBarrier();
-    qq->notifyInferiorRunningRequested();
-    if (qq->isReverseDebugging())
-        postCommand(_("-reverse-next"), CB(handleExecContinue));
-    else
-        postCommand(_("-exec-next"), CB(handleExecContinue));
+    setState(InferiorRunningRequested);
+    showStatusMessage(tr("Step next requested..."), 5000);
+    if (manager()->isReverseDebugging())
+        postCommand(_("-reverse-next"), RunRequest, CB(handleExecContinue));
+    else {
+#if 1
+        postCommand(_("-exec-next"), RunRequest, CB(handleExecContinue));
+#else
+        postCommand(_("tbreak \"%2\":%1").arg(lastLine + 1).arg(breakLocation(lastFile)));
+        postCommand(_("-exec-continue"), RunRequest, CB(handleExecContinue));
+#endif
+    }
 }
 
 void GdbEngine::nextIExec()
 {
+    QTC_ASSERT(state() == InferiorStopped, qDebug() << state());
     setTokenBarrier();
-    qq->notifyInferiorRunningRequested();
-    if (qq->isReverseDebugging())
-        postCommand(_("-reverse-nexti"), CB(handleExecContinue));
+    setState(InferiorRunningRequested);
+    showStatusMessage(tr("Step next instruction requested..."), 5000);
+    if (manager()->isReverseDebugging())
+        postCommand(_("-reverse-nexti"), RunRequest, CB(handleExecContinue));
     else
-        postCommand(_("-exec-next-instruction"), CB(handleExecContinue));
+        postCommand(_("-exec-next-instruction"), RunRequest, CB(handleExecContinue));
 }
 
 void GdbEngine::runToLineExec(const QString &fileName, int lineNumber)
 {
+    QTC_ASSERT(state() == InferiorStopped, qDebug() << state());
     setTokenBarrier();
-    qq->notifyInferiorRunningRequested();
-    postCommand(_("-exec-until %1:%2").arg(fileName).arg(lineNumber));
+    setState(InferiorRunningRequested);
+    showStatusMessage(tr("Run to line %1 requested...").arg(lineNumber), 5000);
+    postCommand(_("-exec-until \"%2\":%1").arg(lineNumber).arg(breakLocation(fileName)),
+                RunRequest, CB(handleExecContinue));
 }
 
 void GdbEngine::runToFunctionExec(const QString &functionName)
 {
+    QTC_ASSERT(state() == InferiorStopped, qDebug() << state());
     setTokenBarrier();
     postCommand(_("-break-insert -t ") + functionName);
-    qq->notifyInferiorRunningRequested();
-    // that should be "^running". We need to handle the resulting
-    // "Stopped"
-    postCommand(_("-exec-continue"), CB(handleExecContinue));
+    continueInferiorInternal();
+    //setState(InferiorRunningRequested);
     //postCommand(_("-exec-continue"), handleExecRunToFunction);
+    showStatusMessage(tr("Run to function %1 requested...").arg(functionName), 5000);
 }
 
 void GdbEngine::jumpToLineExec(const QString &fileName, int lineNumber)
 {
+    QTC_ASSERT(state() == InferiorStopped, qDebug() << state());
     StackFrame frame;
     frame.file = fileName;
     frame.line = lineNumber;
 #if 1
-    // not available everywhere?
-    //sendCliCommand(_("tbreak ") + fileName + ':' + QString::number(lineNumber));
-    postCommand(_("-break-insert -t ") + fileName + _c(':') + QString::number(lineNumber));
-    postCommand(_("jump ") + fileName + _c(':') + QString::number(lineNumber));
+    QString loc = breakLocation(fileName);
+    postCommand(_("tbreak \"%2\":%1").arg(lineNumber).arg(loc));
+    setState(InferiorRunningRequested);
+    postCommand(_("jump \"%2\":%1").arg(lineNumber).arg(loc), RunRequest);
     // will produce something like
-    //  &"jump /home/apoenitz/dev/work/test1/test1.cpp:242"
+    //  &"jump \"/home/apoenitz/dev/work/test1/test1.cpp\":242"
     //  ~"Continuing at 0x4058f3."
     //  ~"run1 (argc=1, argv=0x7fffbf1f5538) at test1.cpp:242"
     //  ~"242\t x *= 2;"
     //  23^done"
-    q->gotoLocation(frame, true);
+    gotoLocation(frame, true);
     //setBreakpoint();
     //postCommand(_("jump ") + fileName + ':' + QString::number(lineNumber));
 #else
-    q->gotoLocation(frame,  true);
+    gotoLocation(frame,  true);
     setBreakpoint(fileName, lineNumber);
-    postCommand(_("jump ") + fileName + ':' + QString::number(lineNumber));
+    setState(InferiorRunningRequested);
+    postCommand(_("jump ") + fileName + ':' + QString::number(lineNumber), RunRequest);
 #endif
 }
 
@@ -1893,7 +1815,7 @@ void GdbEngine::setTokenBarrier()
         );
     }
     PENDING_DEBUG("\n--- token barrier ---\n");
-    emit gdbInputAvailable(LogMisc, _("--- token barrier ---"));
+    gdbInputAvailable(LogMisc, _("--- token barrier ---"));
     m_oldestAcceptableToken = currentToken();
 }
 
@@ -1902,7 +1824,7 @@ void GdbEngine::setDebugDebuggingHelpers(const QVariant &on)
     if (on.toBool()) {
         debugMessage(_("SWITCHING ON DUMPER DEBUGGING"));
         postCommand(_("set unwindonsignal off"));
-        q->breakByFunction(_("qDumpObjectData440"));
+        m_manager->breakByFunction(_("qDumpObjectData440"));
         //updateLocals();
     } else {
         debugMessage(_("SWITCHING OFF DUMPER DEBUGGING"));
@@ -1927,7 +1849,7 @@ void GdbEngine::breakpointDataFromOutput(BreakpointData *data, const GdbMi &bkpt
     data->bpMultiple = false;
     data->bpEnabled = true;
     data->bpCondition.clear();
-    QStringList files;
+    QByteArray file, fullName;
     foreach (const GdbMi &child, bkpt.children()) {
         if (child.hasName("number")) {
             data->bpNumber = _(child.data());
@@ -1941,13 +1863,9 @@ void GdbEngine::breakpointDataFromOutput(BreakpointData *data, const GdbMi &bkpt
             else
                 data->bpAddress = _(child.data());
         } else if (child.hasName("file")) {
-            files.append(QFile::decodeName(child.data()));
+            file = child.data();
         } else if (child.hasName("fullname")) {
-            QString fullName = QFile::decodeName(child.data());
-            #ifdef Q_OS_WIN
-            fullName = QDir::cleanPath(fullName);
-            #endif
-            files.prepend(fullName);
+            fullName = child.data();
         } else if (child.hasName("line")) {
             data->bpLineNumber = _(child.data());
             if (child.data().toInt())
@@ -1959,20 +1877,16 @@ void GdbEngine::breakpointDataFromOutput(BreakpointData *data, const GdbMi &bkpt
                 data->condition = data->bpCondition;
         } else if (child.hasName("enabled")) {
             data->bpEnabled = (child.data() == "y");
-        }
-        else if (child.hasName("pending")) {
+        } else if (child.hasName("pending")) {
             data->pending = true;
-            int pos = child.data().lastIndexOf(':');
-            if (pos > 0) {
-                data->bpLineNumber = _(child.data().mid(pos + 1));
-                data->markerLineNumber = child.data().mid(pos + 1).toInt();
-                QString file = QString::fromLocal8Bit(child.data().left(pos));
-                if (file.startsWith(_c('"')) && file.endsWith(_c('"')))
-                    file = file.mid(1, file.size() - 2);
-                files.prepend(file);
-            } else {
-                files.prepend(QString::fromLocal8Bit(child.data()));
-            }
+            // Any content here would be interesting only if we did accept
+            // spontaneously appearing breakpoints (user using gdb commands).
+        } else if (child.hasName("at")) {
+            // Happens with (e.g.?) gdb 6.4 symbianelf
+            QByteArray ba = child.data();
+            if (ba.startsWith('<') && ba.endsWith('>'))
+                ba = ba.mid(1, ba.size() - 2);
+            data->bpFuncName = _(ba);
         }
     }
     // This field is not present.  Contents needs to be parsed from
@@ -1980,52 +1894,64 @@ void GdbEngine::breakpointDataFromOutput(BreakpointData *data, const GdbMi &bkpt
     //else if (child.hasName("ignore"))
     //    data->bpIgnoreCount = child.data();
 
-    QString name = fullName(files);
-    if (data->bpFileName.isEmpty())
-        data->bpFileName = name;
-    if (data->markerFileName.isEmpty())
-        data->markerFileName = name;
+    QString name;
+    if (!fullName.isEmpty()) {
+        name = cleanupFullName(QFile::decodeName(fullName));
+        if (data->markerFileName.isEmpty())
+            data->markerFileName = name;
+    } else {
+        name = QFile::decodeName(file);
+        // Use fullName() once we have a mapping which is more complete than gdb's own ...
+        // No point in assigning markerFileName for now.
+    }
+    data->bpFileName = name;
+}
+
+QString GdbEngine::breakLocation(const QString &file) const
+{
+    QTC_ASSERT(!m_breakListOutdated, /* */)
+    QTC_ASSERT(!m_breakListUpdating, /* */)
+    QString where = m_fullToShortName.value(file);
+    if (where.isEmpty())
+        return QFileInfo(file).fileName();
+    return where;
 }
 
 void GdbEngine::sendInsertBreakpoint(int index)
 {
-    const BreakpointData *data = qq->breakHandler()->at(index);
+    const BreakpointData *data = manager()->breakHandler()->at(index);
     QString where;
     if (data->funcName.isEmpty()) {
-        if (data->useFullPath) {
-            where = data->fileName;
-        } else {
-            QFileInfo fi(data->fileName);
-            where = fi.fileName();
-        }
+        where = data->useFullPath ? data->fileName : breakLocation(data->fileName);
         // The argument is simply a C-quoted version of the argument to the
         // non-MI "break" command, including the "original" quoting it wants.
-        where = _("\"\\\"") + GdbMi::escapeCString(where) + _("\\\":") + data->lineNumber + _c('"');
+        where = _("\"\\\"%2\\\":%1\"").arg(data->lineNumber).arg(GdbMi::escapeCString(where));
     } else {
         where = data->funcName;
     }
 
     // set up fallback in case of pending breakpoints which aren't handled
     // by the MI interface
-#if defined(Q_OS_WIN)
-    QString cmd = _("-break-insert ");
+    QString cmd;
+    if (m_isMacGdb)
+        cmd = _("-break-insert -l -1 -f ");
+    else if (m_gdbVersion >= 60800) // Probably some earlier version would work as well ...
+        cmd = _("-break-insert -f ");
+    else
+        cmd = _("-break-insert ");
     //if (!data->condition.isEmpty())
-    //    cmd += "-c " + data->condition + " ";
-#elif defined(Q_OS_MAC)
-    QString cmd = _("-break-insert -l -1 ");
-    //if (!data->condition.isEmpty())
-    //    cmd += "-c " + data->condition + " ";
-#else
-    QString cmd = _("-break-insert -f ");
-    //if (!data->condition.isEmpty())
-    //    cmd += _("-c ") + data->condition + ' ';
-#endif
+    //    cmd += _("-c ") + data->condition + _c(' ');
     cmd += where;
-    emit gdbOutputAvailable(LogStatus, _("Current state: %1").arg(q->status()));
     postCommand(cmd, NeedsStop, CB(handleBreakInsert), index);
 }
 
-void GdbEngine::handleBreakList(const GdbResultRecord &record, const QVariant &)
+void GdbEngine::reloadBreakListInternal()
+{
+    m_breakListUpdating = true; 
+    postCommand(_("-break-list"), NeedsStop, CB(handleBreakList));
+}
+
+void GdbEngine::handleBreakList(const GdbResponse &response)
 {
     // 45^done,BreakpointTable={nr_rows="2",nr_cols="6",hdr=[
     // {width="3",alignment="-1",col_name="number",colhdr="Num"}, ...
@@ -2036,8 +1962,8 @@ void GdbEngine::handleBreakList(const GdbResultRecord &record, const QVariant &)
     //  bkpt={number="2",type="breakpoint",disp="keep",enabled="y",
     //  addr="<PENDING>",pending="plugin.cpp:7",times="0"}] ... }
 
-    if (record.resultClass == GdbResultDone) {
-        GdbMi table = record.data.findChild("BreakpointTable");
+    if (response.resultClass == GdbResultDone) {
+        GdbMi table = response.data.findChild("BreakpointTable");
         if (table.isValid())
             handleBreakList(table);
     }
@@ -2045,11 +1971,7 @@ void GdbEngine::handleBreakList(const GdbResultRecord &record, const QVariant &)
 
 void GdbEngine::handleBreakList(const GdbMi &table)
 {
-    //qDebug() << "GdbEngine::handleOutput: table:"
-    //  << table.toString();
     GdbMi body = table.findChild("body");
-    //qDebug() << "GdbEngine::handleOutput: body:"
-    //  << body.toString();
     QList<GdbMi> bkpts;
     if (body.isValid()) {
         // Non-Mac
@@ -2057,19 +1979,16 @@ void GdbEngine::handleBreakList(const GdbMi &table)
     } else {
         // Mac
         bkpts = table.children();
-        // remove the 'hdr' and artificial items
-        //qDebug() << "FOUND" << bkpts.size() << "BREAKPOINTS";
+        // Remove the 'hdr' and artificial items.
         for (int i = bkpts.size(); --i >= 0; ) {
             int num = bkpts.at(i).findChild("number").data().toInt();
-            if (num <= 0) {
-                //qDebug() << "REMOVING" << i << bkpts.at(i).toString();
+            if (num <= 0)
                 bkpts.removeAt(i);
-            }
         }
         //qDebug() << "LEFT" << bkpts.size() << "BREAKPOINTS";
     }
 
-    BreakHandler *handler = qq->breakHandler();
+    BreakHandler *handler = manager()->breakHandler();
     for (int index = 0; index != bkpts.size(); ++index) {
         BreakpointData temp(handler);
         breakpointDataFromOutput(&temp, bkpts.at(index));
@@ -2080,13 +1999,14 @@ void GdbEngine::handleBreakList(const GdbMi &table)
             //qDebug() << "CANNOT HANDLE RESPONSE" << bkpts.at(index).toString();
     }
 
+    m_breakListUpdating = false;
+    m_breakListOutdated = false;
     attemptBreakpointSynchronization();
-    handler->updateMarkers();
 }
 
-void GdbEngine::handleBreakIgnore(const GdbResultRecord &record, const QVariant &cookie)
+void GdbEngine::handleBreakIgnore(const GdbResponse &response)
 {
-    int index = cookie.toInt();
+    int index = response.cookie.toInt();
     // gdb 6.8:
     // ignore 2 0:
     // ~"Will stop next time breakpoint 2 is reached.\n"
@@ -2097,9 +2017,9 @@ void GdbEngine::handleBreakIgnore(const GdbResultRecord &record, const QVariant 
     // 29^done
     //
     // gdb 6.3 does not produce any console output
-    BreakHandler *handler = qq->breakHandler();
-    if (record.resultClass == GdbResultDone && index < handler->size()) {
-        QString msg = _(record.data.findChild("consolestreamoutput").data());
+    BreakHandler *handler = manager()->breakHandler();
+    if (response.resultClass == GdbResultDone && index < handler->size()) {
+        QString msg = _(response.data.findChild("consolestreamoutput").data());
         BreakpointData *data = handler->at(index);
         //if (msg.contains(__("Will stop next time breakpoint"))) {
         //    data->bpIgnoreCount = _("0");
@@ -2112,18 +2032,18 @@ void GdbEngine::handleBreakIgnore(const GdbResultRecord &record, const QVariant 
     }
 }
 
-void GdbEngine::handleBreakCondition(const GdbResultRecord &record, const QVariant &cookie)
+void GdbEngine::handleBreakCondition(const GdbResponse &response)
 {
-    int index = cookie.toInt();
-    BreakHandler *handler = qq->breakHandler();
-    if (record.resultClass == GdbResultDone) {
-        // we just assume it was successful. otherwise we had to parse
-        // the output stream data
+    int index = response.cookie.toInt();
+    BreakHandler *handler = manager()->breakHandler();
+    if (response.resultClass == GdbResultDone) {
+        // We just assume it was successful. Otherwise we had to parse
+        // the output stream data.
         BreakpointData *data = handler->at(index);
         //qDebug() << "HANDLE BREAK CONDITION" << index << data->condition;
         data->bpCondition = data->condition;
-    } else { // GdbResultError
-        QByteArray msg = record.data.findChild("msg").data();
+    } else {
+        QByteArray msg = response.data.findChild("msg").data();
         // happens on Mac
         if (1 || msg.startsWith("Error parsing breakpoint condition. "
                 " Will try again when we hit the breakpoint.")) {
@@ -2135,43 +2055,24 @@ void GdbEngine::handleBreakCondition(const GdbResultRecord &record, const QVaria
     handler->updateMarkers();
 }
 
-void GdbEngine::handleBreakInsert(const GdbResultRecord &record, const QVariant &cookie)
+void GdbEngine::handleBreakInsert(const GdbResponse &response)
 {
-    int index = cookie.toInt();
-    BreakHandler *handler = qq->breakHandler();
-    if (record.resultClass == GdbResultDone) {
-        //qDebug() << "HANDLE BREAK INSERT" << index;
+    int index = response.cookie.toInt();
+    BreakHandler *handler = manager()->breakHandler();
+    if (response.resultClass == GdbResultDone) {
 //#if defined(Q_OS_MAC)
-        // interesting only on Mac?
+        // Interesting only on Mac?
         BreakpointData *data = handler->at(index);
-        GdbMi bkpt = record.data.findChild("bkpt");
-        //qDebug() << "BKPT:" << bkpt.toString() << " DATA:" << data->toToolTip();
+        GdbMi bkpt = response.data.findChild("bkpt");
         breakpointDataFromOutput(data, bkpt);
 //#endif
         attemptBreakpointSynchronization();
-        handler->updateMarkers();
-    } else { // GdbResultError
-        const BreakpointData *data = handler->at(index);
-        // Note that it is perfectly correct that the file name is put
-        // in quotes but not escaped. GDB simply is like that.
-#if defined(Q_OS_WIN)
-        QFileInfo fi(data->fileName);
-        QString where = _c('"') + fi.fileName() + _("\":")
-            + data->lineNumber;
-        //QString where = m_data->fileName + _c(':') + data->lineNumber;
-#elif defined(Q_OS_MAC)
-        QFileInfo fi(data->fileName);
-        QString where = _c('"') + fi.fileName() + _("\":")
-            + data->lineNumber;
-#else
-        //QString where = "\"\\\"" + data->fileName + "\\\":"
-        //    + data->lineNumber + "\"";
-        QString where = _c('"') + data->fileName + _("\":")
-            + data->lineNumber;
-        // Should not happen with -break-insert -f. gdb older than 6.8?
-        QTC_ASSERT(false, /**/);
-#endif
-        postCommand(_("break ") + where, CB(handleBreakInsert1), index);
+    } else {
+        if (m_gdbVersion < 60800 && !m_isMacGdb) {
+            // This gdb version doesn't "do" pending breakpoints.
+        } else {
+            QTC_ASSERT(false, /**/);
+        }
     }
 }
 
@@ -2206,58 +2107,86 @@ void GdbEngine::extractDataFromInfoBreak(const QString &output, BreakpointData *
         QString full = fullName(re.cap(3));
         if (full.isEmpty()) {
             qDebug() << "NO FULL NAME KNOWN FOR" << re.cap(3);
-            full = re.cap(3); // FIXME: wrong, but prevents recursion
+            full = cleanupFullName(re.cap(3));
+            if (full.isEmpty()) {
+                qDebug() << "FILE IS NOT RESOLVABLE" << re.cap(3);
+                full = re.cap(3); // FIXME: wrong, but prevents recursion
+            }
         }
         data->markerLineNumber = data->bpLineNumber.toInt();
         data->markerFileName = full;
         data->bpFileName = full;
-        //qDebug() << "FOUND BREAKPOINT\n" << output
-        //    << re.cap(1) << "\n" << re.cap(2) << "\n"
-        //    << re.cap(3) << "\n" << re.cap(4) << "\n";
     } else {
         qDebug() << "COULD NOT MATCH " << re.pattern() << " AND " << output;
         data->bpNumber = _("<unavailable>");
     }
 }
 
-void GdbEngine::handleBreakInfo(const GdbResultRecord &record, const QVariant &cookie)
+void GdbEngine::handleBreakInfo(const GdbResponse &response)
 {
-    int bpNumber = cookie.toInt();
-    BreakHandler *handler = qq->breakHandler();
-    if (record.resultClass == GdbResultDone) {
+    int bpNumber = response.cookie.toInt();
+    BreakHandler *handler = manager()->breakHandler();
+    if (response.resultClass == GdbResultDone) {
         // Old-style output for multiple breakpoints, presumably in a
         // constructor
         int found = handler->findBreakpoint(bpNumber);
         if (found != -1) {
-            QString str = QString::fromLocal8Bit(record.data.findChild("consolestreamoutput").data());
+            QString str = QString::fromLocal8Bit(response.data.findChild("consolestreamoutput").data());
             extractDataFromInfoBreak(str, handler->at(found));
-            handler->updateMarkers();
             attemptBreakpointSynchronization(); // trigger "ready"
         }
     }
 }
 
-void GdbEngine::handleBreakInsert1(const GdbResultRecord &record, const QVariant &cookie)
+void GdbEngine::handleBreakInsert1(const GdbResponse &response)
 {
-    int index = cookie.toInt();
-    BreakHandler *handler = qq->breakHandler();
-    if (record.resultClass == GdbResultDone) {
+    int index = response.cookie.toInt();
+    BreakHandler *handler = manager()->breakHandler();
+    if (response.resultClass == GdbResultDone) {
         // Pending breakpoints in dylibs on Mac only?
         BreakpointData *data = handler->at(index);
-        GdbMi bkpt = record.data.findChild("bkpt");
+        GdbMi bkpt = response.data.findChild("bkpt");
         breakpointDataFromOutput(data, bkpt);
-    } else { // GdbResultError
+    } else {
         qDebug() << "INSERTING BREAKPOINT WITH BASE NAME FAILED. GIVING UP";
         BreakpointData *data = handler->at(index);
         data->bpNumber = _("<unavailable>");
     }
     attemptBreakpointSynchronization(); // trigger "ready"
-    handler->updateMarkers();
 }
 
 void GdbEngine::attemptBreakpointSynchronization()
 {
-    BreakHandler *handler = qq->breakHandler();
+    //QTC_ASSERT(!m_breakListUpdating,
+    //    qDebug() << "BREAK LIST CURRENTLY UPDATING"; return);
+    QTC_ASSERT(!m_sourcesListUpdating,
+        qDebug() << "SOURCES LIST CURRENTLY UPDATING"; return);
+
+    switch (state()) {
+    case InferiorStarting:
+    case InferiorRunningRequested:
+    case InferiorRunning:
+    case InferiorStopping:
+    case InferiorStopped:
+        break;
+    default:
+        //qDebug() << "attempted breakpoint sync in state" << state();
+        return;
+    }
+
+    // For best results, we rely on an up-to-date fullname mapping.
+    // The listing completion will retrigger us, so no futher action is needed.
+    if (m_sourcesListOutdated && theDebuggerBoolSetting(UsePreciseBreakpoints)) {
+        reloadSourceFilesInternal();
+        reloadBreakListInternal();
+        return;
+    }
+    if (m_breakListOutdated) {
+        reloadBreakListInternal();
+        return;
+    }
+
+    BreakHandler *handler = manager()->breakHandler();
 
     foreach (BreakpointData *data, handler->takeDisabledBreakpoints()) {
         QString bpNumber = data->bpNumber;
@@ -2310,14 +2239,7 @@ void GdbEngine::attemptBreakpointSynchronization()
         }
     }
 
-    for (int index = 0; index != handler->size(); ++index) {
-        // happens sometimes on Mac. Brush over symptoms
-        BreakpointData *data = handler->at(index);
-        if (data->markerFileName.startsWith(__("../"))) {
-            data->markerFileName = fullName(data->markerFileName);
-            handler->updateMarkers();
-        }
-    }
+    handler->updateMarkers();
 }
 
 
@@ -2331,13 +2253,13 @@ void GdbEngine::loadSymbols(const QString &moduleName)
 {
     // FIXME: gdb does not understand quoted names here (tested with 6.8)
     postCommand(_("sharedlibrary ") + dotEscape(moduleName));
-    reloadModules();
+    reloadModulesInternal();
 }
 
 void GdbEngine::loadAllSymbols()
 {
     postCommand(_("sharedlibrary .*"));
-    reloadModules();
+    reloadModulesInternal();
 }
 
 QList<Symbol> GdbEngine::moduleSymbols(const QString &moduleName)
@@ -2376,28 +2298,45 @@ QList<Symbol> GdbEngine::moduleSymbols(const QString &moduleName)
 
 void GdbEngine::reloadModules()
 {
-    postCommand(_("info shared"), CB(handleModulesList));
+    if (state() == InferiorRunning || state() == InferiorStopped)
+        reloadModulesInternal();
 }
 
-void GdbEngine::handleModulesList(const GdbResultRecord &record, const QVariant &)
+void GdbEngine::reloadModulesInternal()
+{
+    m_modulesListOutdated = false;
+    postCommand(_("info shared"), NeedsStop, CB(handleModulesList));
+#if 0
+    if (m_gdbVersion < 70000 && !m_isMacGdb)
+        postCommand(_("set stop-on-solib-events 1"));
+#endif
+}
+
+void GdbEngine::handleModulesList(const GdbResponse &response)
 {
     QList<Module> modules;
-    if (record.resultClass == GdbResultDone) {
-        // that's console-based output, likely Linux or Windows,
-        // but we can avoid the #ifdef here
-        QString data = QString::fromLocal8Bit(record.data.findChild("consolestreamoutput").data());
+    if (response.resultClass == GdbResultDone) {
+        // That's console-based output, likely Linux or Windows,
+        // but we can avoid the #ifdef here.
+        QString data = QString::fromLocal8Bit(response.data.findChild("consolestreamoutput").data());
         QTextStream ts(&data, QIODevice::ReadOnly);
         while (!ts.atEnd()) {
             QString line = ts.readLine();
-            if (!line.startsWith(__("0x")))
-                continue;
             Module module;
             QString symbolsRead;
             QTextStream ts(&line, QIODevice::ReadOnly);
-            ts >> module.startAddress >> module.endAddress >> symbolsRead;
-            module.moduleName = ts.readLine().trimmed();
-            module.symbolsRead = (symbolsRead == __("Yes"));
-            modules.append(module);
+            if (line.startsWith(__("0x"))) {
+                ts >> module.startAddress >> module.endAddress >> symbolsRead;
+                module.moduleName = ts.readLine().trimmed();
+                module.symbolsRead = (symbolsRead == __("Yes"));
+                modules.append(module);
+            } else if (line.trimmed().startsWith(__("No"))) {
+                // gdb 6.4 symbianelf
+                ts >> symbolsRead;
+                QTC_ASSERT(symbolsRead == __("No"), continue);
+                module.moduleName = ts.readLine().trimmed();
+                modules.append(module);
+            }
         }
         if (modules.isEmpty()) {
             // Mac has^done,shlib-info={num="1",name="dyld",kind="-",
@@ -2405,18 +2344,18 @@ void GdbEngine::handleModulesList(const GdbResultRecord &record, const QVariant 
             // state="Y",path="/usr/lib/dyld",description="/usr/lib/dyld",
             // loaded_addr="0x8fe00000",slide="0x0",prefix="__dyld_"},
             // shlib-info={...}...
-            foreach (const GdbMi &item, record.data.children()) {
+            foreach (const GdbMi &item, response.data.children()) {
                 Module module;
                 module.moduleName = QString::fromLocal8Bit(item.findChild("path").data());
                 module.symbolsRead = (item.findChild("state").data() == "Y");
                 module.startAddress = _(item.findChild("loaded_addr").data());
                 //: End address of loaded module
-                module.endAddress = tr("<unknown>");
+                module.endAddress = tr("<unknown>", "address");
                 modules.append(module);
             }
         }
     }
-    qq->modulesHandler()->setModules(modules);
+    manager()->modulesHandler()->setModules(modules);
 }
 
 
@@ -2426,9 +2365,29 @@ void GdbEngine::handleModulesList(const GdbResultRecord &record, const QVariant 
 //
 //////////////////////////////////////////////////////////////////////
 
+void GdbEngine::invalidateSourcesList()
+{
+    m_modulesListOutdated = true;
+    m_sourcesListOutdated = true;
+    m_breakListOutdated = true;
+}
+
 void GdbEngine::reloadSourceFiles()
 {
-    postCommand(_("-file-list-exec-source-files"), CB(handleQuerySources));
+    if ((state() == InferiorRunning || state() == InferiorStopped)
+        && !m_sourcesListUpdating)
+        reloadSourceFilesInternal();
+}
+
+void GdbEngine::reloadSourceFilesInternal()
+{
+    QTC_ASSERT(!m_sourcesListUpdating, /**/);
+    m_sourcesListUpdating = true;
+    postCommand(_("-file-list-exec-source-files"), NeedsStop, CB(handleQuerySources));
+#if 0
+    if (m_gdbVersion < 70000 && !m_isMacGdb)
+        postCommand(_("set stop-on-solib-events 1"));
+#endif
 }
 
 
@@ -2438,45 +2397,98 @@ void GdbEngine::reloadSourceFiles()
 //
 //////////////////////////////////////////////////////////////////////
 
-void GdbEngine::handleStackSelectThread(const GdbResultRecord &, const QVariant &)
+void GdbEngine::selectThread(int index)
 {
-    //qDebug("FIXME: StackHandler::handleOutput: SelectThread");
-    q->showStatusMessage(tr("Retrieving data for stack view..."), 3000);
-    reloadStack();
+    ThreadsHandler *threadsHandler = manager()->threadsHandler();
+    threadsHandler->setCurrentThread(index);
+
+    QList<ThreadData> threads = threadsHandler->threads();
+    QTC_ASSERT(index < threads.size(), return);
+    int id = threads.at(index).id;
+    showStatusMessage(tr("Retrieving data for stack view..."), 10000);
+    postCommand(_("-thread-select %1").arg(id), CB(handleStackSelectThread));
 }
 
-
-void GdbEngine::handleStackListFrames(const GdbResultRecord &record, const QVariant &cookie)
+void GdbEngine::handleStackSelectThread(const GdbResponse &)
 {
-    bool isFull = cookie.toBool();
+    QTC_ASSERT(state() == InferiorUnrunnable || state() == InferiorStopped, /**/);
+    //qDebug("FIXME: StackHandler::handleOutput: SelectThread");
+    showStatusMessage(tr("Retrieving data for stack view..."), 3000);
+    manager()->reloadRegisters();
+    reloadStack(true);
+    updateLocals(); 
+}
+
+void GdbEngine::reloadFullStack()
+{
+    QString cmd = _("-stack-list-frames");
+    postCommand(cmd, WatchUpdate, CB(handleStackListFrames),
+        QVariant::fromValue<StackCookie>(StackCookie(true, true)));
+}
+
+void GdbEngine::reloadStack(bool forceGotoLocation)
+{
+    QString cmd = _("-stack-list-frames");
+    int stackDepth = theDebuggerAction(MaximalStackDepth)->value().toInt();
+    if (stackDepth && !m_gdbAdapter->isTrkAdapter())
+        cmd += _(" 0 ") + QString::number(stackDepth);
+    // FIXME: gdb 6.4 symbianelf likes to be asked twice. The first time it
+    // returns with "^error,msg="Previous frame identical to this frame
+    // (corrupt stack?)". Might be related to the fact that we can't
+    // access the memory belonging to the lower frames. But as we know
+    // this sometimes happens, ask the second time immediately instead
+    // of waiting for the first request to fail.
+    if (m_gdbAdapter->isTrkAdapter())
+        postCommand(cmd, WatchUpdate);
+    postCommand(cmd, WatchUpdate, CB(handleStackListFrames),
+        QVariant::fromValue<StackCookie>(StackCookie(false, forceGotoLocation)));
+}
+
+StackFrame GdbEngine::parseStackFrame(const GdbMi &frameMi, int level)
+{
+    //qDebug() << "HANDLING FRAME:" << frameMi.toString();
+    StackFrame frame;
+    frame.level = level;
+    GdbMi fullName = frameMi.findChild("fullname");
+    if (fullName.isValid())
+        frame.file = cleanupFullName(QFile::decodeName(fullName.data()));
+    else
+        frame.file = QFile::decodeName(frameMi.findChild("file").data());
+    frame.function = _(frameMi.findChild("func").data());
+    frame.from = _(frameMi.findChild("from").data());
+    frame.line = frameMi.findChild("line").data().toInt();
+    frame.address = _(frameMi.findChild("addr").data());
+    return frame;
+}
+
+void GdbEngine::handleStackListFrames(const GdbResponse &response)
+{
+    bool handleIt = (m_isMacGdb || response.resultClass == GdbResultDone);
+    if (!handleIt) {
+        // That always happens on symbian gdb with
+        // ^error,data={msg="Previous frame identical to this frame (corrupt stack?)"
+        // logstreamoutput="Previous frame identical to this frame (corrupt stack?)\n"
+        //qDebug() << "LISTING STACK FAILED: " << response.toString();
+        return;
+    }
+
+    StackCookie cookie = response.cookie.value<StackCookie>();
     QList<StackFrame> stackFrames;
 
-    const GdbMi stack = record.data.findChild("stack");
-    stack.toString();
+    GdbMi stack = response.data.findChild("stack");
     if (!stack.isValid()) {
         qDebug() << "FIXME: stack:" << stack.toString();
         return;
     }
 
-    int topFrame = -1;
+    int targetFrame = -1;
 
     int n = stack.childCount();
     for (int i = 0; i != n; ++i) {
-        //qDebug() << "HANDLING FRAME:" << stack.childAt(i).toString();
-        const GdbMi frameMi = stack.childAt(i);
-        StackFrame frame(i);
-        QStringList files;
-        files.append(QFile::decodeName(frameMi.findChild("fullname").data()));
-        files.append(QFile::decodeName(frameMi.findChild("file").data()));
-        frame.file = fullName(files);
-        frame.function = _(frameMi.findChild("func").data());
-        frame.from = _(frameMi.findChild("from").data());
-        frame.line = frameMi.findChild("line").data().toInt();
-        frame.address = _(frameMi.findChild("addr").data());
+        stackFrames.append(parseStackFrame(stack.childAt(i), i));
+        const StackFrame &frame = stackFrames.back();
 
-        stackFrames.append(frame);
-
-#if defined(Q_OS_WIN)
+        #if defined(Q_OS_WIN)
         const bool isBogus =
             // Assume this is wrong and points to some strange stl_algobase
             // implementation. Happens on Karsten's XP system with Gdb 5.50
@@ -2484,87 +2496,94 @@ void GdbEngine::handleStackListFrames(const GdbResultRecord &record, const QVari
             // Also wrong. Happens on Vista with Gdb 5.50
                || (frame.function == __("operator new") && frame.line == 151);
 
-        // immediately leave bogus frames
-        if (topFrame == -1 && isBogus) {
-            postCommand(_("-exec-finish"));
+        // Immediately leave bogus frames.
+        if (targetFrame == -1 && isBogus) {
+            setTokenBarrier();
+            setState(InferiorRunningRequested);
+            postCommand(_("-exec-finish"), RunRequest, CB(handleExecContinue));
+            showStatusMessage(tr("Jumping out of bogus frame..."), 1000);
             return;
         }
+        #endif
 
-#endif
-
-        // Initialize top frame to the first valid frame
-        const bool isValid = !frame.file.isEmpty() && !frame.function.isEmpty();
-        if (isValid && topFrame == -1)
-            topFrame = i;
+        // Initialize top frame to the first valid frame.
+        const bool isValid = frame.isUsable() && !frame.function.isEmpty();
+        if (isValid && targetFrame == -1)
+            targetFrame = i;
     }
 
-    bool canExpand = !isFull 
+    bool canExpand = !cookie.isFull 
         && (n >= theDebuggerAction(MaximalStackDepth)->value().toInt());
     theDebuggerAction(ExpandStack)->setEnabled(canExpand);
-    qq->stackHandler()->setFrames(stackFrames, canExpand);
+    manager()->stackHandler()->setFrames(stackFrames, canExpand);
 
-    if (topFrame != -1 || theDebuggerBoolSetting(StepByInstruction)) {
-        const StackFrame &frame = qq->stackHandler()->currentFrame();
-        q->gotoLocation(frame, true);
+    // We can't jump to any file if we don't have any frames.
+    if (stackFrames.isEmpty())
+        return;
+
+    // targetFrame contains the top most frame for which we have source
+    // information. That's typically the frame we'd like to jump to, with
+    // a few exceptions:
+
+    // Always jump to frame #0 when stepping by instruction.
+    if (theDebuggerBoolSetting(OperateByInstruction))
+        targetFrame = 0;
+
+    // If there is no frame with source, jump to frame #0.
+    if (targetFrame == -1)
+        targetFrame = 0;
+
+    // Mac gdb does not add the location to the "stopped" message,
+    // so the early gotoLocation() was not triggered. Force it here.
+    // For targetFrame == 0 we already issued a 'gotoLocation'
+    // when reading the *stopped message.
+    bool jump = (m_isMacGdb || targetFrame != 0);
+  
+    manager()->stackHandler()->setCurrentIndex(targetFrame);
+    if (jump || cookie.gotoLocation) {
+        const StackFrame &frame = manager()->stackHandler()->currentFrame();
+        //qDebug() << "GOTO, 2ND ATTEMPT: " << frame.toString() << targetFrame;
+        gotoLocation(frame, true);
     }
-}
-
-void GdbEngine::selectThread(int index)
-{
-    //reset location arrow
-    q->resetLocation();
-
-    ThreadsHandler *threadsHandler = qq->threadsHandler();
-    threadsHandler->setCurrentThread(index);
-
-    QList<ThreadData> threads = threadsHandler->threads();
-    QTC_ASSERT(index < threads.size(), return);
-    int id = threads.at(index).id;
-    q->showStatusMessage(tr("Retrieving data for stack view..."), 10000);
-    postCommand(_("-thread-select %1").arg(id), CB(handleStackSelectThread));
 }
 
 void GdbEngine::activateFrame(int frameIndex)
 {
-    if (q->status() != DebuggerInferiorStopped)
+    m_manager->resetLocation();
+    if (state() != InferiorStopped && state() != InferiorUnrunnable)
         return;
 
-    StackHandler *stackHandler = qq->stackHandler();
+    StackHandler *stackHandler = manager()->stackHandler();
     int oldIndex = stackHandler->currentIndex();
-    //qDebug() << "ACTIVATE FRAME:" << frameIndex << oldIndex
-    //    << stackHandler->currentIndex();
 
     if (frameIndex == stackHandler->stackSize()) {
         reloadFullStack();
         return;
     }
+
     QTC_ASSERT(frameIndex < stackHandler->stackSize(), return);
 
     if (oldIndex != frameIndex) {
         setTokenBarrier();
 
-        // Assuming this always succeeds saves a roundtrip.
+        // Assuming the command always succeeds this saves a roundtrip.
         // Otherwise the lines below would need to get triggered
         // after a response to this -stack-select-frame here.
         postCommand(_("-stack-select-frame ") + QString::number(frameIndex));
 
         stackHandler->setCurrentIndex(frameIndex);
         updateLocals();
+        reloadRegisters();
     }
 
-    const StackFrame &frame = stackHandler->currentFrame();
-
-    if (frame.isUsable())
-        q->gotoLocation(frame, true);
-    else
-        qDebug() << "FULL NAME NOT USABLE:" << frame.file;
+    gotoLocation(stackHandler->currentFrame(), true);
 }
 
-void GdbEngine::handleStackListThreads(const GdbResultRecord &record, const QVariant &cookie)
+void GdbEngine::handleStackListThreads(const GdbResponse &response)
 {
-    int id = cookie.toInt();
+    int id = response.cookie.toInt();
     // "72^done,{thread-ids={thread-id="2",thread-id="1"},number-of-threads="2"}
-    const QList<GdbMi> items = record.data.findChild("thread-ids").children();
+    const QList<GdbMi> items = response.data.findChild("thread-ids").children();
     QList<ThreadData> threads;
     int currentIndex = -1;
     for (int index = 0, n = items.size(); index != n; ++index) {
@@ -2572,11 +2591,12 @@ void GdbEngine::handleStackListThreads(const GdbResultRecord &record, const QVar
         thread.id = items.at(index).data().toInt();
         threads.append(thread);
         if (thread.id == id) {
-            //qDebug() << "SETTING INDEX TO:" << index << " ID:" << id << " RECOD:" << record.toString();
+            //qDebug() << "SETTING INDEX TO:" << index << " ID:"
+            // << id << " RECOD:" << response.toString();
             currentIndex = index;
         }
     }
-    ThreadsHandler *threadsHandler = qq->threadsHandler();
+    ThreadsHandler *threadsHandler = manager()->threadsHandler();
     threadsHandler->setThreads(threads);
     threadsHandler->setCurrentThread(currentIndex);
 }
@@ -2590,13 +2610,28 @@ void GdbEngine::handleStackListThreads(const GdbResultRecord &record, const QVar
 
 void GdbEngine::reloadRegisters()
 {
-    postCommand(_("-data-list-register-values d"),
-                Discardable, CB(handleRegisterListValues));
+    if (state() != InferiorStopped)
+        return;
+    if (!m_registerNamesListed) {
+        postCommand(_("-data-list-register-names"), CB(handleRegisterListNames));
+        m_registerNamesListed = true;
+    }
+
+    if (m_gdbAdapter->isTrkAdapter()) {
+        // FIXME: remove that special case. This is only to prevent
+        // gdb from asking for the values of the fixed point registers
+        postCommand(_("-data-list-register-values x 0 1 2 3 4 5 6 7 8 9 "
+                      "10 11 12 13 14 15 25"),
+                    Discardable, CB(handleRegisterListValues));
+    } else {
+        postCommand(_("-data-list-register-values x"),
+                    Discardable, CB(handleRegisterListValues));
+    }
 }
 
 void GdbEngine::setRegisterValue(int nr, const QString &value)
 {
-    Register reg = qq->registerHandler()->registers().at(nr);
+    Register reg = manager()->registerHandler()->registers().at(nr);
     //qDebug() << "NOT IMPLEMENTED: CHANGE REGISTER " << nr << reg.name << ":"
     //    << value;
     postCommand(_("-var-delete \"R@\""));
@@ -2608,27 +2643,29 @@ void GdbEngine::setRegisterValue(int nr, const QString &value)
     reloadRegisters();
 }
 
-void GdbEngine::handleRegisterListNames(const GdbResultRecord &record, const QVariant &)
+void GdbEngine::handleRegisterListNames(const GdbResponse &response)
 {
-    if (record.resultClass != GdbResultDone)
+    if (response.resultClass != GdbResultDone) {
+        m_registerNamesListed = false;
         return;
+    }
 
     QList<Register> registers;
-    foreach (const GdbMi &item, record.data.findChild("register-names").children())
+    foreach (const GdbMi &item, response.data.findChild("register-names").children())
         registers.append(Register(_(item.data())));
 
-    qq->registerHandler()->setRegisters(registers);
+    manager()->registerHandler()->setRegisters(registers);
 }
 
-void GdbEngine::handleRegisterListValues(const GdbResultRecord &record, const QVariant &)
+void GdbEngine::handleRegisterListValues(const GdbResponse &response)
 {
-    if (record.resultClass != GdbResultDone)
+    if (response.resultClass != GdbResultDone)
         return;
 
-    QList<Register> registers = qq->registerHandler()->registers();
+    QList<Register> registers = manager()->registerHandler()->registers();
 
     // 24^done,register-values=[{number="0",value="0xf423f"},...]
-    foreach (const GdbMi &item, record.data.findChild("register-values").children()) {
+    foreach (const GdbMi &item, response.data.findChild("register-values").children()) {
         int index = item.findChild("number").data().toInt();
         if (index < registers.size()) {
             Register &reg = registers[index];
@@ -2638,7 +2675,7 @@ void GdbEngine::handleRegisterListValues(const GdbResultRecord &record, const QV
                 reg.value = value;
         }
     }
-    qq->registerHandler()->setRegisters(registers);
+    manager()->registerHandler()->setRegisters(registers);
 }
 
 
@@ -2650,12 +2687,9 @@ void GdbEngine::handleRegisterListValues(const GdbResultRecord &record, const QV
 
 bool GdbEngine::supportsThreads() const
 {
-#ifdef Q_OS_MAC
-    return true;
-#endif
     // FSF gdb 6.3 crashes happily on -thread-list-ids. So don't use it.
     // The test below is a semi-random pick, 6.8 works fine
-    return m_gdbVersion > 60500;
+    return m_isMacGdb || m_gdbVersion > 60500;
 }
 
 
@@ -2678,10 +2712,9 @@ static QString tooltipINameForExpression(const QString &exp)
 
 bool GdbEngine::showToolTip()
 {
-    WatchHandler *handler = qq->watchHandler();
+    WatchHandler *handler = manager()->watchHandler();
     WatchModel *model = handler->model(TooltipsWatch);
     QString iname = tooltipINameForExpression(m_toolTipExpression);
-    model->setActiveData(iname);
     WatchItem *item = model->findItem(iname, model->rootItem());
     if (!item) {
         hideDebuggerToolTip();
@@ -2695,7 +2728,7 @@ bool GdbEngine::showToolTip()
 void GdbEngine::setToolTipExpression(const QPoint &mousePos,
     TextEditor::ITextEditor *editor, int cursorPos)
 {
-    if (q->status() != DebuggerInferiorStopped || !isCppEditor(editor)) {
+    if (state() != InferiorStopped || !isCppEditor(editor)) {
         //qDebug() << "SUPPRESSING DEBUGGER TOOLTIP, INFERIOR NOT STOPPED/Non Cpp editor";
         return;
     }
@@ -2770,8 +2803,8 @@ void GdbEngine::setToolTipExpression(const QPoint &mousePos,
     toolTip.exp = exp;
     toolTip.name = exp;
     toolTip.iname = tooltipINameForExpression(exp);
-    qq->watchHandler()->removeData(toolTip.iname);
-    qq->watchHandler()->insertData(toolTip);
+    manager()->watchHandler()->removeData(toolTip.iname);
+    manager()->watchHandler()->insertData(toolTip);
 }
 
 
@@ -2780,11 +2813,6 @@ void GdbEngine::setToolTipExpression(const QPoint &mousePos,
 // Watch specific stuff
 //
 //////////////////////////////////////////////////////////////////////
-
-//: Variable
-static const QString strNotInScope =
-        QCoreApplication::translate("Debugger::Internal::GdbEngine", "<not in scope>");
-
 
 static void setWatchDataValue(WatchData &data, const GdbMi &mi,
     int encoding = 0)
@@ -2814,12 +2842,20 @@ static void setWatchDataChildCount(WatchData &data, const GdbMi &mi)
         data.setHasChildren(mi.data().toInt() > 0);
 }
 
-static void setWatchDataValueDisabled(WatchData &data, const GdbMi &mi)
+static void setWatchDataValueEnabled(WatchData &data, const GdbMi &mi)
 {
     if (mi.data() == "true")
-        data.valuedisabled = true;
+        data.valueEnabled = true;
     else if (mi.data() == "false")
-        data.valuedisabled = false;
+        data.valueEnabled = false;
+}
+
+static void setWatchDataValueEditable(WatchData &data, const GdbMi &mi)
+{
+    if (mi.data() == "true")
+        data.valueEditable = true;
+    else if (mi.data() == "false")
+        data.valueEditable = false;
 }
 
 static void setWatchDataExpression(WatchData &data, const GdbMi &mi)
@@ -2846,8 +2882,13 @@ static void setWatchDataSAddress(WatchData &data, const GdbMi &mi)
 void GdbEngine::setUseDebuggingHelpers(const QVariant &on)
 {
     //qDebug() << "SWITCHING ON/OFF DUMPER DEBUGGING:" << on;
-    // FIXME: a bit too harsh, but otherwise the treeview sometimes look funny
-    //m_expandedINames.clear();
+    Q_UNUSED(on)
+    setTokenBarrier();
+    updateLocals();
+}
+
+void GdbEngine::setAutoDerefPointers(const QVariant &on)
+{
     Q_UNUSED(on)
     setTokenBarrier();
     updateLocals();
@@ -2858,14 +2899,14 @@ bool GdbEngine::hasDebuggingHelperForType(const QString &type) const
     if (!theDebuggerBoolSetting(UseDebuggingHelpers))
         return false;
 
-    if (!startModeAllowsDumpers()) {
+    if (m_gdbAdapter->dumperHandling() == AbstractGdbAdapter::DumperNotAvailable) {
         // "call" is not possible in gdb when looking at core files
         return type == __("QString") || type.endsWith(__("::QString"))
             || type == __("QStringList") || type.endsWith(__("::QStringList"));
     }
 
     if (theDebuggerBoolSetting(DebugDebuggingHelpers)
-            && qq->stackHandler()->isDebuggingDebuggingHelpers())
+            && manager()->stackHandler()->isDebuggingDebuggingHelpers())
         return false;
 
     if (m_debuggingHelperState != DebuggingHelperAvailable)
@@ -2895,20 +2936,21 @@ void GdbEngine::runDirectDebuggingHelper(const WatchData &data, bool dumpChildre
     var.setValue(data);
     postCommand(cmd, WatchUpdate, CB(handleDebuggingHelperValue3), var);
 
-    q->showStatusMessage(msgRetrievingWatchData(m_pendingRequests + 1), 10000);
+    showStatusMessage(msgRetrievingWatchData(m_pendingRequests + 1), 10000);
 }
 
 void GdbEngine::runDebuggingHelper(const WatchData &data0, bool dumpChildren)
 {
-    if (!startModeAllowsDumpers()) {
+    if (m_debuggingHelperState != DebuggingHelperAvailable) {
         runDirectDebuggingHelper(data0, dumpChildren);
         return;
     }
     WatchData data = data0;
 
-    // Avoid endless loops created by faulty dumpers
-    if (m_processedNames.contains(data.iname)) {
-        emit gdbInputAvailable(LogStatus,
+    // Avoid endless loops created by faulty dumpers.
+    QString processedName = QString(_("%1-%2").arg(dumpChildren).arg(data.iname));
+    if (m_processedNames.contains(processedName)) {
+        gdbInputAvailable(LogStatus,
             _("<Breaking endless loop for %1>").arg(data.iname));
         data.setAllUnneeded();
         data.setValue(_("<unavailable>"));
@@ -2916,7 +2958,7 @@ void GdbEngine::runDebuggingHelper(const WatchData &data0, bool dumpChildren)
         insertData(data);
         return; 
     }
-    m_processedNames.insert(data.iname);
+    m_processedNames.insert(processedName);
 
     QByteArray params;
     QStringList extraArgs;
@@ -2944,19 +2986,21 @@ void GdbEngine::runDebuggingHelper(const WatchData &data0, bool dumpChildren)
             <<',' <<  addr << ',' << (dumpChildren ? "1" : "0")
             << ',' << extraArgs.join(QString(_c(','))) <<  ')';
 
-    QVariant var;
-    var.setValue(data);
-    postCommand(cmd, WatchUpdate | EmbedToken, CB(handleDebuggingHelperValue1), var);
+    postCommand(cmd, WatchUpdate | EmbedToken | NonCriticalResponse);
 
-    q->showStatusMessage(msgRetrievingWatchData(m_pendingRequests + 1), 10000);
+    showStatusMessage(msgRetrievingWatchData(m_pendingRequests + 1), 10000);
 
     // retrieve response
     postCommand(_("p (char*)&qDumpOutBuffer"), WatchUpdate,
-        CB(handleDebuggingHelperValue2), var);
+        CB(handleDebuggingHelperValue2), qVariantFromValue(data));
 }
 
 void GdbEngine::createGdbVariable(const WatchData &data)
 {
+    if (data.iname == _("local.flist.0")) {
+        int i = 1;
+        Q_UNUSED(i);
+    }
     postCommand(_("-var-delete \"%1\"").arg(data.iname), WatchUpdate);
     QString exp = data.exp;
     if (exp.isEmpty() && data.addr.startsWith(__("0x")))
@@ -2984,8 +3028,8 @@ void GdbEngine::updateSubItem(const WatchData &data0)
             qDebug() << "FIXME: GdbEngine::updateSubItem:"
                  << data.toString() << "should not happen";
             #else
-            data.setType(strNotInScope);
-            data.setValue(strNotInScope);
+            data.setType(WatchData::msgNotInScope());
+            data.setValue(WatchData::msgNotInScope());
             data.setHasChildren(false);
             insertData(data);
             return;
@@ -3009,22 +3053,24 @@ void GdbEngine::updateSubItem(const WatchData &data0)
         #if DEBUG_SUBITEM
         qDebug() << "IT'S A POINTER";
         #endif
-#if 1
-        data.setChildrenUnneeded();
-        insertData(data);
-        WatchData data1;
-        data1.iname = data.iname + QLatin1String(".*");
-        data1.name = QLatin1Char('*') + data.name;
-        data1.exp = QLatin1String("(*(") + data.exp + QLatin1String("))");
-        data1.type = stripPointerType(data.type);
-        data1.setValueNeeded();
-        insertData(data1);
-#else
-        // Try automatic dereferentiation
-        data.exp = _("*(") + data.exp + _(")");
-        data.type = data.type + _("."); // FIXME: fragile HACK to avoid recursion
-        insertData(data);
-#endif
+    
+        if (theDebuggerBoolSetting(AutoDerefPointers)) {
+            // Try automatic dereferentiation
+            data.exp = _("(*(") + data.exp + _("))");
+            data.type = data.type + _("."); // FIXME: fragile HACK to avoid recursion
+            insertData(data);
+        } else {
+            data.setChildrenUnneeded();
+            insertData(data);
+            WatchData data1;
+            data1.iname = data.iname + QLatin1String(".*");
+            data1.name = QLatin1Char('*') + data.name;
+            data1.exp = QLatin1String("(*(") + data.exp + QLatin1String("))");
+            data1.type = stripPointerType(data.type);
+            data1.setValueNeeded();
+            data1.setChildrenUnneeded();
+            insertData(data1);
+        }
         return;
     }
 
@@ -3032,7 +3078,7 @@ void GdbEngine::updateSubItem(const WatchData &data0)
         #if DEBUG_SUBITEM
         qDebug() << "UPDATE SUBITEM: CUSTOMVALUE";
         #endif
-        runDebuggingHelper(data, qq->watchHandler()->isExpandedIName(data.iname));
+        runDebuggingHelper(data, manager()->watchHandler()->isExpandedIName(data.iname));
         return;
     }
 
@@ -3097,10 +3143,11 @@ void GdbEngine::updateSubItem(const WatchData &data0)
         #if DEBUG_SUBITEM
         qDebug() << "UPDATE SUBITEM: CUSTOMVALUE WITH CHILDREN";
         #endif
-        runDebuggingHelper(data, qq->watchHandler()->isExpandedIName(data.iname));
+        runDebuggingHelper(data, manager()->watchHandler()->isExpandedIName(data.iname));
         return;
     }
 
+//#if !X
     if (data.isHasChildrenNeeded() && data.variable.isEmpty()) {
         #if DEBUG_SUBITEM
         qDebug() << "UPDATE SUBITEM: VARIABLE NEEDED FOR CHILDCOUNT";
@@ -3110,6 +3157,7 @@ void GdbEngine::updateSubItem(const WatchData &data0)
         // item, with childrenNeeded() set.
         return;
     }
+//#endif
 
     if (data.isHasChildrenNeeded()) {
         QTC_ASSERT(!data.variable.isEmpty(), return); // tested above
@@ -3124,31 +3172,78 @@ void GdbEngine::updateSubItem(const WatchData &data0)
 
 void GdbEngine::updateWatchData(const WatchData &data)
 {
+    if (isSynchroneous()) {
+        // This should only be called for fresh expanded items, not for
+        // items that had their children retrieved earlier.
+        //qDebug() << "\nUPDATE WATCH DATA: " << data.toString() << "\n";
+#if 0
+        WatchData data1 = data;
+        data1.setAllUnneeded();
+        insertData(data1);
+        rebuildModel();
+#else
+        if (data.iname.endsWith(_(".")))
+            return;
+
+        // Avoid endless loops created by faulty dumpers.
+        QString processedName = QString(_("%1-%2").arg(1).arg(data.iname));
+        //qDebug() << "PROCESSED NAMES: " << processedName << m_processedNames;
+        if (m_processedNames.contains(processedName)) {
+            WatchData data1 = data;
+            gdbInputAvailable(LogStatus,
+                _("<Breaking endless loop for %1>").arg(data1.iname));
+            data1.setAllUnneeded();
+            data1.setValue(_("<unavailable>"));
+            data1.setHasChildren(false);
+            insertData(data1);
+            return; 
+        }
+        m_processedNames.insert(processedName);
+
+        updateLocals();
+#endif
+    } else {
+        // Bump requests to avoid model rebuilding during the nested
+        // updateWatchModel runs.
+        ++m_pendingRequests;
+        PENDING_DEBUG("UPDATE WATCH BUMPS PENDING UP TO " << m_pendingRequests);
+#if 1
+        QMetaObject::invokeMethod(this, "updateWatchDataHelper",
+            Qt::QueuedConnection, Q_ARG(WatchData, data));
+#else
+        updateWatchDataHelper(data);
+#endif
+    }
+}
+
+void GdbEngine::updateWatchDataHelper(const WatchData &data)
+{
     //m_pendingRequests = 0;
     PENDING_DEBUG("UPDATE WATCH DATA");
     #if DEBUG_PENDING
     //qDebug() << "##############################################";
-    //qDebug() << "UPDATE MODEL, FOUND INCOMPLETE:";
+    qDebug() << "UPDATE MODEL, FOUND INCOMPLETE:";
     //qDebug() << data.toString();
     #endif
 
-    // Bump requests to avoid model rebuilding during the nested
-    // updateWatchModel runs.
-    ++m_pendingRequests;
     updateSubItem(data);
     //PENDING_DEBUG("INTERNAL TRIGGERING UPDATE WATCH MODEL");
     --m_pendingRequests;
+    PENDING_DEBUG("UPDATE WATCH DONE BUMPS PENDING DOWN TO " << m_pendingRequests);
     if (m_pendingRequests <= 0)
         rebuildModel();
 }
 
 void GdbEngine::rebuildModel()
 {
-    m_processedNames.clear();
-    PENDING_DEBUG("REBUILDING MODEL");
-    emit gdbInputAvailable(LogStatus, _("<Rebuild Watchmodel>"));
-    q->showStatusMessage(tr("Finished retrieving data."), 400);
-    qq->watchHandler()->endCycle();
+    static int count = 0;
+    ++count;
+    if (!isSynchroneous())
+        m_processedNames.clear();
+    PENDING_DEBUG("REBUILDING MODEL" << count);
+    gdbInputAvailable(LogStatus, _("<Rebuild Watchmodel %1>").arg(count));
+    showStatusMessage(tr("Finished retrieving data."), 400);
+    manager()->watchHandler()->endCycle();
     showToolTip();
 }
 
@@ -3164,63 +3259,33 @@ static inline double getDumperVersion(const GdbMi &contents)
     return 1.0;
 }
 
-static void parseSizeCache(const GdbMi &contents, QtDumperHelper *dumperHelper)
-{
-    const GdbMi sizesList = contents.findChild("sizes");
-    if (sizesList.type() == GdbMi::Invalid)
-        return;
-    foreach(const GdbMi &c, sizesList.children()) {
-        const QString name = QString::fromAscii(c.name());
-        if (const int size = QString::fromAscii(c.data()).toInt())
-            dumperHelper->addSize(name, size);
-    }
-}
-
-void GdbEngine::handleQueryDebuggingHelper(const GdbResultRecord &record, const QVariant &)
+void GdbEngine::handleQueryDebuggingHelper(const GdbResponse &response)
 {
     const double dumperVersionRequired = 1.0;
-    m_dumperHelper.clear();
-    //qDebug() << "DATA DUMPER TRIAL:" << record.toString();
+    //qDebug() << "DATA DUMPER TRIAL:" << response.toString();
 
     GdbMi contents;
-    QTC_ASSERT(parseConsoleStream(record, &contents), /**/);
-    GdbMi simple = contents.findChild("dumpers");
-
-    m_dumperHelper.setQtNamespace(_(contents.findChild("namespace").data()));
-    GdbMi qtversion = contents.findChild("qtversion");
-    int qtv = 0;
-    if (qtversion.children().size() == 3) {
-        qtv = (qtversion.childAt(0).data().toInt() << 16)
-                    + (qtversion.childAt(1).data().toInt() << 8)
-                    + qtversion.childAt(2).data().toInt();
-        //qDebug() << "FOUND QT VERSION:" << qtversion.toString() << m_qtVersion;
-    }
-    m_dumperHelper.setQtVersion(qtv);
-    //qDebug() << "CONTENTS:" << contents.toString();
-    //qDebug() << "SIMPLE DUMPERS:" << simple.toString();
-
-    QStringList availableSimpleDebuggingHelpers;
-    foreach (const GdbMi &item, simple.children())
-        availableSimpleDebuggingHelpers.append(_(item.data()));
-    m_dumperHelper.parseQueryTypes(availableSimpleDebuggingHelpers, QtDumperHelper::GdbDebugger);
-
-    if (availableSimpleDebuggingHelpers.isEmpty()) {
-        if (!m_dumperInjectionLoad) // Retry if thread has not terminated yet.
-            m_debuggingHelperState = DebuggingHelperUnavailable;
-        q->showStatusMessage(tr("Debugging helpers not found."));
-    } else {
+    QTC_ASSERT(parseConsoleStream(response, &contents), qDebug() << response.toString());
+    const bool ok = m_dumperHelper.parseQuery(contents, QtDumperHelper::GdbDebugger)
+        && m_dumperHelper.typeCount();
+    if (ok) {
         // Get version and sizes from dumpers. Expression cache
         // currently causes errors.
         const double dumperVersion = getDumperVersion(contents);
         if (dumperVersion < dumperVersionRequired) {
-            qq->showQtDumperLibraryWarning(QtDumperHelper::msgDumperOutdated(dumperVersionRequired, dumperVersion));
+            manager()->showQtDumperLibraryWarning(
+                QtDumperHelper::msgDumperOutdated(dumperVersionRequired, dumperVersion));
             m_debuggingHelperState = DebuggingHelperUnavailable;
             return;
         }
-        parseSizeCache(contents, &m_dumperHelper);
         m_debuggingHelperState = DebuggingHelperAvailable;
-        const QString successMsg = tr("Dumper version %1, %n custom dumpers found.", 0, m_dumperHelper.typeCount()).arg(dumperVersion);
-        q->showStatusMessage(successMsg);
+        const QString successMsg = tr("Dumper version %1, %n custom dumpers found.",
+            0, m_dumperHelper.typeCount()).arg(dumperVersion);
+        showStatusMessage(successMsg);
+    } else {
+        if (!m_dumperInjectionLoad) // Retry if thread has not terminated yet.
+            m_debuggingHelperState = DebuggingHelperUnavailable;
+        showStatusMessage(tr("Debugging helpers not found."));
     }
     //qDebug() << m_dumperHelper.toString(true);
     //qDebug() << m_availableSimpleDebuggingHelpers << "DATA DUMPERS AVAILABLE";
@@ -3248,7 +3313,7 @@ void GdbEngine::sendWatchParameters(const QByteArray &params0)
     const QString inBufferCmd = arrayFillCommand("qDumpInBuffer", params);
 
     params.replace('\0','!');
-    emit gdbInputAvailable(LogMisc, QString::fromUtf8(params));
+    gdbInputAvailable(LogMisc, QString::fromUtf8(params));
 
     params.clear();
     params.append('\0');
@@ -3258,9 +3323,9 @@ void GdbEngine::sendWatchParameters(const QByteArray &params0)
     postCommand(outBufferCmd);
 }
 
-void GdbEngine::handleVarAssign(const GdbResultRecord &, const QVariant &)
+void GdbEngine::handleVarAssign(const GdbResponse &)
 {
-    // everything might have changed, force re-evaluation
+    // Everything might have changed, force re-evaluation.
     // FIXME: Speed this up by re-using variables and only
     // marking values as 'unknown'
     setTokenBarrier();
@@ -3286,165 +3351,162 @@ void GdbEngine::setWatchDataDisplayedType(WatchData &data, const GdbMi &item)
         data.displayedType = _(item.data());
 }
 
-void GdbEngine::handleVarCreate(const GdbResultRecord &record,
-    const QVariant &cookie)
+void GdbEngine::handleVarCreate(const GdbResponse &response)
 {
-    WatchData data = cookie.value<WatchData>();
+    WatchData data = response.cookie.value<WatchData>();
     // happens e.g. when we already issued a var-evaluate command
     if (!data.isValid())
         return;
     //qDebug() << "HANDLE VARIABLE CREATION:" << data.toString();
-    if (record.resultClass == GdbResultDone) {
+    if (response.resultClass == GdbResultDone) {
         data.variable = data.iname;
-        setWatchDataType(data, record.data.findChild("type"));
-        if (hasDebuggingHelperForType(data.type)) {
-            // we do not trust gdb if we have a custom dumper
-            if (record.data.findChild("children").isValid())
-                data.setChildrenUnneeded();
-            else if (qq->watchHandler()->isExpandedIName(data.iname))
-                data.setChildrenNeeded();
-            insertData(data);
-        } else {
-            if (record.data.findChild("children").isValid())
-                data.setChildrenUnneeded();
-            else if (qq->watchHandler()->isExpandedIName(data.iname))
-                data.setChildrenNeeded();
-            setWatchDataChildCount(data, record.data.findChild("numchild"));
-            //if (data.isValueNeeded() && data.childCount > 0)
-            //    data.setValue(QString());
-            insertData(data);
-        }
-    } else if (record.resultClass == GdbResultError) {
-        data.setError(QString::fromLocal8Bit(record.data.findChild("msg").data()));
+        setWatchDataType(data, response.data.findChild("type"));
+        if (manager()->watchHandler()->isExpandedIName(data.iname)
+                && !response.data.findChild("children").isValid())
+            data.setChildrenNeeded();
+        else
+            data.setChildrenUnneeded();
+        setWatchDataChildCount(data, response.data.findChild("numchild"));
+        insertData(data);
+    } else {
+        data.setError(QString::fromLocal8Bit(response.data.findChild("msg").data()));
         if (data.isWatcher()) {
-            data.value = strNotInScope;
+            data.value = WatchData::msgNotInScope();
             data.type = _(" ");
             data.setAllUnneeded();
             data.setHasChildren(false);
-            data.valuedisabled = true;
+            data.valueEnabled = false;
+            data.valueEditable = false;
             insertData(data);
         }
     }
 }
 
-void GdbEngine::handleEvaluateExpression(const GdbResultRecord &record,
-    const QVariant &cookie)
+void GdbEngine::handleEvaluateExpression(const GdbResponse &response)
 {
-    WatchData data = cookie.value<WatchData>();
+    WatchData data = response.cookie.value<WatchData>();
     QTC_ASSERT(data.isValid(), qDebug() << "HUH?");
-    if (record.resultClass == GdbResultDone) {
+    if (response.resultClass == GdbResultDone) {
         //if (col == 0)
-        //    data.name = record.data.findChild("value").data();
+        //    data.name = response.data.findChild("value").data();
         //else
-            setWatchDataValue(data, record.data.findChild("value"));
-    } else if (record.resultClass == GdbResultError) {
-        data.setError(QString::fromLocal8Bit(record.data.findChild("msg").data()));
+            setWatchDataValue(data, response.data.findChild("value"));
+    } else {
+        data.setError(QString::fromLocal8Bit(response.data.findChild("msg").data()));
     }
     //qDebug() << "HANDLE EVALUATE EXPRESSION:" << data.toString();
     insertData(data);
     //updateWatchModel2();
 }
 
-void GdbEngine::handleDebuggingHelperSetup(const GdbResultRecord &record, const QVariant &)
+void GdbEngine::handleDebuggingHelperSetup(const GdbResponse &response)
 {
-    //qDebug() << "CUSTOM SETUP RESULT:" << record.toString();
-    if (record.resultClass == GdbResultDone) {
-    } else if (record.resultClass == GdbResultError) {
-        QString msg = QString::fromLocal8Bit(record.data.findChild("msg").data());
+    //qDebug() << "CUSTOM SETUP RESULT:" << response.toString();
+    if (response.resultClass == GdbResultDone) {
+    } else {
+        QString msg = QString::fromLocal8Bit(response.data.findChild("msg").data());
         //qDebug() << "CUSTOM DUMPER SETUP ERROR MESSAGE:" << msg;
-        q->showStatusMessage(tr("Custom dumper setup: %1").arg(msg), 10000);
+        showStatusMessage(tr("Custom dumper setup: %1").arg(msg), 10000);
     }
 }
 
-void GdbEngine::handleDebuggingHelperValue1(const GdbResultRecord &record,
-    const QVariant &cookie)
+void GdbEngine::handleDebuggingHelperValue2(const GdbResponse &response)
 {
-    WatchData data = cookie.value<WatchData>();
+    WatchData data = response.cookie.value<WatchData>();
     QTC_ASSERT(data.isValid(), return);
-    if (record.resultClass == GdbResultDone) {
-        // ignore this case, data will follow
-    } else if (record.resultClass == GdbResultError) {
-        QString msg = QString::fromLocal8Bit(record.data.findChild("msg").data());
-#ifdef QT_DEBUG
-        // Make debugging of dumpers easier
-        if (theDebuggerBoolSetting(DebugDebuggingHelpers)
-                && msg.startsWith(__("The program being debugged stopped while"))
-                && msg.contains(__("qDumpObjectData440"))) {
-            // Fake full stop
-            postCommand(_("p 0"), CB(handleAsyncOutput2));  // dummy
-            return;
-        }
-#endif
+
+    // The real dumper might have aborted without giving any answers.
+    // Remove traces of the question, too.
+    if (m_cookieForToken.contains(response.token - 1)) {
+        m_cookieForToken.remove(response.token - 1);
+        debugMessage(_("DETECTING LOST COMMAND %1").arg(response.token - 1));
+        --m_pendingRequests;
+        data.setError(WatchData::msgNotInScope());
+        insertData(data);
+        return;
     }
-}
 
-void GdbEngine::handleDebuggingHelperValue2(const GdbResultRecord &record,
-    const QVariant &cookie)
-{
-    WatchData data = cookie.value<WatchData>();
-    QTC_ASSERT(data.isValid(), return);
-
-    //qDebug() << "CUSTOM VALUE RESULT:" << record.toString();
-    //qDebug() << "FOR DATA:" << data.toString() << record.resultClass;
-    if (record.resultClass != GdbResultDone) {
+    //qDebug() << "CUSTOM VALUE RESULT:" << response.toString();
+    //qDebug() << "FOR DATA:" << data.toString() << response.resultClass;
+    if (response.resultClass != GdbResultDone) {
         qDebug() << "STRANGE CUSTOM DUMPER RESULT DATA:" << data.toString();
         return;
     }
 
     GdbMi contents;
-    if (!parseConsoleStream(record, &contents)) {
-        data.setError(strNotInScope);
+    if (!parseConsoleStream(response, &contents)) {
+        data.setError(WatchData::msgNotInScope());
         insertData(data);
         return;
     }
 
-    setWatchDataType(data, record.data.findChild("type"));
-    setWatchDataDisplayedType(data, record.data.findChild("displaytype"));
-    setWatchDataValue(data, contents.findChild("value"),
-        contents.findChild("valueencoded").data().toInt());
-    setWatchDataAddress(data, contents.findChild("addr"));
-    setWatchDataSAddress(data, contents.findChild("saddr"));
-    setWatchDataChildCount(data, contents.findChild("numchild"));
-    setWatchDataValueToolTip(data, contents.findChild("valuetooltip"),
-        contents.findChild("valuetooltipencoded").data().toInt());
-    setWatchDataValueDisabled(data, contents.findChild("valuedisabled"));
-    setWatchDataEditValue(data, contents.findChild("editvalue"));
-    if (qq->watchHandler()->isDisplayedIName(data.iname)) {
-        GdbMi editvalue = contents.findChild("editvalue");
+    setWatchDataType(data, response.data.findChild("type"));
+    setWatchDataDisplayedType(data, response.data.findChild("displaytype"));
+    QList<WatchData> list;
+    handleChildren(data, contents, &list);
+    //for (int i = 0; i != list.size(); ++i)
+    //    qDebug() << "READ: " << list.at(i).toString();
+    manager()->watchHandler()->insertBulkData(list);
+}
+
+void GdbEngine::handleChildren(const WatchData &data0, const GdbMi &item,
+    QList<WatchData> *list)
+{
+    //qDebug() << "HANDLE CHILDREN: " << data0.toString() << item.toString();
+    WatchData data = data0;
+    if (!manager()->watchHandler()->isExpandedIName(data.iname))
+        data.setChildrenUnneeded();
+
+    GdbMi children = item.findChild("children");
+    if (children.isValid() || !manager()->watchHandler()->isExpandedIName(data.iname))
+        data.setChildrenUnneeded();
+
+    if (manager()->watchHandler()->isDisplayedIName(data.iname)) {
+        GdbMi editvalue = item.findChild("editvalue");
         if (editvalue.isValid()) {
             setWatchDataEditValue(data, editvalue);
-            qq->watchHandler()->showEditValue(data);
+            manager()->watchHandler()->showEditValue(data);
         }
     }
-    if (!qq->watchHandler()->isExpandedIName(data.iname))
-        data.setChildrenUnneeded();
-    GdbMi children = contents.findChild("children");
-    if (children.isValid() || !qq->watchHandler()->isExpandedIName(data.iname))
-        data.setChildrenUnneeded();
-    data.setValueUnneeded();
+    setWatchDataType(data, item.findChild("type"));
+    setWatchDataEditValue(data, item.findChild("editvalue"));
+    setWatchDataExpression(data, item.findChild("exp"));
+    setWatchDataChildCount(data, item.findChild("numchild"));
+    setWatchDataValue(data, item.findChild("value"),
+        item.findChild("valueencoded").data().toInt());
+    setWatchDataAddress(data, item.findChild("addr"));
+    setWatchDataSAddress(data, item.findChild("saddr"));
+    setWatchDataValueToolTip(data, item.findChild("valuetooltip"),
+        item.findChild("valuetooltipencoded").data().toInt());
+    setWatchDataValueEnabled(data, item.findChild("valueenabled"));
+    setWatchDataValueEditable(data, item.findChild("valueeditable"));
+    //qDebug() << "\nAPPEND TO LIST: " << data.toString() << "\n";
+    list->append(data);
 
     // try not to repeat data too often
     WatchData childtemplate;
-    setWatchDataType(childtemplate, contents.findChild("childtype"));
-    setWatchDataChildCount(childtemplate, contents.findChild("childnumchild"));
-    //qDebug() << "DATA:" << data.toString();
+    setWatchDataType(childtemplate, item.findChild("childtype"));
+    setWatchDataChildCount(childtemplate, item.findChild("childnumchild"));
+    //qDebug() << "CHILD TEMPLATE:" << childtemplate.toString();
 
-    qq->watchHandler()->insertData(data); 
     int i = 0;
-    QList<WatchData> list;
-    foreach (GdbMi item, children.children()) {
+    foreach (GdbMi child, children.children()) {
         WatchData data1 = childtemplate;
-        GdbMi name = item.findChild("name");
+        GdbMi name = child.findChild("name");
         if (name.isValid())
             data1.name = _(name.data());
         else
             data1.name = QString::number(i);
-        data1.iname = data.iname + _c('.') + data1.name;
+        GdbMi iname = child.findChild("iname");
+        if (iname.isValid())
+            data1.iname = _(iname.data());
+        else
+            data1.iname = data.iname + _c('.') + data1.name;
         if (!data1.name.isEmpty() && data1.name.at(0).isDigit())
             data1.name = _c('[') + data1.name + _c(']');
-        QByteArray key = item.findChild("key").data();
+        QByteArray key = child.findChild("key").data();
         if (!key.isEmpty()) {
-            int encoding = item.findChild("keyencoded").data().toInt();
+            int encoding = child.findChild("keyencoded").data().toInt();
             QString skey = decodeData(key, encoding);
             if (skey.size() > 13) {
                 skey = skey.left(12);
@@ -3453,39 +3515,24 @@ void GdbEngine::handleDebuggingHelperValue2(const GdbResultRecord &record,
             //data1.name += " (" + skey + ")";
             data1.name = skey;
         }
-        setWatchDataType(data1, item.findChild("type"));
-        setWatchDataExpression(data1, item.findChild("exp"));
-        setWatchDataChildCount(data1, item.findChild("numchild"));
-        setWatchDataValue(data1, item.findChild("value"),
-            item.findChild("valueencoded").data().toInt());
-        setWatchDataAddress(data1, item.findChild("addr"));
-        setWatchDataSAddress(data1, item.findChild("saddr"));
-        setWatchDataValueToolTip(data1, item.findChild("valuetooltip"),
-            contents.findChild("valuetooltipencoded").data().toInt());
-        setWatchDataValueDisabled(data1, item.findChild("valuedisabled"));
-        if (!qq->watchHandler()->isExpandedIName(data1.iname))
-            data1.setChildrenUnneeded();
-        //qDebug() << "HANDLE CUSTOM SUBCONTENTS:" << data1.toString();
-        list.append(data1);
+        handleChildren(data1, child, list);
         ++i;
     }
-    qq->watchHandler()->insertBulkData(list); 
 }
 
-void GdbEngine::handleDebuggingHelperValue3(const GdbResultRecord &record,
-    const QVariant &cookie)
+void GdbEngine::handleDebuggingHelperValue3(const GdbResponse &response)
 {
-    if (record.resultClass == GdbResultDone) {
-        WatchData data = cookie.value<WatchData>();
-        QByteArray out = record.data.findChild("consolestreamoutput").data();
+    if (response.resultClass == GdbResultDone) {
+        WatchData data = response.cookie.value<WatchData>();
+        QByteArray out = response.data.findChild("consolestreamoutput").data();
         while (out.endsWith(' ') || out.endsWith('\n'))
             out.chop(1);
         QList<QByteArray> list = out.split(' ');
-        //qDebug() << "RECEIVED" << record.toString() << "FOR" << data0.toString()
+        //qDebug() << "RECEIVED" << response.toString() << "FOR" << data0.toString()
         //    <<  " STREAM:" << out;
         if (list.isEmpty()) {
             //: Value for variable
-            data.setValue(strNotInScope);
+            data.setError(WatchData::msgNotInScope());
             data.setAllUnneeded();
             insertData(data);
         } else if (data.type == __("QString")
@@ -3530,44 +3577,99 @@ void GdbEngine::handleDebuggingHelperValue3(const GdbResultRecord &record,
             }
         } else {
             //: Value for variable
-            data.setValue(strNotInScope);
+            data.setError(WatchData::msgNotInScope());
             data.setAllUnneeded();
             insertData(data);
         }
-    } else if (record.resultClass == GdbResultError) {
-        WatchData data = cookie.value<WatchData>();
-        data.setValue(strNotInScope);
+    } else {
+        WatchData data = response.cookie.value<WatchData>();
+        data.setError(WatchData::msgNotInScope());
         data.setAllUnneeded();
         insertData(data);
     }
 }
 
-void GdbEngine::updateLocals()
+void GdbEngine::updateLocals(const QVariant &cookie)
 {
-    // Asynchronous load of injected library, initialize in first stop
-    if (m_dumperInjectionLoad && m_debuggingHelperState == DebuggingHelperLoadTried
-        && m_dumperHelper.typeCount() == 0
-        && q->inferiorPid() > 0)
-        tryQueryDebuggingHelpers();
-
     m_pendingRequests = 0;
-    m_processedNames.clear();
+    if (isSynchroneous()) {
+        m_processedNames.clear();
+        manager()->watchHandler()->beginCycle();
+        m_toolTipExpression.clear();
+        QStringList expanded = m_manager->watchHandler()->expandedINames().toList();
+        postCommand(_("-interpreter-exec console \"bb %1 %2\"")
+                .arg(int(theDebuggerBoolSetting(UseDebuggingHelpers)))
+                .arg(expanded.join(_(","))),
+            CB(handleStackFrame));
+    } else {
+        m_processedNames.clear();
 
-    PENDING_DEBUG("\nRESET PENDING");
-    //m_toolTipCache.clear();
-    m_toolTipExpression.clear();
-    qq->watchHandler()->beginCycle();
+        PENDING_DEBUG("\nRESET PENDING");
+        //m_toolTipCache.clear();
+        m_toolTipExpression.clear();
+        manager()->watchHandler()->beginCycle();
 
-    QString level = QString::number(currentFrame());
-    // '2' is 'list with type and value'
-    QString cmd = _("-stack-list-arguments 2 ") + level + _c(' ') + level;
-    postCommand(cmd, WatchUpdate, CB(handleStackListArguments));
-    // '2' is 'list with type and value'
-    postCommand(_("-stack-list-locals 2"), WatchUpdate,
-        CB(handleStackListLocals)); // stage 2/2
+        // Asynchronous load of injected library, initialize in first stop
+        if (m_dumperInjectionLoad && m_debuggingHelperState == DebuggingHelperLoadTried
+                && m_dumperHelper.typeCount() == 0
+                && inferiorPid() > 0)
+            tryQueryDebuggingHelpers();
+
+        QString level = QString::number(currentFrame());
+        // '2' is 'list with type and value'
+        QString cmd = _("-stack-list-arguments 2 ") + level + _c(' ') + level;
+        postCommand(cmd, WatchUpdate, CB(handleStackListArguments));
+        // '2' is 'list with type and value'
+        postCommand(_("-stack-list-locals 2"), WatchUpdate,
+            CB(handleStackListLocals), cookie); // stage 2/2
+    }
 }
 
-void GdbEngine::handleStackListArguments(const GdbResultRecord &record, const QVariant &)
+void GdbEngine::handleStackFrame(const GdbResponse &response)
+{
+    if (response.resultClass == GdbResultDone) {
+        QByteArray out = response.data.findChild("consolestreamoutput").data();
+        while (out.endsWith(' ') || out.endsWith('\n'))
+            out.chop(1);
+        //qDebug() << "SECOND CHUNK: " << out;
+        int pos = out.indexOf("locals=");
+        if (pos != 0) {
+            qDebug() << "DISCARDING JUNK AT BEGIN OF RESPONSE: "
+                << out.left(pos);
+            out = out.mid(pos);
+        }
+        GdbMi all("[" + out + "]");
+        //GdbMi all(out);
+        
+        //qDebug() << "\n\n\nALL: " << all.toString() << "\n";
+        GdbMi locals = all.findChild("locals");
+        //qDebug() << "\n\n\nLOCALS: " << locals.toString() << "\n";
+        WatchData *data = manager()->watchHandler()->findItem(_("local"));
+        QTC_ASSERT(data, return);
+
+        QList<WatchData> list;
+        //foreach (const GdbMi &local, locals.children)
+        //   handleChildren(*data, local, &list);
+        handleChildren(*data, locals, &list);
+        //for (int i = 0; i != list.size(); ++i)
+        //    qDebug() << "READ: " << list.at(i).toString();
+        manager()->watchHandler()->insertBulkData(list);
+
+        // FIXME:
+        //manager()->watchHandler()->updateWatchers();
+        PENDING_DEBUG("AFTER handleStackFrame()");
+        // FIXME: This should only be used when updateLocals() was
+        // triggered by expanding an item in the view.
+        if (m_pendingRequests <= 0) {
+            PENDING_DEBUG("\n\n ....  AND TRIGGERS MODEL UPDATE\n");
+            rebuildModel();
+        }
+    } else {
+        QTC_ASSERT(false, /**/);
+    }
+}
+
+void GdbEngine::handleStackListArguments(const GdbResponse &response)
 {
     // stage 1/2
 
@@ -3591,105 +3693,142 @@ void GdbEngine::handleStackListArguments(const GdbResultRecord &record, const QV
     // In both cases, iterating over the children of stack-args/frame/args
     // is ok.
     m_currentFunctionArgs.clear();
-    if (record.resultClass == GdbResultDone) {
-        const GdbMi list = record.data.findChild("stack-args");
+    if (response.resultClass == GdbResultDone) {
+        const GdbMi list = response.data.findChild("stack-args");
         const GdbMi frame = list.findChild("frame");
         const GdbMi args = frame.findChild("args");
         m_currentFunctionArgs = args.children();
-    } else if (record.resultClass == GdbResultError) {
-        qDebug() << "FIXME: GdbEngine::handleStackListArguments: should not happen";
+    } else {
+        qDebug() << "FIXME: GdbEngine::handleStackListArguments: should not happen"
+            << response.toString();
     }
 }
 
-void GdbEngine::handleStackListLocals(const GdbResultRecord &record, const QVariant &)
+void GdbEngine::handleStackListLocals(const GdbResponse &response)
 {
     // stage 2/2
 
     // There could be shadowed variables
-    QList<GdbMi> locals = record.data.findChild("locals").children();
+    QList<GdbMi> locals = response.data.findChild("locals").children();
     locals += m_currentFunctionArgs;
-
-    setLocals(locals);
-    qq->watchHandler()->updateWatchers();
+    QMap<QByteArray, int> seen;
+    // If desired, retrieve list of uninitialized variables looking at
+    // the current frame. This is invoked first time after a stop from
+    // handleStop1, which passes on the frame as cookie. The whole stack
+    // is not known at this point.
+    QStringList uninitializedVariables;
+    if (theDebuggerAction(UseCodeModel)->isChecked()) {
+        const StackFrame frame = qVariantCanConvert<Debugger::Internal::StackFrame>(response.cookie) ?
+                                 qVariantValue<Debugger::Internal::StackFrame>(response.cookie) :
+                                 m_manager->stackHandler()->currentFrame();
+        if (frame.isUsable())
+            getUninitializedVariables(m_manager->cppCodeModelSnapshot(),
+                                      frame.function, frame.file, frame.line,
+                                      &uninitializedVariables);
+    }
+    QList<WatchData> list;
+    foreach (const GdbMi &item, locals) {
+        const WatchData data = localVariable(item, uninitializedVariables, &seen);
+        if (data.isValid())
+            list.push_back(data);
+    }
+    manager()->watchHandler()->insertBulkData(list);
+    manager()->watchHandler()->updateWatchers();
 }
 
-void GdbEngine::setLocals(const QList<GdbMi> &locals)
+// Parse a local variable from GdbMi
+WatchData GdbEngine::localVariable(const GdbMi &item,
+                                   const QStringList &uninitializedVariables,
+                                   QMap<QByteArray, int> *seen)
 {
-    //qDebug() << m_varToType;
-    QMap<QByteArray, int> seen;
-
-    foreach (const GdbMi &item, locals) {
-        // Local variables of inlined code are reported as
-        // 26^done,locals={varobj={exp="this",value="",name="var4",exp="this",
-        // numchild="1",type="const QtSharedPointer::Basic<CPlusPlus::..."
-        // We do not want these at all. Current hypotheses is that those
-        // "spurious" locals have _two_ "exp" field. Try to filter them:
-        #ifdef Q_OS_MAC
+    // Local variables of inlined code are reported as
+    // 26^done,locals={varobj={exp="this",value="",name="var4",exp="this",
+    // numchild="1",type="const QtSharedPointer::Basic<CPlusPlus::..."}}
+    // We do not want these at all. Current hypotheses is that those
+    // "spurious" locals have _two_ "exp" field. Try to filter them:
+    QByteArray name;
+    if (m_isMacGdb) {
         int numExps = 0;
         foreach (const GdbMi &child, item.children())
             numExps += int(child.name() == "exp");
         if (numExps > 1)
-            continue;
-        QByteArray name = item.findChild("exp").data();
-        #else
-        QByteArray name = item.findChild("name").data();
-        #endif
-        int n = seen.value(name);
-        if (n) {
-            seen[name] = n + 1;
-            WatchData data;
-            QString nam = _(name);
-            data.iname = _("local.") + nam + QString::number(n + 1);
-            //: Variable %1 is the variable name, %2 is a simple count
-            data.name = tr("%1 <shadowed %2>").arg(nam).arg(n);
+            return WatchData();
+        name = item.findChild("exp").data();
+    } else {
+        name = item.findChild("name").data();
+    }
+    const QMap<QByteArray, int>::iterator it  = seen->find(name);
+    if (it != seen->end()) {
+        const int n = it.value();
+        ++(it.value());
+        WatchData data;
+        QString nam = _(name);
+        data.iname = _("local.") + nam + QString::number(n + 1);
+        //: Variable %1 is the variable name, %2 is a simple count
+        data.name = WatchData::shadowedName(nam, n);
+        if (uninitializedVariables.contains(data.name)) {
+            data.setError(WatchData::msgNotInScope());
+            return data;
+        }
+        //: Type of local variable or parameter shadowed by another        
+        //: variable of the same name in a nested block.
+        setWatchDataValue(data, item.findChild("value"));
+        data.setType(GdbEngine::tr("<shadowed>"));        
+        data.setHasChildren(false);
+        return data;
+    }
+    seen->insert(name, 1);
+    WatchData data;
+    QString nam = _(name);
+    data.iname = _("local.") + nam;
+    data.name = nam;
+    data.exp = nam;
+    data.framekey = m_currentFrame + data.name;
+    setWatchDataType(data, item.findChild("type"));
+    if (uninitializedVariables.contains(data.name)) {
+        data.setError(WatchData::msgNotInScope());
+        return data;
+    }
+    if (isSynchroneous()) {
+        setWatchDataValue(data, item.findChild("value"),
+                          item.findChild("valueencoded").data().toInt());
+        // We know that the complete list of children is
+        // somewhere in the response.
+        data.setChildrenUnneeded();
+    } else {
+        // set value only directly if it is simple enough, otherwise
+        // pass through the insertData() machinery
+        if (isIntOrFloatType(data.type) || isPointerType(data.type))
             setWatchDataValue(data, item.findChild("value"));
-            //: Type of local variable or parameter shadowed by another 
-            //variable of the same name in a nested block
-            data.setType(tr("<shadowed>"));
+        if (isSymbianIntType(data.type)) {
+            setWatchDataValue(data, item.findChild("value"));
             data.setHasChildren(false);
-            insertData(data);
-        } else {
-            seen[name] = 1;
-            WatchData data;
-            QString nam = _(name);
-            data.iname = _("local.") + nam;
-            data.name = nam;
-            data.exp = nam;
-            data.framekey = m_currentFrame + data.name;
-            setWatchDataType(data, item.findChild("type"));
-            // set value only directly if it is simple enough, otherwise
-            // pass through the insertData() machinery
-            if (isIntOrFloatType(data.type) || isPointerType(data.type))
-                setWatchDataValue(data, item.findChild("value"));
-            if (!qq->watchHandler()->isExpandedIName(data.iname))
-                data.setChildrenUnneeded();
-            if (isPointerType(data.type) || data.name == __("this"))
-                data.setHasChildren(true);
-            if (0 && m_varToType.contains(data.framekey)) {
-                qDebug() << "RE-USING" << m_varToType.value(data.framekey);
-                data.setType(m_varToType.value(data.framekey));
-            }
-            insertData(data);
         }
     }
+
+    if (!m_manager->watchHandler()->isExpandedIName(data.iname))
+        data.setChildrenUnneeded();
+    if (isPointerType(data.type) || data.name == __("this"))
+        data.setHasChildren(true);
+    return data;
 }
 
 void GdbEngine::insertData(const WatchData &data0)
 {
-    //qDebug() << "INSERT DATA" << data0.toString();
+    PENDING_DEBUG("INSERT DATA" << data0.toString());
     WatchData data = data0;
     if (data.value.startsWith(__("mi_cmd_var_create:"))) {
         qDebug() << "BOGUS VALUE:" << data.toString();
         return;
     }
-    qq->watchHandler()->insertData(data);
+    manager()->watchHandler()->insertData(data);
 }
 
 void GdbEngine::handleVarListChildrenHelper(const GdbMi &item,
     const WatchData &parent)
 {
-    //qDebug() <<  "VAR_LIST_CHILDREN: PARENT 2" << parent.toString();
-    //qDebug() <<  "VAR_LIST_CHILDREN: APPENDEE" << data.toString();
+    //qDebug() <<  "VAR_LIST_CHILDREN: PARENT" << parent.toString();
+    //qDebug() <<  "VAR_LIST_CHILDREN: ITEM" << item.toString();
     QByteArray exp = item.findChild("exp").data();
     QByteArray name = item.findChild("name").data();
     if (isAccessSpecifier(_(exp))) {
@@ -3706,7 +3845,8 @@ void GdbEngine::handleVarListChildrenHelper(const GdbMi &item,
         //qDebug() << "DATA" << data.toString();
         QString cmd = _("-var-list-children --all-values \"") + data.variable + _c('"');
         //iname += '.' + exp;
-        postCommand(cmd, WatchUpdate, CB(handleVarListChildren), QVariant::fromValue(data));
+        postCommand(cmd, WatchUpdate,
+            CB(handleVarListChildren), QVariant::fromValue(data));
     } else if (item.findChild("numchild").data() == "0") {
         // happens for structs without data, e.g. interfaces.
         WatchData data;
@@ -3724,7 +3864,8 @@ void GdbEngine::handleVarListChildrenHelper(const GdbMi &item,
         WatchData data;
         data.iname = _(name);
         QString cmd = _("-var-list-children --all-values \"") + data.variable + _c('"');
-        postCommand(cmd, WatchUpdate, CB(handleVarListChildren), QVariant::fromValue(data));
+        postCommand(cmd, WatchUpdate,
+            CB(handleVarListChildren), QVariant::fromValue(data));
     } else if (exp == "staticMetaObject") {
         //    && item.findChild("type").data() == "const QMetaObject")
         // FIXME: Namespaces?
@@ -3740,7 +3881,7 @@ void GdbEngine::handleVarListChildrenHelper(const GdbMi &item,
         setWatchDataAddress(data, item.findChild("addr"));
         setWatchDataSAddress(data, item.findChild("saddr"));
         setWatchDataChildCount(data, item.findChild("numchild"));
-        if (!qq->watchHandler()->isExpandedIName(data.iname))
+        if (!manager()->watchHandler()->isExpandedIName(data.iname))
             data.setChildrenUnneeded();
 
         data.name = _(exp);
@@ -3786,16 +3927,15 @@ void GdbEngine::handleVarListChildrenHelper(const GdbMi &item,
     }
 }
 
-void GdbEngine::handleVarListChildren(const GdbResultRecord &record,
-    const QVariant &cookie)
+void GdbEngine::handleVarListChildren(const GdbResponse &response)
 {
     //WatchResultCounter dummy(this, WatchVarListChildren);
-    WatchData data = cookie.value<WatchData>();
+    WatchData data = response.cookie.value<WatchData>();
     if (!data.isValid())
         return;
-    if (record.resultClass == GdbResultDone) {
+    if (response.resultClass == GdbResultDone) {
         //qDebug() <<  "VAR_LIST_CHILDREN: PARENT" << data.toString();
-        GdbMi children = record.data.findChild("children");
+        GdbMi children = response.data.findChild("children");
 
         foreach (const GdbMi &child, children.children())
             handleVarListChildrenHelper(child, data);
@@ -3819,10 +3959,8 @@ void GdbEngine::handleVarListChildren(const GdbResultRecord &record,
             // this skips the spurious "public", "private" etc levels
             // gdb produces
         }
-    } else if (record.resultClass == GdbResultError) {
-        data.setError(QString::fromLocal8Bit(record.data.findChild("msg").data()));
     } else {
-        data.setError(tr("Unknown error: ") + QString::fromLocal8Bit(record.toString()));
+        data.setError(QString::fromLocal8Bit(response.data.findChild("msg").data()));
     }
 }
 
@@ -3845,56 +3983,83 @@ void GdbEngine::assignValueInDebugger(const QString &expression, const QString &
     postCommand(_("-var-assign assign ") + value, Discardable, CB(handleVarAssign));
 }
 
+QString GdbEngine::qtDumperLibraryName() const
+{
+    return m_manager->qtDumperLibraryName();
+}
+
+bool GdbEngine::checkDebuggingHelpers()
+{
+    if (!manager()->qtDumperLibraryEnabled())
+        return false;
+    const QString lib = qtDumperLibraryName();
+    //qDebug() << "DUMPERLIB:" << lib;
+    const QFileInfo fi(lib);
+    if (!fi.exists()) {
+        const QStringList &locations = manager()->qtDumperLibraryLocations();
+        const QString loc = locations.join(QLatin1String(", "));
+        const QString msg = tr("The debugging helper library was not found at %1.").arg(loc);
+        debugMessage(msg);
+        manager()->showQtDumperLibraryWarning(msg);
+        return false;
+    }
+    return true;
+}
+
+void GdbEngine::setDebuggingHelperState(DebuggingHelperState s)
+{
+    m_debuggingHelperState = s;
+}
+
 void GdbEngine::tryLoadDebuggingHelpers()
 {
-    if (m_debuggingHelperState != DebuggingHelperUninitialized)
+    if (isSynchroneous())
         return;
-    if (!startModeAllowsDumpers()) {
-        // load gdb macro based dumpers at least 
+    switch (m_debuggingHelperState) {
+    case DebuggingHelperUninitialized:
+        break;
+    case DebuggingHelperLoadTried:
+        tryQueryDebuggingHelpers();
+        return;
+    case DebuggingHelperAvailable:
+    case DebuggingHelperUnavailable:
+        return;
+    }
+
+    if (m_gdbAdapter->dumperHandling() == AbstractGdbAdapter::DumperNotAvailable) {
+        // Load at least gdb macro based dumpers.
         QFile file(_(":/gdb/gdbmacros.txt"));
         file.open(QIODevice::ReadOnly);
         QByteArray contents = file.readAll(); 
-        //qDebug() << "CONTENTS: " << contents;
+        m_debuggingHelperState = DebuggingHelperLoadTried;
         postCommand(_(contents));
         return;
     }
-    if (m_dumperInjectionLoad && q->inferiorPid() <= 0) // Need PID to inject
+    if (m_dumperInjectionLoad && inferiorPid() <= 0) // Need PID to inject
         return;
 
     PENDING_DEBUG("TRY LOAD CUSTOM DUMPERS");
     m_debuggingHelperState = DebuggingHelperUnavailable;
-    if (!qq->qtDumperLibraryEnabled())
+    if (!checkDebuggingHelpers())
         return;
-    const QString lib = qq->qtDumperLibraryName();
-    const QStringList &locations = qq->qtDumperLibraryLocations();
-    //qDebug() << "DUMPERLIB:" << lib;
-    // @TODO: same in CDB engine...
-    const QFileInfo fi(lib);
-    if (!fi.exists()) {
-        const QString loc = locations.join(QLatin1String(", "));
-        const QString msg = tr("The dumper library was not found at %1.").arg(loc);
-        debugMessage(msg);
-        qq->showQtDumperLibraryWarning(msg);
-        return;
-    }
 
     m_debuggingHelperState = DebuggingHelperLoadTried;
+    const QString lib = manager()->qtDumperLibraryName();
 #if defined(Q_OS_WIN)
     if (m_dumperInjectionLoad) {
         /// Launch asynchronous remote thread to load.
-        SharedLibraryInjector injector(q->inferiorPid());
+        SharedLibraryInjector injector(inferiorPid());
         QString errorMessage;
         if (injector.remoteInject(lib, false, &errorMessage)) {
-            debugMessage(tr("Dumper injection loading triggered (%1)...").arg(lib));
+            debugMessage(_("Dumper injection loading triggered (%1)...").arg(lib));
         } else {
-            debugMessage(tr("Dumper loading (%1) failed: %2").arg(lib, errorMessage));
-            debugMessage(errorMessage);
-            qq->showQtDumperLibraryWarning(errorMessage);
+            debugMessage(_("Dumper loading (%1) failed: %2").arg(lib, errorMessage));
+            manager()->showQtDumperLibraryWarning(errorMessage);
             m_debuggingHelperState = DebuggingHelperUnavailable;
             return;
         }
     } else {
-        debugMessage(tr("Loading dumpers via debugger call (%1)...").arg(lib));
+        debugMessage(_("Loading dumpers via debugger call (%1)...").arg(lib));
         postCommand(_("sharedlibrary .*")); // for LoadLibraryA
         //postCommand(_("handle SIGSEGV pass stop print"));
         //postCommand(_("set unwindonsignal off"));
@@ -3908,10 +4073,8 @@ void GdbEngine::tryLoadDebuggingHelpers()
     postCommand(_("call (void)dlopen(\"") + GdbMi::escapeCString(lib) + _("\", " STRINGIFY(RTLD_NOW) ")"),
         CB(handleDebuggingHelperSetup));
     //postCommand(_("sharedlibrary ") + dotEscape(lib));
-    m_debuggingHelperState = DebuggingHelperLoadTried;
 #else
     //postCommand(_("p dlopen"));
-    QString flag = QString::number(RTLD_NOW);
     postCommand(_("sharedlibrary libc")); // for malloc
     postCommand(_("sharedlibrary libdl")); // for dlopen
     postCommand(_("call (void*)dlopen(\"") + GdbMi::escapeCString(lib) + _("\", " STRINGIFY(RTLD_NOW) ")"),
@@ -3934,18 +4097,11 @@ void GdbEngine::tryQueryDebuggingHelpers()
 
 void GdbEngine::recheckDebuggingHelperAvailability()
 {
-    if (startModeAllowsDumpers()) {
+    if (m_gdbAdapter->dumperHandling() != AbstractGdbAdapter::DumperNotAvailable) {
         // retreive list of dumpable classes
         postCommand(_("call (void*)qDumpObjectData440(1,%1+1,0,0,0,0,0,0)"), EmbedToken);
         postCommand(_("p (char*)&qDumpOutBuffer"), CB(handleQueryDebuggingHelper));
     }
-}
-
-bool GdbEngine::startModeAllowsDumpers() const
-{
-    return q->startMode() == StartInternal
-        || q->startMode() == StartExternal
-        || q->startMode() == AttachExternal;
 }
 
 void GdbEngine::watchPoint(const QPoint &pnt)
@@ -3955,13 +4111,13 @@ void GdbEngine::watchPoint(const QPoint &pnt)
         NeedsStop, CB(handleWatchPoint));
 }
 
-void GdbEngine::handleWatchPoint(const GdbResultRecord &record, const QVariant &)
+void GdbEngine::handleWatchPoint(const GdbResponse &response)
 {
-    //qDebug() << "HANDLE WATCH POINT:" << record.toString();
-    if (record.resultClass == GdbResultDone) {
-        GdbMi contents = record.data.findChild("consolestreamoutput");
+    //qDebug() << "HANDLE WATCH POINT:" << response.toString();
+    if (response.resultClass == GdbResultDone) {
+        GdbMi contents = response.data.findChild("consolestreamoutput");
         // "$5 = (void *) 0xbfa7ebfc\n"
-        QString str = _(parsePlainConsoleStream(record));
+        QString str = _(parsePlainConsoleStream(response));
         // "(void *) 0xbfa7ebfc"
         QString addr = str.mid(9);
         QString ns = m_dumperHelper.qtNamespace();
@@ -3978,7 +4134,7 @@ struct MemoryAgentCookie
     MemoryAgentCookie(MemoryViewAgent *agent_, quint64 address_)
         : agent(agent_), address(address_)
     {}
-    MemoryViewAgent *agent;
+    QPointer<MemoryViewAgent> agent;
     quint64 address;
 };
 
@@ -3990,17 +4146,16 @@ void GdbEngine::fetchMemory(MemoryViewAgent *agent, quint64 addr, quint64 length
         QVariant::fromValue(MemoryAgentCookie(agent, addr)));
 }
 
-void GdbEngine::handleFetchMemory(const GdbResultRecord &record,
-    const QVariant &cookie)
+void GdbEngine::handleFetchMemory(const GdbResponse &response)
 {
     // ^done,addr="0x08910c88",nr-bytes="16",total-bytes="16",
     // next-row="0x08910c98",prev-row="0x08910c78",next-page="0x08910c98",
     // prev-page="0x08910c78",memory=[{addr="0x08910c88",
     // data=["1","0","0","0","5","0","0","0","0","0","0","0","0","0","0","0"]}]
-    MemoryAgentCookie ac = cookie.value<MemoryAgentCookie>();
+    MemoryAgentCookie ac = response.cookie.value<MemoryAgentCookie>();
     QTC_ASSERT(ac.agent, return);
     QByteArray ba;
-    GdbMi memory = record.data.findChild("memory");
+    GdbMi memory = response.data.findChild("memory");
     QTC_ASSERT(memory.children().size() <= 1, return);
     if (memory.children().isEmpty())
         return;
@@ -4008,7 +4163,8 @@ void GdbEngine::handleFetchMemory(const GdbResultRecord &record,
     GdbMi data = memory0.findChild("data");
     foreach (const GdbMi &child, data.children()) {
         bool ok = true;
-        unsigned char c = child.data().toUInt(&ok, 0);
+        unsigned char c = '?';
+        c = child.data().toUInt(&ok, 0);
         QTC_ASSERT(ok, return);
         ba.append(c);
     }
@@ -4022,7 +4178,7 @@ struct DisassemblerAgentCookie
     DisassemblerAgentCookie(DisassemblerViewAgent *agent_)
         : agent(agent_)
     {}
-    DisassemblerViewAgent *agent;
+    QPointer<DisassemblerViewAgent> agent;
 };
 
 void GdbEngine::fetchDisassembler(DisassemblerViewAgent *agent,
@@ -4045,16 +4201,17 @@ void GdbEngine::fetchDisassemblerByAddress(DisassemblerViewAgent *agent,
     QTC_ASSERT(agent, return);
     bool ok = true;
     quint64 address = agent->address().toULongLong(&ok, 0);
-    quint64 start = address - 20;
-    quint64 end = address + 100;
+    QTC_ASSERT(ok, qDebug() << "ADDRESS: " << agent->address() << address; return);
+    QString start = QString::number(address - 20, 16);
+    QString end = QString::number(address + 100, 16);
     // -data-disassemble [ -s start-addr -e end-addr ]
     //  | [ -f filename -l linenum [ -n lines ] ] -- mode
     if (useMixedMode) 
-        postCommand(_("-data-disassemble -s %1 -e %2 -- 1").arg(start).arg(end),
+        postCommand(_("-data-disassemble -s 0x%1 -e 0x%2 -- 1").arg(start).arg(end),
             Discardable, CB(handleFetchDisassemblerByAddress1),
             QVariant::fromValue(DisassemblerAgentCookie(agent)));
     else
-        postCommand(_("-data-disassemble -s %1 -e %2 -- 0").arg(start).arg(end),
+        postCommand(_("-data-disassemble -s 0x%1 -e 0x%2 -- 0").arg(start).arg(end),
             Discardable, CB(handleFetchDisassemblerByAddress0),
             QVariant::fromValue(DisassemblerAgentCookie(agent)));
 }
@@ -4097,14 +4254,15 @@ QString GdbEngine::parseDisassembler(const GdbMi &lines)
     foreach (const GdbMi &child, lines.children()) {
         if (child.hasName("src_and_asm_line")) {
             // mixed mode
-            int line = child.findChild("line").data().toInt();
-            QString fileName = QFile::decodeName(child.findChild("file").data());
             if (!fileLoaded) {
-                QFile file(fullName(fileName));
+                QString fileName = QFile::decodeName(child.findChild("file").data());
+                fileName = cleanupFullName(fileName);
+                QFile file(fileName);
                 file.open(QIODevice::ReadOnly);
                 fileContents = file.readAll().split('\n');
                 fileLoaded = true;
             }
+            int line = child.findChild("line").data().toInt();
             if (line >= 0 && line < fileContents.size())
                 ba += "    " + fileContents.at(line) + '\n';
             GdbMi insn = child.findChild("line_asm_insn");
@@ -4118,57 +4276,360 @@ QString GdbEngine::parseDisassembler(const GdbMi &lines)
     return _(ba);
 }
 
-void GdbEngine::handleFetchDisassemblerByLine(const GdbResultRecord &record,
-    const QVariant &cookie)
+void GdbEngine::handleFetchDisassemblerByLine(const GdbResponse &response)
 {
-    DisassemblerAgentCookie ac = cookie.value<DisassemblerAgentCookie>();
+    DisassemblerAgentCookie ac = response.cookie.value<DisassemblerAgentCookie>();
     QTC_ASSERT(ac.agent, return);
 
-    if (record.resultClass == GdbResultDone) {
-        GdbMi lines = record.data.findChild("asm_insns");
+    if (response.resultClass == GdbResultDone) {
+        GdbMi lines = response.data.findChild("asm_insns");
         if (lines.children().isEmpty())
+            fetchDisassemblerByAddress(ac.agent, true);
+        else if (lines.children().size() == 1
+                    && lines.childAt(0).findChild("line").data() == "0")
             fetchDisassemblerByAddress(ac.agent, true);
         else
             ac.agent->setContents(parseDisassembler(lines));
-    } else if (record.resultClass == GdbResultError) {
-        //536^error,msg="mi_cmd_disassemble: Invalid line number"
-        QByteArray msg = record.data.findChild("msg").data();
+    } else {
+        // 536^error,msg="mi_cmd_disassemble: Invalid line number"
+        QByteArray msg = response.data.findChild("msg").data();
         if (msg == "mi_cmd_disassemble: Invalid line number")
             fetchDisassemblerByAddress(ac.agent, true);
+        else
+            showStatusMessage(tr("Disassembler failed: %1").arg(QString::fromLocal8Bit(msg)), 5000);
     }
 }
 
-void GdbEngine::handleFetchDisassemblerByAddress1(const GdbResultRecord &record,
-    const QVariant &cookie)
+void GdbEngine::handleFetchDisassemblerByAddress1(const GdbResponse &response)
 {
-    DisassemblerAgentCookie ac = cookie.value<DisassemblerAgentCookie>();
+    DisassemblerAgentCookie ac = response.cookie.value<DisassemblerAgentCookie>();
     QTC_ASSERT(ac.agent, return);
 
-    if (record.resultClass == GdbResultDone) {
-        GdbMi lines = record.data.findChild("asm_insns");
+    if (response.resultClass == GdbResultDone) {
+        GdbMi lines = response.data.findChild("asm_insns");
         if (lines.children().isEmpty())
             fetchDisassemblerByAddress(ac.agent, false);
-        else
-            ac.agent->setContents(parseDisassembler(lines));
+        else {
+            QString contents = parseDisassembler(lines);
+            if (ac.agent->contentsCoversAddress(contents)) {
+                ac.agent->setContents(parseDisassembler(lines));
+            } else {
+                debugMessage(_("FALL BACK TO NON-MIXED"));
+                fetchDisassemblerByAddress(ac.agent, false);
+            }
+        }
+    } else {
+        // 26^error,msg="Cannot access memory at address 0x801ca308"
+        QByteArray msg = response.data.findChild("msg").data();
+        showStatusMessage(tr("Disassembler failed: %1").arg(QString::fromLocal8Bit(msg)), 5000);
     }
 }
 
-void GdbEngine::handleFetchDisassemblerByAddress0(const GdbResultRecord &record,
-    const QVariant &cookie)
+void GdbEngine::handleFetchDisassemblerByAddress0(const GdbResponse &response)
 {
-    DisassemblerAgentCookie ac = cookie.value<DisassemblerAgentCookie>();
+    DisassemblerAgentCookie ac = response.cookie.value<DisassemblerAgentCookie>();
     QTC_ASSERT(ac.agent, return);
 
-    if (record.resultClass == GdbResultDone) {
-        GdbMi lines = record.data.findChild("asm_insns");
+    if (response.resultClass == GdbResultDone) {
+        GdbMi lines = response.data.findChild("asm_insns");
         ac.agent->setContents(parseDisassembler(lines));
+    } else {
+        QByteArray msg = response.data.findChild("msg").data();
+        showStatusMessage(tr("Disassembler failed: %1").arg(QString::fromLocal8Bit(msg)), 5000);
     }
 }
 
-IDebuggerEngine *createGdbEngine(DebuggerManager *parent, QList<Core::IOptionsPage*> *opts)
+void GdbEngine::gotoLocation(const StackFrame &frame, bool setMarker)
+{
+    // qDebug() << "GOTO " << frame << setMarker;
+    m_manager->gotoLocation(frame, setMarker);
+}
+
+//
+// Starting up & shutting down
+//
+
+bool GdbEngine::startGdb(const QStringList &args, const QString &gdb, const QString &settingsIdHint)
+{
+    debugMessage(_("STARTING GDB ") + gdb);
+
+    m_gdbProc.disconnect(); // From any previous runs
+
+    QString location = gdb;
+    const QByteArray env = qgetenv("QTC_DEBUGGER_PATH");
+    if (!env.isEmpty())
+        location = QString::fromLatin1(env);
+    if (location.isEmpty())
+        location = theDebuggerStringSetting(GdbLocation);
+    QStringList gdbArgs;
+    gdbArgs << _("-i");
+    gdbArgs << _("mi");
+    gdbArgs += args;
+    m_gdbProc.start(location, gdbArgs);
+
+    if (!m_gdbProc.waitForStarted()) {
+        const QString msg = tr("Unable to start gdb '%1': %2").arg(location, m_gdbProc.errorString());
+        handleAdapterStartFailed(msg, settingsIdHint);
+        return false;
+    }
+
+    // Do this only after the process is running, so we get no needless error notifications
+    connect(&m_gdbProc, SIGNAL(error(QProcess::ProcessError)),
+        SLOT(handleGdbError(QProcess::ProcessError)));
+    connect(&m_gdbProc, SIGNAL(finished(int, QProcess::ExitStatus)),
+        SLOT(handleGdbFinished(int, QProcess::ExitStatus)));
+    connect(&m_gdbProc, SIGNAL(readyReadStandardOutput()),
+        SLOT(readGdbStandardOutput()));
+    connect(&m_gdbProc, SIGNAL(readyReadStandardError()),
+        SLOT(readGdbStandardError()));
+
+    debugMessage(_("GDB STARTED, INITIALIZING IT"));
+    int timeOut = theDebuggerAction(GdbWatchdogTimeout)->value().toInt();
+    m_commandTimer->setInterval(1000 * qMax(20, timeOut));
+
+    postCommand(_("show version"), CB(handleShowVersion));
+    postCommand(_("-interpreter-exec console \"help bb\""),
+        CB(handleIsSynchroneous));
+    //postCommand(_("-enable-timings");
+    postCommand(_("set print static-members off")); // Seemingly doesn't work.
+    //postCommand(_("set debug infrun 1"));
+    //postCommand(_("define hook-stop\n-thread-list-ids\n-stack-list-frames\nend"));
+    //postCommand(_("define hook-stop\nprint 4\nend"));
+    //postCommand(_("define hookpost-stop\nprint 5\nend"));
+    //postCommand(_("define hook-call\nprint 6\nend"));
+    //postCommand(_("define hookpost-call\nprint 7\nend"));
+    //postCommand(_("set print object on")); // works with CLI, but not MI
+    //postCommand(_("set step-mode on"));  // we can't work with that yes
+    //postCommand(_("set exec-done-display on"));
+    //postCommand(_("set print pretty on"));
+    //postCommand(_("set confirm off"));
+    //postCommand(_("set pagination off"));
+
+    // The following does not work with 6.3.50-20050815 (Apple version gdb-1344)
+    // (Mac OS 10.6), but does so for gdb-966 (10.5):
+    //postCommand(_("set print inferior-events 1"));
+
+    postCommand(_("set breakpoint pending on"));
+    postCommand(_("set print elements 10000"));
+
+    //postCommand(_("set substitute-path /var/tmp/qt-x11-src-4.5.0 "
+    //    "/home/sandbox/qtsdk-2009.01/qt"));
+
+    // one of the following is needed to prevent crashes in gdb on code like:
+    //  template <class T> T foo() { return T(0); }
+    //  int main() { return foo<int>(); }
+    //  (gdb) call 'int foo<int>'()
+    //  /build/buildd/gdb-6.8/gdb/valops.c:2069: internal-error:
+    postCommand(_("set overload-resolution off"));
+    //postCommand(_("set demangle-style none"));
+    // From the docs:
+    //  Stop means reenter debugger if this signal happens (implies print).
+    //  Print means print a message if this signal happens.
+    //  Pass means let program see this signal;
+    //  otherwise program doesn't know.
+    //  Pass and Stop may be combined.
+    // We need "print" as otherwise we would get no feedback whatsoever
+    // Custom DebuggingHelper crashs which happen regularily for when accessing
+    // uninitialized variables.
+    postCommand(_("handle SIGSEGV nopass stop print"));
+
+    // This is useful to kill the inferior whenever gdb dies.
+    //postCommand(_("handle SIGTERM pass nostop print"));
+
+    postCommand(_("set unwindonsignal on"));
+    //postCommand(_("pwd"));
+    postCommand(_("set width 0"));
+    postCommand(_("set height 0"));
+
+    if (m_isMacGdb) {
+        postCommand(_("-gdb-set inferior-auto-start-cfm off"));
+        postCommand(_("-gdb-set sharedLibrary load-rules "
+            "dyld \".*libSystem.*\" all "
+            "dyld \".*libauto.*\" all "
+            "dyld \".*AppKit.*\" all "
+            "dyld \".*PBGDBIntrospectionSupport.*\" all "
+            "dyld \".*Foundation.*\" all "
+            "dyld \".*CFDataFormatters.*\" all "
+            "dyld \".*libobjc.*\" all "
+            "dyld \".*CarbonDataFormatters.*\" all"));
+    }
+
+    QString scriptFileName = theDebuggerStringSetting(GdbScriptFile);
+    if (!scriptFileName.isEmpty()) {
+        if (QFileInfo(scriptFileName).isReadable()) {
+            postCommand(_("source ") + scriptFileName);
+        } else {
+            showMessageBox(QMessageBox::Warning,
+            tr("Cannot find debugger initialization script"),
+            tr("The debugger settings point to a script file at '%1' "
+               "which is not accessible. If a script file is not needed, "
+               "consider clearing that entry to avoid this warning. "
+              ).arg(scriptFileName));
+        }
+    }
+    if (m_gdbAdapter->dumperHandling() == AbstractGdbAdapter::DumperLoadedByGdbPreload
+        && checkDebuggingHelpers()) {        
+        QString cmd = _("set environment ");
+        cmd += _(Debugger::Constants::Internal::LD_PRELOAD_ENV_VAR);
+        cmd += _c(' ');
+        cmd += manager()->qtDumperLibraryName();
+        postCommand(cmd);
+        m_debuggingHelperState = DebuggingHelperLoadTried;
+    }
+    return true;
+}
+
+void GdbEngine::handleGdbError(QProcess::ProcessError error)
+{
+    debugMessage(_("HANDLE GDB ERROR"));
+    switch (error) {
+    case QProcess::Crashed:
+        break; // will get a processExited() as well
+    // impossible case QProcess::FailedToStart:
+    case QProcess::ReadError:
+    case QProcess::WriteError:
+    case QProcess::Timedout:
+    default:
+        m_gdbProc.kill();
+        setState(EngineShuttingDown, true);
+        showMessageBox(QMessageBox::Critical, tr("Gdb I/O Error"),
+                       errorMessage(error));
+        break;
+    }
+}
+
+void GdbEngine::handleGdbFinished(int code, QProcess::ExitStatus type)
+{
+    debugMessage(_("GDB PROCESS FINISHED, status %1, code %2").arg(type).arg(code));
+    if (!m_gdbAdapter)
+        return;
+    if (state() == EngineShuttingDown) {
+        m_gdbAdapter->shutdown();
+    } else if (state() != AdapterStartFailed) {
+        showMessageBox(QMessageBox::Critical, tr("Unexpected Gdb Exit"),
+                       tr("The gdb process exited unexpectedly (%1).")
+                       .arg((type == QProcess::CrashExit)
+                            ? tr("crashed") : tr("code %1").arg(code)));
+        m_gdbAdapter->shutdown();
+    }
+    initializeVariables();
+    setState(DebuggerNotReady, true);
+}
+
+void GdbEngine::handleAdapterStartFailed(const QString &msg, const QString &settingsIdHint)
+{
+    setState(AdapterStartFailed);
+    debugMessage(_("ADAPTER START FAILED"));
+    const QString title = tr("Adapter start failed");
+    if (settingsIdHint.isEmpty()) {
+        Core::ICore::instance()->showWarningWithOptions(title, msg);
+    } else {
+        Core::ICore::instance()->showWarningWithOptions(title, msg, QString(),
+                    _(Debugger::Constants::DEBUGGER_SETTINGS_CATEGORY),
+                    settingsIdHint);
+    }
+    shutdown();
+}
+
+void GdbEngine::handleAdapterStarted()
+{
+    setState(AdapterStarted);
+    debugMessage(_("ADAPTER SUCCESSFULLY STARTED"));
+
+    showStatusMessage(tr("Starting inferior..."));
+    setState(InferiorStarting);
+    m_gdbAdapter->startInferior();
+}
+
+void GdbEngine::handleInferiorPrepared()
+{
+    const QString qtInstallPath = m_startParameters->qtInstallPath;
+    if (!qtInstallPath.isEmpty()) {
+        QString qtBuildPath;
+#if defined(Q_OS_WIN)
+        qtBuildPath = _("C:/qt-greenhouse/Trolltech/Code_less_create_more/Trolltech/Code_less_create_more/Troll/4.6/qt");
+        postCommand(_("set substitute-path %1 %2")
+                    .arg(qtBuildPath).arg(qtInstallPath));
+        qtBuildPath = _("C:/iwmake/build_mingw_opensource");
+        postCommand(_("set substitute-path %1 %2")
+                    .arg(qtBuildPath).arg(qtInstallPath));
+#elif defined(Q_OS_UNIX) && !defined (Q_OS_MAC)
+        qtBuildPath = _("/var/tmp/qt-x11-src-4.6.1");
+        postCommand(_("set substitute-path %1 %2")
+                    .arg(qtBuildPath).arg(qtInstallPath));
+#endif
+    }
+
+    // Initial attempt to set breakpoints
+    showStatusMessage(tr("Setting breakpoints..."));
+    attemptBreakpointSynchronization();
+
+    if (m_cookieForToken.isEmpty()) {
+        startInferiorPhase2();
+    } else {
+        QTC_ASSERT(m_commandsDoneCallback == 0, /**/);
+        m_commandsDoneCallback = &GdbEngine::startInferiorPhase2;
+    }
+}
+
+void GdbEngine::startInferiorPhase2()
+{
+    debugMessage(_("BREAKPOINTS SET, CONTINUING INFERIOR STARTUP"));
+    m_gdbAdapter->startInferiorPhase2();
+}
+
+void GdbEngine::handleInferiorStartFailed(const QString &msg)
+{
+    if (state() == AdapterStartFailed)
+        return; // Adapter crashed meanwhile, so this notification is meaningless.
+    debugMessage(_("INFERIOR START FAILED"));
+    showMessageBox(QMessageBox::Critical, tr("Inferior start failed"), msg);
+    setState(InferiorStartFailed);
+    shutdown();
+}
+
+void GdbEngine::handleAdapterCrashed(const QString &msg)
+{
+    debugMessage(_("ADAPTER CRASHED"));
+
+    // The adapter is expected to have cleaned up after itself when we get here,
+    // so the effect is about the same as AdapterStartFailed => use it.
+    // Don't bother with state transitions - this can happen in any state and
+    // the end result is always the same, so it makes little sense to find a
+    // "path" which does not assert.
+    setState(AdapterStartFailed, true);
+
+    // No point in being friendly here ...
+    m_gdbProc.kill();
+
+    if (!msg.isEmpty())
+        showMessageBox(QMessageBox::Critical, tr("Adapter crashed"), msg);
+}
+
+void GdbEngine::addOptionPages(QList<Core::IOptionsPage*> *opts) const
 {
     opts->push_back(new GdbOptionsPage);
-    return new GdbEngine(parent);
+    opts->push_back(new TrkOptionsPage(m_trkOptions));
+}
+
+QMessageBox * GdbEngine::showMessageBox(int icon, const QString &title,
+    const QString &text, int buttons)
+{
+    return m_manager->showMessageBox(icon, title, text, buttons);
+}
+
+bool GdbEngine::isSynchroneous() const
+{
+    return m_isSynchroneous;
+}
+
+//
+// Factory
+//
+
+IDebuggerEngine *createGdbEngine(DebuggerManager *manager)
+{
+    return new GdbEngine(manager);
 }
 
 } // namespace Internal
@@ -4177,4 +4638,3 @@ IDebuggerEngine *createGdbEngine(DebuggerManager *parent, QList<Core::IOptionsPa
 Q_DECLARE_METATYPE(Debugger::Internal::MemoryAgentCookie);
 Q_DECLARE_METATYPE(Debugger::Internal::DisassemblerAgentCookie);
 Q_DECLARE_METATYPE(Debugger::Internal::GdbMi);
-

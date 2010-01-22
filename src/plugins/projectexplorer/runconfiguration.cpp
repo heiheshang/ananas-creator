@@ -29,6 +29,8 @@
 
 #include "runconfiguration.h"
 #include "project.h"
+#include "persistentsettings.h"
+#include "buildconfiguration.h"
 
 #include <QtCore/QTimer>
 
@@ -53,6 +55,16 @@ RunConfiguration::~RunConfiguration()
 Project *RunConfiguration::project() const
 {
     return m_project.data();
+}
+
+bool RunConfiguration::isEnabled() const
+{
+    if (!m_project)
+        return false;
+    if (m_project->hasBuildSettings()
+        && !m_project->activeBuildConfiguration())
+        return false;
+    return isEnabled(m_project->activeBuildConfiguration());
 }
 
 QString RunConfiguration::name() const
@@ -88,21 +100,21 @@ IRunConfigurationFactory::~IRunConfigurationFactory()
 {
 }
 
-IRunConfigurationRunner::IRunConfigurationRunner(QObject *parent)
+IRunControlFactory::IRunControlFactory(QObject *parent)
     : QObject(parent)
 {
 }
 
-IRunConfigurationRunner::~IRunConfigurationRunner()
+IRunControlFactory::~IRunControlFactory()
 {
 }
 
-RunControl::RunControl(QSharedPointer<RunConfiguration> runConfiguration)
+RunControl::RunControl(const QSharedPointer<RunConfiguration> &runConfiguration)
     : m_runConfiguration(runConfiguration)
 {
 }
 
-QSharedPointer<RunConfiguration> RunControl::runConfiguration()
+QSharedPointer<RunConfiguration> RunControl::runConfiguration() const
 {
     return m_runConfiguration;
 }

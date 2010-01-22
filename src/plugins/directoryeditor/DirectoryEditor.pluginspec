@@ -1,4 +1,4 @@
-<plugin name="DirectoryEditor" version="1.2.90" compatVersion="1.2.90">
+<plugin name="DirectoryEditor" version="1.3.1" compatVersion="1.3.1">
     <vendor>Ananas</vendor>
     <copyright>(C) 2008-2009 Ananas</copyright>
     <license>
@@ -19,7 +19,7 @@ will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.</license>
     <description>Directory Ananas editor component.</description>
     <url></url>
     <dependencyList>
-        <dependency name="Core" version="1.2.90"/>
-        <dependency name="TextEditor" version="1.2.90"/>
+        <dependency name="Core" version="1.3.1"/>
+        <dependency name="TextEditor" version="1.3.1"/>
     </dependencyList>
 </plugin>

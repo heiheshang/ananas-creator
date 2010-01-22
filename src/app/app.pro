@@ -14,10 +14,12 @@ win32 {
     else:LIBS *= -lExtensionSystem -lAggregation
 
     RC_FILE = qtcreator.rc
+    target.path = /bin
+    INSTALLS += target
 } else:macx {
     CONFIG(debug, debug|release):LIBS *= -lExtensionSystem_debug -lAggregation_debug
     else:LIBS *= -lExtensionSystem -lAggregation
-
+    LIBS += -framework CoreFoundation
     ICON = qtcreator.icns
     QMAKE_INFO_PLIST = Info.plist
     FILETYPES.files = profile.icns prifile.icns
@@ -29,3 +31,5 @@ win32 {
     target.path  = /bin
     INSTALLS    += target
 }
+
+OTHER_FILES += qtcreator.rc

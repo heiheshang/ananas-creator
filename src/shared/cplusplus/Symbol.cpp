@@ -59,7 +59,7 @@
 #include <cstddef>
 #include <cassert>
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 class Symbol::HashCode: protected NameVisitor
 {
@@ -314,6 +314,14 @@ void Symbol::setScope(Scope *scope)
     _scope = scope;
 }
 
+Symbol *Symbol::enclosingSymbol() const
+{
+    if (! _scope)
+        return 0;
+
+    return _scope->owner();
+}
+
 Scope *Symbol::enclosingNamespaceScope() const
 {
     if (! _scope)
@@ -468,4 +476,4 @@ bool Symbol::isObjCForwardProtocolDeclaration() const
 bool Symbol::isObjCMethod() const
 { return asObjCMethod() != 0; }
 
-CPLUSPLUS_END_NAMESPACE
+

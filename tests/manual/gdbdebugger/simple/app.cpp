@@ -28,6 +28,7 @@
 **************************************************************************/
 
 #include <QtCore/QDebug>
+#include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QHash>
 #include <QtCore/QLibrary>
@@ -36,6 +37,7 @@
 #include <QtCore/QMap>
 #include <QtCore/QPointer>
 #include <QtCore/QString>
+#include <QtCore/QStack>
 #include <QtCore/QThread>
 #include <QtCore/QVariant>
 #include <QtCore/QVector>
@@ -89,6 +91,20 @@ public:
         int t = 2;
         b = 2 + s + t;
         a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
+        a += 1;
     }
 
     ~Foo()
@@ -141,6 +157,12 @@ public:
 void testArray()
 {
     X xxx;
+    (void *) 0;
+    double d[3][3];
+    for (int i = 0; i != 3; ++i)
+        for (int j = 0; j != 3; ++j)
+            d[i][j] = i + j;
+
     char c[20];
     c[0] = 'a';
     c[1] = 'b';
@@ -177,6 +199,16 @@ void testQByteArray()
     ba += char(0);
     ba += 1;
     ba += 2;
+}
+
+void testQDateTime()
+{
+    QDateTime date;
+    date = QDateTime::currentDateTime();
+    date = date.addSecs(5);
+    date = date.addSecs(5);
+    date = date.addSecs(5);
+    date = date.addSecs(5);
 }
 
 void testQFileInfo()
@@ -538,6 +570,7 @@ void testQSet()
     QObject ob;
     QSet<QPointer<QObject> > hash;
     QPointer<QObject> ptr(&ob);
+    ptr;
     //hash.insert(ptr);
     //hash.insert(ptr);
     //hash.insert(ptr);
@@ -577,7 +610,7 @@ public:
 
    private:
      QSharedDataPointer<EmployeeData> d;
- };
+};
 
 
 void testQSharedPointer()
@@ -853,6 +886,30 @@ void testQStandardItemModel()
     int i = 1;
     ++i;
     +i;
+}
+
+void testQStack()
+{
+    QVector<int> bigv;
+    for (int i = 0; i < 10; ++i)
+        bigv.append(i);
+    QStack<int> big;
+    for (int i = 0; i < 10; ++i)
+        big.append(i);
+    QStack<Foo *> plist;
+    plist.append(new Foo(1));
+    plist.append(0);
+    plist.append(new Foo(2));
+    QStack<Foo> flist;
+    flist.append(1);
+    flist.append(2);
+    flist.append(3);
+    flist.append(4);
+    //flist.takeFirst();
+    //flist.takeFirst();
+    QStack<bool> vec;
+    vec.append(true);
+    vec.append(false);
 }
 
 void testQString()
@@ -1236,10 +1293,39 @@ public:
     Foo *f;
 };
 
+void testUninitialized()
+{
+    QString s;
+    QStringList sl;
+    QMap<int, int> mii;
+    QMap<QString, QString> mss;
+    QHash<int, int> hii;
+    QHash<QString, QString> hss;
+    QList<int> li;
+    QVector<int> vi;
+    QStack<int> si;
+
+    std::string ss;
+    std::map<int, int> smii;
+    std::map<std::string, std::string> smss;
+    std::list<int> sli;
+    std::list<std::string> ssl;
+    std::vector<int> svi;
+    std::stack<int> ssi;
+}
+
+void testEndlessRecursion()
+{
+    testEndlessRecursion();
+}
 
 int main(int argc, char *argv[])
 {
+    //testEndlessRecursion();
+    testQStack();
+    testUninitialized();
     testPointer();
+    testQDateTime();
     testQFileInfo();
     testObject1();
     testVector1();

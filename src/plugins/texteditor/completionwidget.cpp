@@ -87,11 +87,11 @@ QVariant AutoCompletionModel::data(const QModelIndex &index, int role) const
         return QVariant();
 
     if (role == Qt::DisplayRole) {
-        return itemAt(index).m_text;
+        return itemAt(index).text;
     } else if (role == Qt::DecorationRole) {
-        return itemAt(index).m_icon;
+        return itemAt(index).icon;
     } else if (role == Qt::ToolTipRole) {
-        return itemAt(index).m_details;
+        return itemAt(index).details;
     }
 
     return QVariant();
@@ -139,7 +139,16 @@ bool CompletionWidget::event(QEvent *e)
 
     bool forwardKeys = true;
     if (e->type() == QEvent::FocusOut) {
-        closeList();
+        QModelIndex index;
+#if defined(Q_OS_DARWIN) && ! defined(QT_MAC_USE_COCOA)
+        QFocusEvent *fe = static_cast<QFocusEvent *>(e);
+        if (fe->reason() == Qt::OtherFocusReason) {
+            // Qt/carbon workaround
+            // focus out is received before the key press event.
+            index = currentIndex();
+        }
+#endif
+        closeList(index);
         return true;
     } else if (e->type() == QEvent::KeyPress) {
         QKeyEvent *ke = static_cast<QKeyEvent *>(e);
@@ -153,10 +162,23 @@ bool CompletionWidget::event(QEvent *e)
         case Qt::Key_Tab:
         case Qt::Key_Return:
             //independently from style, accept current entry if return is pressed
-            closeList(currentIndex());
+            if (qApp->focusWidget() == this)
+                closeList(currentIndex());
             return true;
         case Qt::Key_Up:
+            if (!ke->isAutoRepeat()
+                && currentIndex().row() == 0) {
+                setCurrentIndex(model()->index(model()->rowCount()-1, 0));
+                return true;
+            }
+            forwardKeys = false;
+            break;
         case Qt::Key_Down:
+            if (!ke->isAutoRepeat()
+                && currentIndex().row() == model()->rowCount()-1) {
+                setCurrentIndex(model()->index(0, 0));
+                return true;
+            }
         case Qt::Key_Enter:
         case Qt::Key_PageDown:
         case Qt::Key_PageUp:
@@ -221,8 +243,8 @@ void CompletionWidget::setCompletionItems(const QList<TextEditor::CompletionItem
     int mostRelevantIndex = 0;
     for (int i = 0; i < completionItems.size(); ++i) {
         const CompletionItem &item = completionItems.at(i);
-        if (item.m_relevance > relevance) {
-            relevance = item.m_relevance;
+        if (item.relevance > relevance) {
+            relevance = item.relevance;
             mostRelevantIndex = i;
         }
     }

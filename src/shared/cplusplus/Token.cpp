@@ -49,11 +49,12 @@
 #include "Token.h"
 #include "Literals.h"
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 static const char *token_names[] = {
     (""), ("<error>"),
 
+    ("<C++ comment>"), ("<C++ doxy comment>"),
     ("<comment>"), ("<doxy comment>"),
 
     ("<identifier>"), ("<numeric literal>"), ("<char literal>"),
@@ -132,4 +133,4 @@ const char *Token::spell() const
     } // switch
 }
 
-CPLUSPLUS_END_NAMESPACE
+

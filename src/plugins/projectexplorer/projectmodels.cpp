@@ -31,6 +31,7 @@
 
 #include "project.h"
 #include "projectexplorerconstants.h"
+#include "projectnodes.h"
 
 #include <coreplugin/fileiconprovider.h>
 #include <utils/qtcassert.h>
@@ -242,10 +243,6 @@ QVariant DetailedModel::data(const QModelIndex &index, int role) const
         }
         case Qt::FontRole: {
             QFont font;
-            if (qobject_cast<ProjectNode*>(folderNode)) {
-                if (index == this->index(0,0) && m_isStartupProject)
-                    font.setBold(true);
-            }
             result = font;
             break;
         }
@@ -961,11 +958,15 @@ FolderNode *FlatModel::visibleFolderNode(FolderNode *node) const
 bool FlatModel::filter(Node *node) const
 {
     bool isHidden = false;
-    if (ProjectNode *projectNode = qobject_cast<ProjectNode*>(node)) {
+    if (node->nodeType() == SessionNodeType) {
+        isHidden = false;
+    } else if (ProjectNode *projectNode = qobject_cast<ProjectNode*>(node)) {
         if (m_filterProjects && projectNode->parentFolderNode() != m_rootNode)
             isHidden = !projectNode->hasTargets();
-    }
-    if (FileNode *fileNode = qobject_cast<FileNode*>(node)) {
+    } else if (node->nodeType() == FolderNodeType) {
+        if (m_filterProjects)
+            isHidden = true;
+    } else if (FileNode *fileNode = qobject_cast<FileNode*>(node)) {
         if (m_filterGeneratedFiles)
             isHidden = fileNode->isGenerated();
     }

@@ -1,63 +1,38 @@
-unix:QDOC_BIN = $$(QTDIR)/bin/qdoc3
-win32:QDOC_BIN = $$(QTDIR)/bin/qdoc3.exe
-win32:QDOC_BIN = $$replace(QDOC_BIN, "/", "\\")
+QDOC_BIN = $$targetPath($$[QT_INSTALL_BINS]/qdoc3)
+HELPGENERATOR = $$targetPath($$[QT_INSTALL_BINS]/qhelpgenerator)
 
-# legacy branch, can be dropped as soon as we depend on Qt 4.6
-!exists( $$QDOC_BIN ) {
-    unix:QDOC_BIN = $$(QTDIR)/tools/qdoc3/qdoc3
-    win32 { 
-        QDOC_BIN = $$(QTDIR)/tools/qdoc3/release/qdoc3.exe
-        QDOC_BIN = $$replace(QDOC_BIN, "/", "\\")
-        !exists( $$QDOC_BIN ) {
-            QDOC_BIN = $$(QTDIR)/tools/qdoc3/debug/qdoc3.exe
-            QDOC_BIN = $$replace(QDOC_BIN, "/", "\\")
-        }
-    }
-}
-
-unix {
-    QDOC = SRCDIR=$$PWD OUTDIR=$$OUT_PWD/doc/html $$QDOC_BIN 
-    HELPGENERATOR = $$(QTDIR)/bin/qhelpgenerator
-} else {
-    QDOC = set SRCDIR=$$PWD&& set OUTDIR=$$OUT_PWD/doc/html&& $$QDOC_BIN 
-    HELPGENERATOR = $$(QTDIR)\bin\qhelpgenerator.exe
+equals(QMAKE_DIR_SEP, /) {   # unix, mingw+msys
+    QDOC = SRCDIR=$$PWD OUTDIR=$$OUT_PWD/doc/html $$QDOC_BIN
+} else:win32-g++* {   # just mingw
+    # The lack of spaces in front of the && is necessary!
+    QDOC = set SRCDIR=$$PWD&& set OUTDIR=$$OUT_PWD/doc/html&& $$QDOC_BIN
+} else {   # nmake
+    QDOC = set SRCDIR=$$PWD $$escape_expand(\n\t) \
+           set OUTDIR=$$OUT_PWD/doc/html $$escape_expand(\n\t) \
+           $$QDOC_BIN
 }
 
 QHP_FILE = $$OUT_PWD/doc/html/qtcreator.qhp
-QCH_FILE = $$OUT_PWD/share/doc/qtcreator/qtcreator.qch
+QCH_FILE = $$IDE_DOC_PATH/qtcreator.qch
 
-unix {
 html_docs.commands = $$QDOC $$PWD/qtcreator.qdocconf
-} else {
-html_docs.commands = \"$$QDOC $$PWD/qtcreator.qdocconf\"
-}
 html_docs.depends += $$PWD/qtcreator.qdoc $$PWD/qtcreator.qdocconf
 html_docs.files = $$QHP_FILE
 
-qch_docs.commands = $$HELPGENERATOR -o $$QCH_FILE $$QHP_FILE
+qch_docs.commands = $$HELPGENERATOR -o \"$$QCH_FILE\" $$QHP_FILE
 qch_docs.depends += html_docs
 qch_docs.files = $$QCH_FILE
 
 unix:!macx {
-    system("mkdir -p `dirname $$QCH_FILE` && touch $$QCH_FILE")
-
     qch_docs.path = /share/doc/qtcreator
+    qch_docs.CONFIG += no_check_exist
     INSTALLS += qch_docs
 }
 
-macx {
-    DOC_DIR = $${OUT_PWD}/bin/QtCreator.app/Contents/Resources/doc 
-    cp_docs.commands = mkdir -p $${DOC_DIR} ; $${QMAKE_COPY} $${QCH_FILE} $${DOC_DIR}
-    cp_docs.depends += qch_docs
-    docs.depends = cp_docs
-    QMAKE_EXTRA_TARGETS += html_docs qch_docs cp_docs docs
-}
-!macx {
-    docs.depends = qch_docs
-    QMAKE_EXTRA_TARGETS += html_docs qch_docs docs
-}
+docs.depends = qch_docs
+QMAKE_EXTRA_TARGETS += html_docs qch_docs docs
 
-OTHER_FILES = qtcreator.qdoc \
-              qtcreator.qdocconf
-OTHER_FILES += api/qtcreator-api.qdoc \
-               api/qtcreator-api.qdocconf
+OTHER_FILES = $$PWD/qtcreator.qdoc \
+              $$PWD/qtcreator.qdocconf
+OTHER_FILES += $$PWD/api/qtcreator-api.qdoc \
+               $$PWD/api/qtcreator-api.qdocconf

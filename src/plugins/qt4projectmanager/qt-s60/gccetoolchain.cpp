@@ -36,15 +36,12 @@
 using namespace ProjectExplorer;
 using namespace Qt4ProjectManager::Internal;
 
-namespace {
-    const char *GCCE_COMMAND = "arm-none-symbianelf-gcc.exe";
-}
-
-GCCEToolChain::GCCEToolChain(S60Devices::Device device)
-    : GccToolChain(QLatin1String(GCCE_COMMAND)),
+GCCEToolChain::GCCEToolChain(S60Devices::Device device, const QString &gcceCommand)
+    : GccToolChain(gcceCommand),
     m_deviceId(device.id),
     m_deviceName(device.name),
-    m_deviceRoot(device.epocRoot)
+    m_deviceRoot(device.epocRoot),
+    m_gcceCommand(gcceCommand)
 {
 
 }
@@ -52,6 +49,17 @@ GCCEToolChain::GCCEToolChain(S60Devices::Device device)
 ToolChain::ToolChainType GCCEToolChain::type() const
 {
     return ToolChain::GCCE;
+}
+
+QByteArray GCCEToolChain::predefinedMacros()
+{
+    if (m_predefinedMacros.isEmpty()) {
+        ProjectExplorer::GccToolChain::predefinedMacros();
+        m_predefinedMacros += "\n"
+                "#define __GCCE__\n"
+                "#define __SYMBIAN32__\n";
+    }
+    return m_predefinedMacros;
 }
 
 QList<HeaderPath> GCCEToolChain::systemHeaderPaths()
@@ -68,9 +76,9 @@ QList<HeaderPath> GCCEToolChain::systemHeaderPaths()
 
 void GCCEToolChain::addToEnvironment(ProjectExplorer::Environment &env)
 {
-    // TODO: do we need to set path to gcce?
     env.prependOrSetPath(QString("%1\\epoc32\\tools").arg(m_deviceRoot)); // e.g. make.exe
     env.prependOrSetPath(QString("%1\\epoc32\\gcc\\bin").arg(m_deviceRoot)); // e.g. gcc.exe
+    env.prependOrSetPath(QFileInfo(m_gcceCommand).absolutePath());
     env.set("EPOCDEVICE", QString("%1:%2").arg(m_deviceId, m_deviceName));
     env.set("EPOCROOT", S60Devices::cleanedRootPath(m_deviceRoot));
 }
@@ -80,27 +88,12 @@ QString GCCEToolChain::makeCommand() const
     return "make";
 }
 
-QString GCCEToolChain::defaultMakeTarget() const
-{
-    const Qt4Project *qt4project = qobject_cast<const Qt4Project *>(m_project);
-    if (qt4project) {
-        if (!(QtVersion::QmakeBuildConfig(qt4project->value(
-                qt4project->activeBuildConfiguration(),
-                "buildConfiguration").toInt()) & QtVersion::DebugBuild)) {
-            return "release-gcce";
-        }
-    }
-    return "debug-gcce";
-}
-
 bool GCCEToolChain::equals(ToolChain *other) const
 {
+    GCCEToolChain *otherGCCE = static_cast<GCCEToolChain *>(other);
     return (other->type() == type()
-            && m_deviceId == static_cast<GCCEToolChain *>(other)->m_deviceId
-            && m_deviceName == static_cast<GCCEToolChain *>(other)->m_deviceName);
-}
-
-void GCCEToolChain::setProject(const ProjectExplorer::Project *project)
-{
-    m_project = project;
+            && m_deviceId == otherGCCE->m_deviceId
+            && m_deviceName == otherGCCE->m_deviceName
+            && m_deviceRoot == otherGCCE->m_deviceRoot
+            && m_gcceCommand == otherGCCE->m_gcceCommand);
 }

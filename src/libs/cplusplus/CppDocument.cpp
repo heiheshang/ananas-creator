@@ -42,7 +42,13 @@
 
 #include <QtCore/QByteArray>
 #include <QtCore/QBitArray>
+#include <QtCore/QDir>
 #include <QtCore/QtDebug>
+
+/*!
+    \namespace CPlusPlus
+    The namespace for C++ related tools.
+*/
 
 using namespace CPlusPlus;
 
@@ -101,8 +107,9 @@ private:
 
 } // anonymous namespace
 
+
 Document::Document(const QString &fileName)
-    : _fileName(fileName),
+    : _fileName(QDir::cleanPath(fileName)),
       _globalNamespace(0),
       _revision(0)
 {
@@ -141,6 +148,16 @@ void Document::setRevision(unsigned revision)
     _revision = revision;
 }
 
+QDateTime Document::lastModified() const
+{
+    return _lastModified;
+}
+
+void Document::setLastModified(const QDateTime &lastModified)
+{
+    _lastModified = lastModified;
+}
+
 QString Document::fileName() const
 {
     return _fileName;
@@ -157,7 +174,7 @@ QStringList Document::includedFiles() const
 
 void Document::addIncludeFile(const QString &fileName, unsigned line)
 {
-    _includes.append(Include(fileName, line));
+    _includes.append(Include(QDir::cleanPath(fileName), line));
 }
 
 void Document::appendMacro(const Macro &macro)
@@ -166,9 +183,10 @@ void Document::appendMacro(const Macro &macro)
 }
 
 void Document::addMacroUse(const Macro &macro, unsigned offset, unsigned length,
-                           const QVector<MacroArgumentReference> &actuals)
+                           const QVector<MacroArgumentReference> &actuals, bool inCondition)
 {
     MacroUse use(macro, offset, offset + length);
+    use.setInCondition(inCondition);
 
     foreach (const MacroArgumentReference &actual, actuals) {
         const Block arg(actual.position(), actual.position() + actual.length());
@@ -178,6 +196,60 @@ void Document::addMacroUse(const Macro &macro, unsigned offset, unsigned length,
 
     _macroUses.append(use);
 }
+
+void Document::addUndefinedMacroUse(const QByteArray &name, unsigned offset)
+{
+    QByteArray copy(name.data(), name.size());
+    UndefinedMacroUse use(copy, offset);
+    _undefinedMacroUses.append(use);
+}
+
+/*!
+    \class Document::MacroUse
+    \brief Represents the usage of a macro in a \l {Document}.
+    \sa Document::UndefinedMacroUse
+*/
+
+/*!
+    \class Document::UndefinedMacroUse
+    \brief Represents a macro that was looked up, but not found.
+
+    Holds data about the reference to a macro in an \tt{#ifdef} or \tt{#ifndef}
+    or argument to the \tt{defined} operator inside an \tt{#if} or \tt{#elif} that does
+    not exist.
+
+    \sa Document::undefinedMacroUses(), Document::MacroUse, Macro
+*/
+
+/*!
+    \fn QByteArray Document::UndefinedMacroUse::name() const
+
+    Returns the name of the macro that was not found.
+*/
+
+/*!
+    \fn QList<UndefinedMacroUse> Document::undefinedMacroUses() const
+
+    Returns a list of referenced but undefined macros.
+
+    \sa Document::macroUses(), Document::definedMacros(), Macro
+*/
+
+/*!
+    \fn QList<MacroUse> Document::macroUses() const
+
+    Returns a list of macros used.
+
+    \sa Document::undefinedMacroUses(), Document::definedMacros(), Macro
+*/
+
+/*!
+    \fn QList<Macro> Document::definedMacros() const
+
+    Returns the list of macros defined.
+
+    \sa Document::macroUses(), Document::undefinedMacroUses()
+*/
 
 TranslationUnit *Document::translationUnit() const
 {
@@ -329,6 +401,9 @@ void Document::check(CheckMode mode)
 {
     Q_ASSERT(!_globalNamespace);
 
+    if (! isParsed())
+        parse();
+
     Semantic semantic(_control);
     if (mode == FastCheck)
         semantic.setSkipFunctionBodies(true);
@@ -380,16 +455,17 @@ QByteArray Snapshot::preprocessedCode(const QString &source, const QString &file
 Document::Ptr Snapshot::documentFromSource(const QByteArray &preprocessedCode,
                                            const QString &fileName) const
 {
-    FastPreprocessor pp(*this);
     Document::Ptr newDoc = Document::create(fileName);
 
     if (Document::Ptr thisDocument = value(fileName)) {
+        newDoc->_revision = thisDocument->_revision;
+        newDoc->_lastModified = thisDocument->_lastModified;
         newDoc->_includes = thisDocument->_includes;
         newDoc->_definedMacros = thisDocument->_definedMacros;
+        newDoc->_macroUses = thisDocument->_macroUses;
     }
 
     newDoc->setSource(preprocessedCode);
-    newDoc->parse();
     return newDoc;
 }
 
@@ -493,4 +569,9 @@ QStringList Snapshot::dependsOn(const QString &fileName) const
     }
 
     return deps;
+}
+
+Document::Ptr Snapshot::value(const QString &fileName) const
+{
+    return QMap<QString, Document::Ptr>::value(QDir::cleanPath(fileName));
 }

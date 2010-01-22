@@ -4,7 +4,7 @@
 **
 ** Copyright (c) 2009 Nokia Corporation and/or its subsidiary(-ies).
 **
-** Contact:  Qt Software Information (qt-info@nokia.com)
+** Contact: Nokia Corporation (qt-info@nokia.com)
 **
 ** Commercial Usage
 **
@@ -23,7 +23,7 @@
 ** will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
 **
 ** If you are unsure which license is appropriate for your use, please
-** contact the sales department at qt-sales@nokia.com.
+** contact the sales department at http://qt.nokia.com/contact.
 **
 **************************************************************************/
 
@@ -31,22 +31,18 @@
 #define S60MANAGER_H
 
 #include "qtversionmanager.h"
-#include "serialdevicelister.h"
 #include "s60devices.h"
 
-#include <extensionsystem/iplugin.h>
-#include <projectexplorer/toolchain.h>
-
 #include <QtCore/QObject>
+
+namespace ProjectExplorer {
+class ToolChain;
+}
 
 namespace Qt4ProjectManager {
 namespace Internal {
 
-class S60DevicesPreferencePane;
-class S60EmulatorRunConfigurationFactory;
-class S60EmulatorRunConfigurationRunner;
-class S60DeviceRunConfigurationFactory;
-class S60DeviceRunConfigurationRunner;
+class SerialDeviceLister;
 
 class S60Manager : public QObject
 {
@@ -71,13 +67,12 @@ private slots:
     void updateQtVersions();
 
 private:
+    void addAutoReleasedObject(QObject *p);
+
     static S60Manager *m_instance;
+
     S60Devices *m_devices;
-    S60DevicesPreferencePane *m_devicesPreferencePane;
-    S60EmulatorRunConfigurationFactory *m_s60EmulatorRunConfigurationFactory;
-    S60EmulatorRunConfigurationRunner *m_s60EmulatorRunConfigurationRunner;
-    S60DeviceRunConfigurationFactory *m_s60DeviceRunConfigurationFactory;
-    S60DeviceRunConfigurationRunner *m_s60DeviceRunConfigurationRunner;
+    QObjectList m_pluginObjects;
     SerialDeviceLister *m_serialDeviceLister;
 };
 

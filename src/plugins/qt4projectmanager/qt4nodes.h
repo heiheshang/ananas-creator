@@ -53,9 +53,7 @@ class FileWatcher;
 }
 
 namespace Designer {
-namespace Internal {
 class FormWindowEditor;
-}
 }
 
 namespace Qt4ProjectManager {
@@ -175,6 +173,8 @@ private:
 
     // managed by Qt4ProFileNode
     friend class Qt4ProFileNode;
+    // internal temporary subtree representation
+    friend struct InternalNode;
 };
 
 // Implements ProjectNode for qt4 pro files
@@ -195,7 +195,7 @@ public:
     QStringList variableValue(const Qt4Variable var) const;
 
     void updateCodeModelSupportFromBuild(const QStringList &files);
-    void updateCodeModelSupportFromEditor(const QString &uiFileName, Designer::Internal::FormWindowEditor *fw);
+    void updateCodeModelSupportFromEditor(const QString &uiFileName, Designer::FormWindowEditor *fw);
 public slots:
     void scheduleUpdate();
     void update();
@@ -211,7 +211,6 @@ private:
     QStringList mocDirPaths(ProFileReader *reader) const;
     QStringList includePaths(ProFileReader *reader) const;
     QStringList subDirsPaths(ProFileReader *reader) const;
-    QStringList qBuildSubDirsPaths(const QString &scanDir)  const;
 
     void invalidate();
 

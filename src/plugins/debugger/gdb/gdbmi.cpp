@@ -358,11 +358,11 @@ GdbMi GdbMi::findChild(const char *name) const
 
 //////////////////////////////////////////////////////////////////////////////////
 //
-// GdbResultRecord
+// GdbResponse
 //
 //////////////////////////////////////////////////////////////////////////////////
 
-QByteArray stringFromResultClass(GdbResultClass resultClass)
+QByteArray GdbResponse::stringFromResultClass(GdbResultClass resultClass)
 {
     switch (resultClass) {
         case GdbResultDone: return "done";
@@ -374,7 +374,7 @@ QByteArray stringFromResultClass(GdbResultClass resultClass)
     }
 };
 
-QByteArray GdbResultRecord::toString() const
+QByteArray GdbResponse::toString() const
 {
     QByteArray result;
     if (token != -1)

@@ -64,10 +64,33 @@ void S60DevicesWidget::updateDevicesList()
     QList<S60Devices::Device> devices = m_devices->devices();
     m_ui->list->clear();
     foreach (const S60Devices::Device &device, devices) {
-        m_ui->list->addTopLevelItem(new QTreeWidgetItem(QStringList() << device.epocRoot
-          << (device.qt.isEmpty()?tr("No Qt installed"):device.qt)));
+        QStringList columns;
+        columns << device.epocRoot << (device.qt.isEmpty()?tr("No Qt installed"):device.qt);
+        QTreeWidgetItem *item = new QTreeWidgetItem(columns);
+        const QString tooltip = device.toHtml();
+        item->setToolTip(0, tooltip);
+        item->setToolTip(1, tooltip);
+        m_ui->list->addTopLevelItem(item);
+    }
+    const QString errorString = m_devices->errorString();
+    if (errorString.isEmpty()) {
+        clearErrorLabel();
+    } else {
+        setErrorLabel(errorString);
     }
 }
+
+void S60DevicesWidget::setErrorLabel(const QString& t)
+{
+    m_ui->errorLabel->setText(t);
+    m_ui->errorLabel->setVisible(true);
+}
+
+void S60DevicesWidget::clearErrorLabel()
+{
+    m_ui->errorLabel->setVisible(false);
+}
+
 
 S60DevicesPreferencePane::S60DevicesPreferencePane(S60Devices *devices, QObject *parent)
         : Core::IOptionsPage(parent),
@@ -116,3 +139,5 @@ void S60DevicesPreferencePane::apply()
 void S60DevicesPreferencePane::finish()
 {
 }
+
+

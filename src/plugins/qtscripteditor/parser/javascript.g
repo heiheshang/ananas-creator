@@ -1,18 +1,20 @@
-----------------------------------------------------------------------------
+---------------------------------------------------------------------------
 --
--- Copyright (C) 2009 Nokia Corporation and/or its subsidiary(-ies).
+-- This file is part of Qt Creator
+--
+-- Copyright (c) 2009 Nokia Corporation and/or its subsidiary(-ies).
+--
 -- Contact: Nokia Corporation (qt-info@nokia.com)
 --
--- This file is part of the QtScript module of the Qt Toolkit.
+-- Commercial Usage
 --
--- $QT_BEGIN_LICENSE:LGPL$
--- No Commercial Usage
--- This file contains pre-release code and may not be distributed.
--- You may use this file in accordance with the terms and conditions
--- contained in the either Technology Preview License Agreement or the
--- Beta Release License Agreement.
+-- Licensees holding valid Qt Commercial licenses may use this file in
+-- accordance with the Qt Commercial License Agreement provided with the
+-- Software or, alternatively, in accordance with the terms contained in
+-- a written agreement between you and Nokia.
 --
 -- GNU Lesser General Public License Usage
+--
 -- Alternatively, this file may be used under the terms of the GNU Lesser
 -- General Public License version 2.1 as published by the Free Software
 -- Foundation and appearing in the file LICENSE.LGPL included in the
@@ -20,27 +22,10 @@
 -- ensure the GNU Lesser General Public License version 2.1 requirements
 -- will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
 --
--- In addition, as a special exception, Nokia gives you certain
--- additional rights. These rights are described in the Nokia Qt LGPL
--- Exception version 1.0, included in the file LGPL_EXCEPTION.txt in this
--- package.
---
--- GNU General Public License Usage
--- Alternatively, this file may be used under the terms of the GNU
--- General Public License version 3.0 as published by the Free Software
--- Foundation and appearing in the file LICENSE.GPL included in the
--- packaging of this file.  Please review the following information to
--- ensure the GNU General Public License version 3.0 requirements will be
--- met: http://www.gnu.org/copyleft/gpl.html.
---
 -- If you are unsure which license is appropriate for your use, please
 -- contact the sales department at http://qt.nokia.com/contact.
--- $QT_END_LICENSE$
 --
--- This file is provided AS IS with NO WARRANTY OF ANY KIND, INCLUDING THE
--- WARRANTY OF DESIGN, MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
---
-----------------------------------------------------------------------------
+---------------------------------------------------------------------------
 
 %parser         JavaScriptGrammar
 %decl           javascriptparser_p.h
@@ -82,21 +67,23 @@
 %start Program
 
 /.
-/****************************************************************************
+/**************************************************************************
 **
-** Copyright (C) 2009 Nokia Corporation and/or its subsidiary(-ies).
+** This file is part of Qt Creator
+**
+** Copyright (c) 2009 Nokia Corporation and/or its subsidiary(-ies).
+**
 ** Contact: Nokia Corporation (qt-info@nokia.com)
 **
-** This file is part of the QtScript module of the Qt Toolkit.
+** Commercial Usage
 **
-** $QT_BEGIN_LICENSE:LGPL$
-** No Commercial Usage
-** This file contains pre-release code and may not be distributed.
-** You may use this file in accordance with the terms and conditions
-** contained in the either Technology Preview License Agreement or the
-** Beta Release License Agreement.
+** Licensees holding valid Qt Commercial licenses may use this file in
+** accordance with the Qt Commercial License Agreement provided with the
+** Software or, alternatively, in accordance with the terms contained in
+** a written agreement between you and Nokia.
 **
 ** GNU Lesser General Public License Usage
+**
 ** Alternatively, this file may be used under the terms of the GNU Lesser
 ** General Public License version 2.1 as published by the Free Software
 ** Foundation and appearing in the file LICENSE.LGPL included in the
@@ -104,37 +91,25 @@
 ** ensure the GNU Lesser General Public License version 2.1 requirements
 ** will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
 **
-** In addition, as a special exception, Nokia gives you certain
-** additional rights. These rights are described in the Nokia Qt LGPL
-** Exception version 1.0, included in the file LGPL_EXCEPTION.txt in this
-** package.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3.0 as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL included in the
-** packaging of this file.  Please review the following information to
-** ensure the GNU General Public License version 3.0 requirements will be
-** met: http://www.gnu.org/copyleft/gpl.html.
-**
 ** If you are unsure which license is appropriate for your use, please
 ** contact the sales department at http://qt.nokia.com/contact.
-** $QT_END_LICENSE$
 **
-****************************************************************************/
+**************************************************************************/
+
+//
+//  W A R N I N G
+//  -------------
+//
+// This file is not part of the Qt API.  It exists purely as an
+// implementation detail.  This header file may change from version to
+// version without notice, or even be removed.
+//
+// We mean it.
+//
 
 #include <QtCore/QtDebug>
-
-
-
 #include <string.h>
-
-
 #include "javascriptengine_p.h"
-
-
-
-
 #include "javascriptlexer_p.h"
 #include "javascriptast_p.h"
 #include "javascriptnodepool_p.h"
@@ -149,21 +124,23 @@
 ./
 
 /:
-/****************************************************************************
+/**************************************************************************
 **
-** Copyright (C) 2009 Nokia Corporation and/or its subsidiary(-ies).
+** This file is part of Qt Creator
+**
+** Copyright (c) 2009 Nokia Corporation and/or its subsidiary(-ies).
+**
 ** Contact: Nokia Corporation (qt-info@nokia.com)
 **
-** This file is part of the QtScript module of the Qt Toolkit.
+** Commercial Usage
 **
-** $QT_BEGIN_LICENSE:LGPL$
-** No Commercial Usage
-** This file contains pre-release code and may not be distributed.
-** You may use this file in accordance with the terms and conditions
-** contained in the either Technology Preview License Agreement or the
-** Beta Release License Agreement.
+** Licensees holding valid Qt Commercial licenses may use this file in
+** accordance with the Qt Commercial License Agreement provided with the
+** Software or, alternatively, in accordance with the terms contained in
+** a written agreement between you and Nokia.
 **
 ** GNU Lesser General Public License Usage
+**
 ** Alternatively, this file may be used under the terms of the GNU Lesser
 ** General Public License version 2.1 as published by the Free Software
 ** Foundation and appearing in the file LICENSE.LGPL included in the
@@ -171,24 +148,10 @@
 ** ensure the GNU Lesser General Public License version 2.1 requirements
 ** will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
 **
-** In addition, as a special exception, Nokia gives you certain
-** additional rights. These rights are described in the Nokia Qt LGPL
-** Exception version 1.0, included in the file LGPL_EXCEPTION.txt in this
-** package.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3.0 as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL included in the
-** packaging of this file.  Please review the following information to
-** ensure the GNU General Public License version 3.0 requirements will be
-** met: http://www.gnu.org/copyleft/gpl.html.
-**
 ** If you are unsure which license is appropriate for your use, please
 ** contact the sales department at http://qt.nokia.com/contact.
-** $QT_END_LICENSE$
 **
-****************************************************************************/
+**************************************************************************/
 
 //
 //  W A R N I N G
@@ -210,9 +173,6 @@
 #define JAVASCRIPTPARSER_P_H
 
 #include "javascriptgrammar_p.h"
-
-
-
 #include "javascriptastfwd_p.h"
 #include <QtCore/QList>
 
@@ -428,7 +388,7 @@ bool JavaScriptParser::parse(JavaScriptEnginePrivate *driver)
 
     _Lcheck_token:
         if (yytoken == -1 && -TERMINAL_COUNT != action_index[action]) {
-		yyprevlloc = yylloc;
+                yyprevlloc = yylloc;
 
             if (first_token == last_token) {
                 yytoken = lexer->lex();
@@ -2118,8 +2078,13 @@ PropertyNameAndValueListOpt: PropertyNameAndValueList ;
         token_buffer[1].dval  = yylval  = lexer->dval();
         token_buffer[1].loc   = yylloc  = location(lexer);
 
-        if (t_action(errorState, yytoken)) {
-            const QString msg = QString::fromUtf8("Removed token: `%1'").arg(spell[token_buffer[0].token]);
+        if (token_buffer[0].token != -1 && t_action(errorState, yytoken)) {
+            QString msg = QString::fromUtf8("Removed token");
+            if (const char *tokenSpell = spell[token_buffer[0].token]) {
+                msg += QLatin1String(": `");
+                msg += QLatin1String(tokenSpell);
+                msg += QLatin1Char('\'');
+            }
 
             diagnostic_messages.append(DiagnosticMessage(DiagnosticMessage::Error,
                 token_buffer[0].loc.startLine, token_buffer[0].loc.startColumn, msg));
@@ -2149,7 +2114,12 @@ PropertyNameAndValueListOpt: PropertyNameAndValueList ;
         for (int *tk = tokens; *tk != EOF_SYMBOL; ++tk) {
             int a = t_action(errorState, *tk);
             if (a > 0 && t_action(a, yytoken)) {
-                const QString msg = QString::fromUtf8("Inserted token: `%1'").arg(spell[*tk]);
+                QString msg = QString::fromUtf8("Inserted token");
+                if (const char *tokenSpell = spell[*tk]) {
+                    msg += QLatin1String(": `");
+                    msg += QLatin1String(tokenSpell);
+                    msg += QLatin1Char('\'');
+                }
 
                 diagnostic_messages.append(DiagnosticMessage(DiagnosticMessage::Error,
                     token_buffer[0].loc.startLine, token_buffer[0].loc.startColumn, msg));
@@ -2169,7 +2139,13 @@ PropertyNameAndValueListOpt: PropertyNameAndValueList ;
         for (int tk = 1; tk < TERMINAL_COUNT; ++tk) {
             int a = t_action(errorState, tk);
             if (a > 0 && t_action(a, yytoken)) {
-                const QString msg = QString::fromUtf8("Inserted token: `%1'").arg(spell[tk]);
+                QString msg = QString::fromUtf8("Inserted token");
+                if (const char *tokenSpell = spell[tk]) {
+                    msg += QLatin1String(": `");
+                    msg += QLatin1String(tokenSpell);
+                    msg += QLatin1Char('\'');
+                }
+
                 diagnostic_messages.append(DiagnosticMessage(DiagnosticMessage::Error,
                     token_buffer[0].loc.startLine, token_buffer[0].loc.startColumn, msg));
 
@@ -2182,7 +2158,13 @@ PropertyNameAndValueListOpt: PropertyNameAndValueList ;
             }
         }
 
-        const QString msg = QString::fromUtf8("Unexpected token: `%1'").arg(spell[token_buffer[0].token]);
+        QString msg = QString::fromUtf8("Unexpected token");
+        if (const char *tokenSpell = spell[token_buffer[0].token]) {
+            msg += QLatin1String(": `");
+            msg += QLatin1String(tokenSpell);
+            msg += QLatin1Char('\'');
+        }
+
         diagnostic_messages.append(DiagnosticMessage(DiagnosticMessage::Error,
             token_buffer[0].loc.startLine, token_buffer[0].loc.startColumn, msg));
     }

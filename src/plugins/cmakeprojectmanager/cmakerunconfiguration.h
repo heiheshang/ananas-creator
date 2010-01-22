@@ -35,6 +35,7 @@
 #include <projectexplorer/persistentsettings.h>
 #include <projectexplorer/environmenteditmodel.h>
 #include <utils/pathchooser.h>
+#include <utils/detailswidget.h>
 
 QT_BEGIN_NAMESPACE
 class QComboBox;
@@ -45,7 +46,7 @@ namespace Internal {
 
 class CMakeProject;
 
-class CMakeRunConfiguration : public ProjectExplorer::ApplicationRunConfiguration
+class CMakeRunConfiguration : public ProjectExplorer::LocalApplicationRunConfiguration
 {
     friend class CMakeRunConfigurationWidget;
     Q_OBJECT
@@ -116,12 +117,13 @@ private slots:
     void baseEnvironmentComboBoxChanged(int index);
     void workingDirectoryChanged(const QString &workingDirectory);
 private:
+    void updateSummary();
     bool m_ignoreChange;
     CMakeRunConfiguration *m_cmakeRunConfiguration;
-    Core::Utils::PathChooser *m_workingDirectoryEdit;
+    Utils::PathChooser *m_workingDirectoryEdit;
     QComboBox *m_baseEnvironmentComboBox;
     ProjectExplorer::EnvironmentWidget *m_environmentWidget;
-
+    Utils::DetailsWidget *m_detailsContainer;
 };
 
 class CMakeRunConfigurationFactory : public ProjectExplorer::IRunConfigurationFactory

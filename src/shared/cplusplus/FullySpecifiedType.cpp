@@ -50,7 +50,7 @@
 #include "Type.h"
 #include "CoreTypes.h"
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 FullySpecifiedType::FullySpecifiedType(Type *type) :
     _type(type), _flags(0)
@@ -80,6 +80,10 @@ FullySpecifiedType FullySpecifiedType::qualifiedType() const
     ty.setExtern(false);
     ty.setMutable(false);
     ty.setTypedef(false);
+
+    ty.setInline(false);
+    ty.setVirtual(false);
+    ty.setExplicit(false);
     return ty;
 }
 
@@ -201,4 +205,27 @@ bool FullySpecifiedType::operator < (const FullySpecifiedType &other) const
     return _type < other._type;
 }
 
-CPLUSPLUS_END_NAMESPACE
+FullySpecifiedType FullySpecifiedType::simplified() const
+{
+    if (const ReferenceType *refTy = type()->asReferenceType())
+        return refTy->elementType().simplified();
+
+    return *this;
+}
+
+void FullySpecifiedType::copySpecifiers(const FullySpecifiedType &type)
+{
+    // class storage specifiers
+    f._isFriend = type.f._isFriend;
+    f._isRegister = type.f._isRegister;
+    f._isStatic = type.f._isStatic;
+    f._isExtern = type.f._isExtern;
+    f._isMutable = type.f._isMutable;
+    f._isTypedef = type.f._isTypedef;
+
+    // function specifiers
+    f._isInline = type.f._isInline;
+    f._isVirtual = type.f._isVirtual;
+    f._isExplicit = type.f._isExplicit;
+}
+

@@ -39,6 +39,7 @@
 #include <coreplugin/icore.h>
 #include <coreplugin/mainwindow.h>
 #include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/buildconfiguration.h>
 #include <extensionsystem/pluginmanager.h>
 
 #include <QtGui/QFileDialog>
@@ -54,33 +55,113 @@ Qt4ProjectConfigWidget::Qt4ProjectConfigWidget(Qt4Project *project)
     : BuildConfigWidget(),
       m_pro(project)
 {
+    QVBoxLayout *vbox = new QVBoxLayout(this);
+    vbox->setMargin(0);
+    m_detailsContainer = new Utils::DetailsWidget(this);
+    vbox->addWidget(m_detailsContainer);
+    QWidget *details = new QWidget(m_detailsContainer);
+    m_detailsContainer->setWidget(details);
     m_ui = new Ui::Qt4ProjectConfigWidget();
-    m_ui->setupUi(this);
+    m_ui->setupUi(details);
 
-    // fix the layout
+
     m_browseButton = m_ui->shadowBuildDirEdit->buttonAtIndex(0);
-#ifdef Q_OS_WIN
-    m_browseButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-#endif
-    m_ui->gridLayout->addWidget(m_browseButton, 4, 2);
-    int minimumHeight = qMax(m_ui->qtVersionComboBox->sizeHint().height(), m_ui->manageQtVersionPushButtons->sizeHint().height());
-    Qt::Alignment labelAlignment = Qt::Alignment(style()->styleHint(QStyle::SH_FormLayoutLabelAlignment));
-    for (int i = 0; i < m_ui->gridLayout->rowCount(); ++i) {
-        m_ui->gridLayout->setRowMinimumHeight(i, minimumHeight);
-        QLayoutItem *item = m_ui->gridLayout->itemAtPosition(i, 0);
-        if (item)
-            item->setAlignment(labelAlignment);
-    }
+    // TODO refix the layout
 
     m_ui->shadowBuildDirEdit->setPromptDialogTitle(tr("Shadow Build Directory"));
-    m_ui->shadowBuildDirEdit->setExpectedKind(Core::Utils::PathChooser::Directory);
+    m_ui->shadowBuildDirEdit->setExpectedKind(Utils::PathChooser::Directory);
     m_ui->invalidQtWarningLabel->setVisible(false);
 
-    m_ui->detailsWidget->setVisible(false);
-    m_ui->titleLabel->setText("");
+    QtVersionManager *vm = QtVersionManager::instance();
 
-    connect(m_ui->detailsButton, SIGNAL(clicked()),
-            this, SLOT(toggleDetails()));
+    connect(vm, SIGNAL(qtVersionsChanged()),
+            this, SLOT(setupQtVersionsComboBox()));
+    connect(vm, SIGNAL(qtVersionsChanged()),
+            this, SLOT(updateDetails()));
+}
+
+Qt4ProjectConfigWidget::~Qt4ProjectConfigWidget()
+{
+    delete m_ui;
+}
+
+void Qt4ProjectConfigWidget::updateDetails()
+{
+    ProjectExplorer::BuildConfiguration *bc = m_pro->buildConfiguration(m_buildConfiguration);
+    QtVersion *version = m_pro->qtVersion(bc);
+    QString versionString;
+    if (m_pro->qtVersionId(bc) == 0) {
+        versionString = tr("Default Qt Version (%1)").arg(version->name());
+    } else if(version){
+        versionString = version->name();
+    } else {
+        versionString = tr("No Qt Version set");
+    }
+    // Qt Version, Build Directory and Toolchain
+    m_detailsContainer->setSummaryText(tr("using Qt version: <b>%1</b><br>"
+                                 "with tool chain <b>%2</b><br>"
+                                 "building in <b>%3</b>")
+                              .arg(versionString,
+                                   ProjectExplorer::ToolChain::toolChainName(m_pro->toolChainType(bc)),
+                                   QDir::toNativeSeparators(m_pro->buildDirectory(bc))));
+}
+
+void Qt4ProjectConfigWidget::manageQtVersions()
+{
+    Core::ICore *core = Core::ICore::instance();
+    core->showOptionsDialog(Constants::QT_CATEGORY, Constants::QTVERSION_PAGE);
+}
+
+
+QString Qt4ProjectConfigWidget::displayName() const
+{
+    return tr("General");
+}
+
+void Qt4ProjectConfigWidget::init(const QString &buildConfiguration)
+{
+    if (debug)
+        qDebug() << "Qt4ProjectConfigWidget::init() for"<<buildConfiguration;
+
+    disconnect(m_ui->nameLineEdit, SIGNAL(textEdited(QString)),
+            this, SLOT(changeConfigName(QString)));
+
+    disconnect(m_ui->shadowBuildCheckBox, SIGNAL(clicked(bool)),
+            this, SLOT(shadowBuildCheckBoxClicked(bool)));
+
+    disconnect(m_ui->shadowBuildDirEdit, SIGNAL(beforeBrowsing()),
+            this, SLOT(onBeforeBeforeShadowBuildDirBrowsed()));
+
+    disconnect(m_ui->shadowBuildDirEdit, SIGNAL(changed(QString)),
+            this, SLOT(shadowBuildLineEditTextChanged()));
+
+    disconnect(m_ui->qtVersionComboBox, SIGNAL(currentIndexChanged(QString)),
+            this, SLOT(qtVersionComboBoxCurrentIndexChanged(QString)));
+
+    disconnect(m_ui->toolChainComboBox, SIGNAL(activated(int)),
+            this, SLOT(selectToolChain(int)));
+
+    disconnect(m_ui->importLabel, SIGNAL(linkActivated(QString)),
+            this, SLOT(importLabelClicked()));
+
+    disconnect(m_ui->manageQtVersionPushButtons, SIGNAL(clicked()),
+            this, SLOT(manageQtVersions()));
+
+
+    m_buildConfiguration = buildConfiguration;
+    ProjectExplorer::BuildConfiguration *bc = m_pro->buildConfiguration(buildConfiguration);
+    m_ui->nameLineEdit->setText(bc->displayName());
+
+    setupQtVersionsComboBox();
+
+    bool shadowBuild = bc->value("useShadowBuild").toBool();
+    m_ui->shadowBuildCheckBox->setChecked(shadowBuild);
+    m_ui->shadowBuildDirEdit->setEnabled(shadowBuild);
+    m_browseButton->setEnabled(shadowBuild);
+    m_ui->shadowBuildDirEdit->setPath(m_pro->buildDirectory(bc));
+    updateImportLabel();
+    updateToolChainCombo();
+    updateDetails();
 
     connect(m_ui->nameLineEdit, SIGNAL(textEdited(QString)),
             this, SLOT(changeConfigName(QString)));
@@ -106,81 +187,12 @@ Qt4ProjectConfigWidget::Qt4ProjectConfigWidget(Qt4Project *project)
     connect(m_ui->manageQtVersionPushButtons, SIGNAL(clicked()),
             this, SLOT(manageQtVersions()));
 
-    QtVersionManager *vm = QtVersionManager::instance();
-
-    connect(vm, SIGNAL(qtVersionsChanged()),
-            this, SLOT(setupQtVersionsComboBox()));
-    connect(vm, SIGNAL(qtVersionsChanged()),
-            this, SLOT(updateDetails()));
-}
-
-Qt4ProjectConfigWidget::~Qt4ProjectConfigWidget()
-{
-    delete m_ui;
-}
-
-void Qt4ProjectConfigWidget::toggleDetails()
-{
-    m_ui->detailsWidget->setVisible(!m_ui->detailsWidget->isVisible());
-    fixupLayout(m_ui->detailsWidget);
-}
-
-void Qt4ProjectConfigWidget::updateDetails()
-{
-    QtVersion *version = m_pro->qtVersion(m_buildConfiguration);
-    QString versionString;
-    if (m_pro->qtVersionId(m_buildConfiguration) == 0) {
-        versionString = tr("Default Qt Version (%1)").arg(version->name());
-    } else if(version){
-        versionString = version->name();
-    } else {
-        versionString = tr("No Qt Version set");
-    }
-    // Qt Version, Build Directory and Toolchain
-    m_ui->titleLabel->setText(tr("using Qt version: <b>%1</b><br>"
-                                 "with tool chain <b>%2</b><br>"
-                                 "building in <b>%3</b>")
-                              .arg(versionString,
-                                   ProjectExplorer::ToolChain::toolChainName(m_pro->toolChainType(m_buildConfiguration)),
-                                   QDir::toNativeSeparators(m_pro->buildDirectory(m_buildConfiguration))));
-}
-
-void Qt4ProjectConfigWidget::manageQtVersions()
-{
-    Core::ICore *core = Core::ICore::instance();
-    core->showOptionsDialog(Constants::QT_CATEGORY, Constants::QTVERSION_PAGE);
-}
-
-
-QString Qt4ProjectConfigWidget::displayName() const
-{
-    return tr("General");
-}
-
-void Qt4ProjectConfigWidget::init(const QString &buildConfiguration)
-{
-    if (debug)
-        qDebug() << "Qt4ProjectConfigWidget::init()";
-
-    m_buildConfiguration = buildConfiguration;
-
-    m_ui->nameLineEdit->setText(m_pro->displayNameFor(m_buildConfiguration));
-
-    setupQtVersionsComboBox();
-
-    bool shadowBuild = m_pro->value(buildConfiguration, "useShadowBuild").toBool();
-    m_ui->shadowBuildCheckBox->setChecked(shadowBuild);
-    m_ui->shadowBuildDirEdit->setEnabled(shadowBuild);
-    m_browseButton->setEnabled(shadowBuild);
-    m_ui->shadowBuildDirEdit->setPath(m_pro->buildDirectory(buildConfiguration));
-    updateImportLabel();
-    updateToolChainCombo();
-    updateDetails();
 }
 
 void Qt4ProjectConfigWidget::changeConfigName(const QString &newName)
 {
-    m_pro->setDisplayNameFor(m_buildConfiguration, newName);
+    m_pro->setDisplayNameFor(
+            m_pro->buildConfiguration(m_buildConfiguration), newName);
 }
 
 void Qt4ProjectConfigWidget::setupQtVersionsComboBox()
@@ -196,7 +208,9 @@ void Qt4ProjectConfigWidget::setupQtVersionsComboBox()
     m_ui->qtVersionComboBox->clear();
     m_ui->qtVersionComboBox->addItem(tr("Default Qt Version (%1)").arg(vm->defaultVersion()->name()), 0);
 
-    if (m_pro->qtVersionId(m_buildConfiguration) == 0) {
+    int qtVersionId = m_pro->qtVersionId(m_pro->buildConfiguration(m_buildConfiguration));
+
+    if (qtVersionId == 0) {
         m_ui->qtVersionComboBox->setCurrentIndex(0);
         m_ui->invalidQtWarningLabel->setVisible(false);
     }
@@ -205,7 +219,7 @@ void Qt4ProjectConfigWidget::setupQtVersionsComboBox()
     for (int i = 0; i < versions.size(); ++i) {
         m_ui->qtVersionComboBox->addItem(versions.at(i)->name(), versions.at(i)->uniqueId());
 
-        if (versions.at(i)->uniqueId() == m_pro->qtVersionId(m_buildConfiguration)) {
+        if (versions.at(i)->uniqueId() == qtVersionId) {
             m_ui->qtVersionComboBox->setCurrentIndex(i + 1);
             m_ui->invalidQtWarningLabel->setVisible(!versions.at(i)->isValid());
         }
@@ -228,12 +242,15 @@ void Qt4ProjectConfigWidget::shadowBuildCheckBoxClicked(bool checked)
     m_ui->shadowBuildDirEdit->setEnabled(checked);
     m_browseButton->setEnabled(checked);
     bool b = m_ui->shadowBuildCheckBox->isChecked();
-    m_pro->setValue(m_buildConfiguration, "useShadowBuild", b);
+    ProjectExplorer::BuildConfiguration *bc = m_pro->buildConfiguration(m_buildConfiguration);
+    bc->setValue("useShadowBuild", b);
     if (b)
-        m_pro->setValue(m_buildConfiguration, "buildDirectory", m_ui->shadowBuildDirEdit->path());
+        bc->setValue("buildDirectory", m_ui->shadowBuildDirEdit->path());
     else
-        m_pro->setValue(m_buildConfiguration, "buildDirectory", QVariant(QString::null));
+        bc->setValue("buildDirectory", QVariant(QString::null));
+    m_pro->buildDirectoryChanged();
     updateDetails();
+    updateImportLabel();
 }
 
 void Qt4ProjectConfigWidget::updateImportLabel()
@@ -242,17 +259,18 @@ void Qt4ProjectConfigWidget::updateImportLabel()
 
     // we only show if we actually have a qmake and makestep
     if (m_pro->qmakeStep() && m_pro->makeStep()) {
-        QString qtPath = QtVersionManager::findQtVersionFromMakefile(m_pro->buildDirectory(m_buildConfiguration));
-        QtVersion *version = m_pro->qtVersion(m_buildConfiguration);
+        ProjectExplorer::BuildConfiguration *bc = m_pro->buildConfiguration(m_buildConfiguration);
+        QString qmakePath = QtVersionManager::findQMakeBinaryFromMakefile(m_pro->buildDirectory(bc));
+        QtVersion *version = m_pro->qtVersion(bc);
         // check that there's a makefile
-        if (!qtPath.isEmpty()) {
-            // and that the makefile path is different from the current version
-            if (qtPath != (version ? version->path() : QString())) {
+        if (!qmakePath.isEmpty()) {
+            // and that the qmake path is different from the current version
+            if (qmakePath != (version ? version->qmakeCommand() : QString())) {
                 // import enable
                 visible = true;
             } else {
                 // check that the qmake flags, arguments match
-                visible = !m_pro->compareBuildConfigurationToImportFrom(m_buildConfiguration, m_pro->buildDirectory(m_buildConfiguration));
+                visible = !m_pro->compareBuildConfigurationToImportFrom(bc, m_pro->buildDirectory(bc));
             }
         } else {
             visible = false;
@@ -264,15 +282,18 @@ void Qt4ProjectConfigWidget::updateImportLabel()
 
 void Qt4ProjectConfigWidget::shadowBuildLineEditTextChanged()
 {
-    if (m_pro->value(m_buildConfiguration, "buildDirectory").toString() == m_ui->shadowBuildDirEdit->path())
+    ProjectExplorer::BuildConfiguration *bc = m_pro->buildConfiguration(m_buildConfiguration);
+    if (bc->value("buildDirectory").toString() == m_ui->shadowBuildDirEdit->path())
         return;
-    m_pro->setValue(m_buildConfiguration, "buildDirectory", m_ui->shadowBuildDirEdit->path());
+    bc->setValue("buildDirectory", m_ui->shadowBuildDirEdit->path());
     // if the directory already exists
     // check if we have a build in there and
     // offer to import it
-    updateImportLabel();
 
+    m_pro->buildDirectoryChanged();
     m_pro->invalidateCachedTargetInformation();
+
+    updateImportLabel();
     updateDetails();
 }
 
@@ -280,14 +301,15 @@ void Qt4ProjectConfigWidget::importLabelClicked()
 {
     if (!m_pro->qmakeStep() || !m_pro->makeStep())
         return;
-    QString directory = m_pro->buildDirectory(m_buildConfiguration);
+    ProjectExplorer::BuildConfiguration *bc = m_pro->buildConfiguration(m_buildConfiguration);
+    QString directory = m_pro->buildDirectory(bc);
     if (!directory.isEmpty()) {
-        QString qtPath = QtVersionManager::findQtVersionFromMakefile(directory);
-        if (!qtPath.isEmpty()) {
+        QString qmakePath = QtVersionManager::findQMakeBinaryFromMakefile(directory);
+        if (!qmakePath.isEmpty()) {
             QtVersionManager *vm = QtVersionManager::instance();
-            QtVersion *version = vm->qtVersionForDirectory(qtPath);
+            QtVersion *version = vm->qtVersionForQMakeBinary(qmakePath);
             if (!version) {
-                version = new QtVersion(QFileInfo(qtPath).baseName(), qtPath);
+                version = new QtVersion(qmakePath);
                 vm->addVersion(version);
             }
 
@@ -298,24 +320,29 @@ void Qt4ProjectConfigWidget::importLabelClicked()
 
             QString versionSpec = version->sourcePath() + "/mkspecs/" + version->mkspec();
             QString parsedSpec = Qt4Project::extractSpecFromArgumentList(additionalArguments);
-            QString parsedSpecOrginal = parsedSpec;
-            if (QFileInfo(parsedSpec).isRelative())
-                parsedSpec = QDir::cleanPath(directory + "/" + parsedSpec);
-            additionalArguments = Qt4Project::removeSpecFromArgumentList(additionalArguments);
-            if (parsedSpec != versionSpec) {
-                additionalArguments.prepend(parsedSpecOrginal);
-                additionalArguments.prepend("-spec");
+
+            if (parsedSpec.isEmpty()) {
+                // using the default spec, don't modify additional arguments
+            } else {
+                QString parsedSpecOrginal = parsedSpec;
+                if (QFileInfo(parsedSpec).isRelative())
+                    parsedSpec = QDir::cleanPath(directory + "/" + parsedSpec);
+                additionalArguments = Qt4Project::removeSpecFromArgumentList(additionalArguments);
+                if (parsedSpec != versionSpec) {
+                    additionalArguments.prepend(parsedSpecOrginal);
+                    additionalArguments.prepend("-spec");
+                }
             }
 
             // So we got all the information now apply it...
-            m_pro->setQtVersion(m_buildConfiguration, version->uniqueId());
+            m_pro->setQtVersion(bc, version->uniqueId());
             // Combo box will be updated at the end
 
             QMakeStep *qmakeStep = m_pro->qmakeStep();
             qmakeStep->setQMakeArguments(m_buildConfiguration, additionalArguments);
             MakeStep *makeStep = m_pro->makeStep();
 
-            m_pro->setValue(m_buildConfiguration, "buildConfiguration", int(qmakeBuildConfig));
+            bc->setValue("buildConfiguration", int(qmakeBuildConfig));
             // Adjust command line arguments, this is ugly as hell
             // If we are switching to BuildAll we want "release" in there and no "debug"
             // or "debug" in there and no "release"
@@ -349,24 +376,26 @@ void Qt4ProjectConfigWidget::qtVersionComboBoxCurrentIndexChanged(const QString 
     QtVersionManager *vm = QtVersionManager::instance();
     bool isValid = vm->version(newQtVersion)->isValid();
     m_ui->invalidQtWarningLabel->setVisible(!isValid);
-    if (newQtVersion != m_pro->qtVersionId(m_buildConfiguration)) {
-        m_pro->setQtVersion(m_buildConfiguration, newQtVersion);
+    if (newQtVersion != m_pro->qtVersionId(m_pro->buildConfiguration(m_buildConfiguration))) {
+        m_pro->setQtVersion(m_pro->buildConfiguration(m_buildConfiguration), newQtVersion);
         updateToolChainCombo();
         m_pro->update();
     }
     updateDetails();
+    updateImportLabel();
 }
 
 void Qt4ProjectConfigWidget::updateToolChainCombo()
 {
     m_ui->toolChainComboBox->clear();
-    QList<ProjectExplorer::ToolChain::ToolChainType> toolchains = m_pro->qtVersion(m_buildConfiguration)->possibleToolChainTypes();
+    ProjectExplorer::BuildConfiguration *bc = m_pro->buildConfiguration(m_buildConfiguration);
+    QList<ProjectExplorer::ToolChain::ToolChainType> toolchains = m_pro->qtVersion(bc)->possibleToolChainTypes();
     using namespace ProjectExplorer;
     foreach (ToolChain::ToolChainType toolchain, toolchains) {
         m_ui->toolChainComboBox->addItem(ToolChain::toolChainName(toolchain), qVariantFromValue(toolchain));
     }
     m_ui->toolChainComboBox->setEnabled(toolchains.size() > 1);
-    setToolChain(toolchains.indexOf(m_pro->toolChainType(m_buildConfiguration)));
+    setToolChain(toolchains.indexOf(m_pro->toolChainType(bc)));
 }
 
 void Qt4ProjectConfigWidget::selectToolChain(int index)
@@ -380,7 +409,7 @@ void Qt4ProjectConfigWidget::setToolChain(int index)
     ProjectExplorer::ToolChain::ToolChainType selectedToolChainType =
         m_ui->toolChainComboBox->itemData(index,
             Qt::UserRole).value<ProjectExplorer::ToolChain::ToolChainType>();
-    m_pro->setToolChainType(m_buildConfiguration, selectedToolChainType);
+    m_pro->setToolChainType(m_pro->buildConfiguration(m_buildConfiguration), selectedToolChainType);
     if (m_ui->toolChainComboBox->currentIndex() != index)
         m_ui->toolChainComboBox->setCurrentIndex(index);
     updateDetails();

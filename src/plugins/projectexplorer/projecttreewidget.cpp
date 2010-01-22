@@ -30,6 +30,8 @@
 #include "projecttreewidget.h"
 
 #include "projectexplorer.h"
+#include "project.h"
+#include "session.h"
 #include "projectexplorerconstants.h"
 #include "projectmodels.h"
 
@@ -44,7 +46,9 @@
 #include <QtGui/QVBoxLayout>
 #include <QtGui/QToolButton>
 #include <QtGui/QFocusEvent>
+#include <QtGui/QAction>
 #include <QtGui/QPalette>
+#include <QtGui/QMenu>
 
 using namespace ProjectExplorer;
 using namespace ProjectExplorer::Internal;
@@ -379,7 +383,7 @@ Core::NavigationView ProjectTreeWidgetFactory::createWidget()
     filterMenu->addAction(ptw->m_filterGeneratedFilesAction);
     filter->setMenu(filterMenu);
 
-    n.doockToolBarWidgets << filter << ptw->toggleSync();
+    n.dockToolBarWidgets << filter << ptw->toggleSync();
     return n;
 }
 

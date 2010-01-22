@@ -100,7 +100,7 @@ static QString pluginDependencies(const PluginBaseClasses *plb)
 }
 
 // A Project intro page with an additional type chooser.
-class LibraryIntroPage : public Core::Utils::ProjectIntroPage
+class LibraryIntroPage : public Utils::ProjectIntroPage
 {
     Q_DISABLE_COPY(LibraryIntroPage)
 public:
@@ -115,7 +115,7 @@ private:
 };
 
 LibraryIntroPage::LibraryIntroPage(QWidget *parent) :
-    Core::Utils::ProjectIntroPage(parent),
+    Utils::ProjectIntroPage(parent),
     m_typeCombo(new QComboBox)
 {
     m_typeCombo->setEditable(false);
@@ -169,6 +169,7 @@ LibraryWizardDialog::LibraryWizardDialog(const QString &templateName,
 
     m_filesPage->setNamespacesEnabled(true);
     m_filesPage->setFormFileInputVisible(false);
+    m_filesPage->setClassTypeComboVisible(false);
     setPage(FilePageId, m_filesPage);
 
     connect(this, SIGNAL(currentIdChanged(int)), this, SLOT(slotCurrentIdChanged(int)));

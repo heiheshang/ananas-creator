@@ -51,7 +51,7 @@
 #include <cstring>
 #include <cassert>
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 using namespace std;
 
@@ -110,6 +110,19 @@ void *MemoryPool::allocate_helper(size_t size)
     return addr;
 }
 
+MemoryPool::State MemoryPool::state() const
+{ return State(ptr, _blockCount); }
+
+void MemoryPool::rewind(const State &state)
+{
+    if (_blockCount == state.blockCount && state.ptr < ptr) {
+        if (_initializeAllocatedMemory)
+            memset(state.ptr, '\0', ptr - state.ptr);
+
+        ptr = state.ptr;
+    }
+}
+
 Managed::Managed()
 { }
 
@@ -125,4 +138,4 @@ void Managed::operator delete(void *)
 void Managed::operator delete(void *, MemoryPool *)
 { }
 
-CPLUSPLUS_END_NAMESPACE
+

@@ -49,6 +49,7 @@ struct CdbComInterfaces;
 class CdbSymbolGroupContext;
 class CdbStackFrameContext;
 class CdbDumperHelper;
+struct ThreadData;
 
 /* Context representing a break point stack consisting of several frames.
  * Maintains an on-demand constructed list of CdbStackFrameContext
@@ -61,6 +62,15 @@ class CdbStackTraceContext
     explicit CdbStackTraceContext(const QSharedPointer<CdbDumperHelper> &dumper);
 public:
     enum { maxFrames = 100 };
+
+    // Some well known-functions
+    static const char *winFuncFastSystemCallRet;
+    // WaitFor...
+    static const char *winFuncWaitForPrefix;
+    static const char *winFuncMsgWaitForPrefix;
+
+    // Dummy function used for interrupting a debuggee
+    static const char *winFuncDebugBreakPoint;
 
     ~CdbStackTraceContext();
     static CdbStackTraceContext *create(const QSharedPointer<CdbDumperHelper> &dumper,
@@ -80,6 +90,14 @@ public:
     // Format for logging
     void format(QTextStream &str) const;
     QString toString() const;
+
+    // Retrieve information about threads. When stopped, add
+    // current stack frame.
+    static bool getThreads(const CdbComInterfaces &cif,
+                           bool isStopped,
+                           QList<ThreadData> *threads,
+                           ULONG *currentThreadId,
+                           QString *errorMessage);
 
 private:
     bool init(unsigned long frameCount, QString *errorMessage);

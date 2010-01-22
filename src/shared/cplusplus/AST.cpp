@@ -54,7 +54,7 @@
 #include <cstddef>
 #include <algorithm>
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 AST::AST()
 { }
@@ -2359,6 +2359,8 @@ unsigned ObjCMethodPrototypeAST::lastToken() const
 {
     if (attributes)
         return attributes->lastToken();
+    else if (dot_dot_dot_token)
+        return dot_dot_dot_token + 1;
     else if (arguments)
         return arguments->lastToken();
     else if (type_name)
@@ -2491,4 +2493,4 @@ unsigned ObjCSynchronizedStatementAST::lastToken() const
     return synchronized_token + 1;
 }
 
-CPLUSPLUS_END_NAMESPACE
+

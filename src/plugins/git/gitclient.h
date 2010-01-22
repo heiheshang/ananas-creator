@@ -33,7 +33,6 @@
 #include "gitsettings.h"
 #include "gitcommand.h"
 
-#include <coreplugin/iversioncontrol.h>
 #include <coreplugin/editormanager/ieditor.h>
 
 #include <QtCore/QString>
@@ -41,6 +40,7 @@
 
 QT_BEGIN_NAMESPACE
 class QErrorMessage;
+class QSignalMapper;
 QT_END_NAMESPACE
 
 namespace Core {
@@ -80,7 +80,7 @@ public:
 
     void status(const QString &workingDirectory);
     void log(const QString &workingDirectory, const QString &fileName);
-    void blame(const QString &workingDirectory, const QString &fileName);
+    void blame(const QString &workingDirectory, const QString &fileName, int lineNumber = -1);
     void showCommit(const QString &workingDirectory, const QString &commit);
     void checkout(const QString &workingDirectory, const QString &file);
     void checkoutBranch(const QString &workingDirectory, const QString &branch);
@@ -155,13 +155,15 @@ private:
 
     GitCommand *createCommand(const QString &workingDirectory,
                              VCSBase::VCSBaseEditor* editor = 0,
-                             bool outputToWindow = false);
+                             bool outputToWindow = false,
+                             int editorLineNumber = -1);
 
-    void executeGit(const QString &workingDirectory,
-                    const QStringList &arguments,
-                    VCSBase::VCSBaseEditor* editor = 0,
-                    bool outputToWindow = false,
-                    GitCommand::TerminationReportMode tm = GitCommand::NoReport);
+    GitCommand *executeGit(const QString &workingDirectory,
+                           const QStringList &arguments,
+                           VCSBase::VCSBaseEditor* editor = 0,
+                           bool outputToWindow = false,
+                           GitCommand::TerminationReportMode tm = GitCommand::NoReport,
+                           int editorLineNumber = -1);
 
     bool synchronousGit(const QString &workingDirectory,
                         const QStringList &arguments,
@@ -171,12 +173,14 @@ private:
 
     enum RevertResult { RevertOk, RevertUnchanged, RevertCanceled, RevertFailed };
     RevertResult revertI(QStringList files, bool *isDirectory, QString *errorMessage);
+    void connectRepositoryChanged(const QString & repository, GitCommand *cmd);
 
     const QString m_msgWait;
     GitPlugin     *m_plugin;
     Core::ICore   *m_core;
     GitSettings   m_settings;
     QString m_binaryPath;
+    QSignalMapper *m_repositoryChangedSignalMapper;
 };
 
 

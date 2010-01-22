@@ -33,15 +33,24 @@
 #include "texteditor_global.h"
 
 #include <find/ifindfilter.h>
-#include <find/searchresultwindow.h>
 #include <utils/filesearch.h>
 
 #include <QtCore/QFutureWatcher>
 #include <QtCore/QPointer>
-#include <QtGui/QLabel>
-#include <QtGui/QComboBox>
+
 #include <QtGui/QStringListModel>
-#include <QtGui/QCheckBox>
+
+QT_BEGIN_NAMESPACE
+class QLabel;
+class QComboBox;
+class QCheckBox;
+class QStringListModel;
+QT_END_NAMESPACE
+
+namespace Find {
+class SearchResultWindow;
+struct SearchResultItem;
+}
 
 namespace TextEditor {
 
@@ -68,14 +77,14 @@ protected:
 private slots:
     void displayResult(int index);
     void searchFinished();
-    void openEditor(const QString &fileName, int line, int column);
+    void openEditor(const Find::SearchResultItem &item);
     void syncRegExpSetting(bool useRegExp);
 
 private:
     QWidget *createProgressWidget();
 
     Find::SearchResultWindow *m_resultWindow;
-    QFutureWatcher<Core::Utils::FileSearchResult> m_watcher;
+    QFutureWatcher<Utils::FileSearchResult> m_watcher;
     bool m_isSearching;
     QLabel *m_resultLabel;
     QStringListModel m_filterStrings;

@@ -69,28 +69,23 @@ StackWindow::StackWindow(DebuggerManager *manager, QWidget *parent)
         this, SLOT(rowActivated(QModelIndex)));
     connect(act, SIGNAL(toggled(bool)),
         this, SLOT(setAlternatingRowColorsHelper(bool)));
+    connect(theDebuggerAction(UseAddressInStackView), SIGNAL(toggled(bool)),
+        this, SLOT(showAddressColumn(bool)));
 }
 
-void StackWindow::resizeEvent(QResizeEvent *event)
+StackWindow::~StackWindow()
 {
-/*
-    QHeaderView *hv = header();
+    delete m_disassemblerAgent;
+}
 
-    int totalSize = event->size().width() - 120;
-    if (totalSize > 10) {
-        hv->resizeSection(0, 45);
-        hv->resizeSection(1, totalSize / 2);
-        hv->resizeSection(2, totalSize / 2);
-        hv->resizeSection(3, 55);
-    }
-*/
-    QTreeView::resizeEvent(event);
+void StackWindow::showAddressColumn(bool on)
+{
+    setColumnHidden(4, !on);
 }
 
 void StackWindow::rowActivated(const QModelIndex &index)
 {
-    //qDebug() << "ACTIVATED: " << index.row() << index.column();
-    emit frameActivated(index.row());
+    m_manager->activateFrame(index.row());
 }
 
 void StackWindow::contextMenuEvent(QContextMenuEvent *ev)
@@ -112,7 +107,7 @@ void StackWindow::contextMenuEvent(QContextMenuEvent *ev)
         actShowMemory->setEnabled(false);
     } else {
         actShowMemory->setText(tr("Open memory editor at %1").arg(address));
-    }
+    }    
 
     QAction *actShowDisassembler = menu.addAction(QString());
     if (address.isEmpty()) {
@@ -123,6 +118,10 @@ void StackWindow::contextMenuEvent(QContextMenuEvent *ev)
     }
 
     menu.addSeparator();
+#if 0 // @TODO: not implemented
+    menu.addAction(theDebuggerAction(UseToolTipsInStackView));
+#endif
+    menu.addAction(theDebuggerAction(UseAddressInStackView));
 
     QAction *actAdjust = menu.addAction(tr("Adjust column widths to contents"));
 
@@ -171,10 +170,8 @@ void StackWindow::copyContentsToClipboard()
 
 void StackWindow::resizeColumnsToContents()
 {
-    resizeColumnToContents(0);
-    resizeColumnToContents(1);
-    resizeColumnToContents(2);
-    resizeColumnToContents(3);
+    for (int i = model()->columnCount(); --i >= 0; )
+        resizeColumnToContents(i);
 }
 
 void StackWindow::setAlwaysResizeColumnsToContents(bool on)
@@ -182,10 +179,8 @@ void StackWindow::setAlwaysResizeColumnsToContents(bool on)
     m_alwaysResizeColumnsToContents = on;
     QHeaderView::ResizeMode mode =
         on ? QHeaderView::ResizeToContents : QHeaderView::Interactive;
-    header()->setResizeMode(0, mode);
-    header()->setResizeMode(1, mode);
-    header()->setResizeMode(2, mode);
-    header()->setResizeMode(3, mode);
+    for (int i = model()->columnCount(); --i >= 0; )
+        header()->setResizeMode(i, mode);
 }
 
 } // namespace Internal

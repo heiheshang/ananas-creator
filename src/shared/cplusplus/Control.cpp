@@ -57,7 +57,8 @@
 #include <map> // ### replace me with LiteralTable
 #include <string>
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
+
 
 template <typename _Iterator>
 static void delete_map_entries(_Iterator first, _Iterator last)
@@ -88,7 +89,7 @@ public:
         : control(control),
           translationUnit(0),
           diagnosticClient(0)
-    { }
+    {}
 
     ~Data()
     {
@@ -121,6 +122,8 @@ public:
         delete_array_entries(enums);
         delete_array_entries(usingDeclarations);
         delete_array_entries(classForwardDeclarations);
+        delete_array_entries(objcBaseClasses);
+        delete_array_entries(objcBaseProtocols);
         delete_array_entries(objcClasses);
         delete_array_entries(objcProtocols);
         delete_array_entries(objcForwardClassDeclarations);
@@ -341,6 +344,20 @@ public:
         return c;
     }
 
+    ObjCBaseClass *newObjCBaseClass(unsigned sourceLocation, Name *name)
+    {
+        ObjCBaseClass *c = new ObjCBaseClass(translationUnit, sourceLocation, name);
+        objcBaseClasses.push_back(c);
+        return c;
+    }
+
+    ObjCBaseProtocol *newObjCBaseProtocol(unsigned sourceLocation, Name *name)
+    {
+        ObjCBaseProtocol *p = new ObjCBaseProtocol(translationUnit, sourceLocation, name);
+        objcBaseProtocols.push_back(p);
+        return p;
+    }
+
     ObjCClass *newObjCClass(unsigned sourceLocation, Name *name)
     {
         ObjCClass *c = new ObjCClass(translationUnit, sourceLocation, name);
@@ -553,15 +570,38 @@ public:
     std::vector<Enum *> enums;
     std::vector<UsingDeclaration *> usingDeclarations;
     std::vector<ForwardClassDeclaration *> classForwardDeclarations;
+    std::vector<ObjCBaseClass *> objcBaseClasses;
+    std::vector<ObjCBaseProtocol *> objcBaseProtocols;
     std::vector<ObjCClass *> objcClasses;
     std::vector<ObjCProtocol *> objcProtocols;
     std::vector<ObjCForwardClassDeclaration *> objcForwardClassDeclarations;
     std::vector<ObjCForwardProtocolDeclaration *> objcForwardProtocolDeclarations;
     std::vector<ObjCMethod *> objcMethods;
+
+    // ObjC context keywords:
+    Identifier *objcGetterId;
+    Identifier *objcSetterId;
+    Identifier *objcReadwriteId;
+    Identifier *objcReadonlyId;
+    Identifier *objcAssignId;
+    Identifier *objcRetainId;
+    Identifier *objcCopyId;
+    Identifier *objcNonatomicId;
 };
 
 Control::Control()
-{ d = new Data(this); }
+{
+    d = new Data(this);
+
+    d->objcGetterId = findOrInsertIdentifier("getter");
+    d->objcSetterId = findOrInsertIdentifier("setter");
+    d->objcReadwriteId = findOrInsertIdentifier("readwrite");
+    d->objcReadonlyId = findOrInsertIdentifier("readonly");
+    d->objcAssignId = findOrInsertIdentifier("assign");
+    d->objcRetainId = findOrInsertIdentifier("retain");
+    d->objcCopyId = findOrInsertIdentifier("copy");
+    d->objcNonatomicId = findOrInsertIdentifier("nonatomic");
+}
 
 Control::~Control()
 { delete d; }
@@ -581,6 +621,9 @@ DiagnosticClient *Control::diagnosticClient() const
 
 void Control::setDiagnosticClient(DiagnosticClient *diagnosticClient)
 { d->diagnosticClient = diagnosticClient; }
+
+Identifier *Control::findIdentifier(const char *chars, unsigned size) const
+{ return d->identifiers.findLiteral(chars, size); }
 
 Identifier *Control::findOrInsertIdentifier(const char *chars, unsigned size)
 { return d->identifiers.findOrInsertLiteral(chars, size); }
@@ -723,6 +766,12 @@ ForwardClassDeclaration *Control::newForwardClassDeclaration(unsigned sourceLoca
                                                              Name *name)
 { return d->newForwardClassDeclaration(sourceLocation, name); }
 
+ObjCBaseClass *Control::newObjCBaseClass(unsigned sourceLocation, Name *name)
+{ return d->newObjCBaseClass(sourceLocation, name); }
+
+ObjCBaseProtocol *Control::newObjCBaseProtocol(unsigned sourceLocation, Name *name)
+{ return d->newObjCBaseProtocol(sourceLocation, name); }
+
 ObjCClass *Control::newObjCClass(unsigned sourceLocation, Name *name)
 { return d->newObjCClass(sourceLocation, name); }
 
@@ -738,4 +787,26 @@ ObjCForwardProtocolDeclaration *Control::newObjCForwardProtocolDeclaration(unsig
 ObjCMethod *Control::newObjCMethod(unsigned sourceLocation, Name *name)
 { return d->newObjCMethod(sourceLocation, name); }
 
-CPLUSPLUS_END_NAMESPACE
+Identifier *Control::objcGetterId() const
+{ return d->objcGetterId; }
+
+Identifier *Control::objcSetterId() const
+{ return d->objcSetterId; }
+
+Identifier *Control::objcReadwriteId() const
+{ return d->objcReadwriteId; }
+
+Identifier *Control::objcReadonlyId() const
+{ return d->objcReadonlyId; }
+
+Identifier *Control::objcAssignId() const
+{ return d->objcAssignId; }
+
+Identifier *Control::objcRetainId() const
+{ return d->objcRetainId; }
+
+Identifier *Control::objcCopyId() const
+{ return d->objcCopyId; }
+
+Identifier *Control::objcNonatomicId() const
+{ return d->objcNonatomicId; }

@@ -35,7 +35,6 @@
 #include <QtGui/QWidget>
 #include <QtGui/QAbstractButton>
 
-namespace Core {
 namespace Utils {
 
 struct PathChooserPrivate;
@@ -100,6 +99,7 @@ private:
 
 signals:
     void validChanged();
+    void validChanged(bool validState);
     void changed(const QString &text);
     void editingFinished();
     void beforeBrowsing();
@@ -117,6 +117,6 @@ private:
 };
 
 } // namespace Utils
-} // namespace Core
+
 
 #endif // PATHCHOOSER_H

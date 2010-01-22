@@ -31,25 +31,28 @@
 #define CUSTOMEXECUTABLERUNCONFIGURATION_H
 
 #include "applicationrunconfiguration.h"
-
-#include <utils/pathchooser.h>
-#include <projectexplorer/environmenteditmodel.h>
-
-#include <QtGui/QToolButton>
+#include <QtGui/QWidget>
 
 QT_BEGIN_NAMESPACE
 class QCheckBox;
 class QLineEdit;
 class QComboBox;
+class QLabel;
+class QAbstractButton;
 QT_END_NAMESPACE
 
+namespace Utils {
+class DetailsWidget;
+class PathChooser;
+}
+
 namespace ProjectExplorer {
-    
+class EnvironmentWidget;
 namespace Internal {
     class CustomExecutableConfigurationWidget;
 }
 
-class PROJECTEXPLORER_EXPORT CustomExecutableRunConfiguration : public ApplicationRunConfiguration
+class PROJECTEXPLORER_EXPORT CustomExecutableRunConfiguration : public LocalApplicationRunConfiguration
 {
     // the configuration widget needs to setExecutable setWorkingDirectory and setCommandLineArguments
     friend class Internal::CustomExecutableConfigurationWidget;    
@@ -78,7 +81,7 @@ public:
      */
     QString userName() const;
 
-    virtual ApplicationRunConfiguration::RunMode runMode() const;
+    virtual LocalApplicationRunConfiguration::RunMode runMode() const;
     virtual QString workingDirectory() const;
     QString baseWorkingDirectory() const;
     virtual QStringList commandLineArguments() const;
@@ -164,13 +167,14 @@ private slots:
 private:
     bool m_ignoreChange;
     CustomExecutableRunConfiguration *m_runConfiguration;
-    Core::Utils::PathChooser *m_executableChooser;
+    Utils::PathChooser *m_executableChooser;
     QLineEdit *m_userName;
     QLineEdit *m_commandLineArgumentsLineEdit;
-    Core::Utils::PathChooser *m_workingDirectory;
+    Utils::PathChooser *m_workingDirectory;
     QCheckBox *m_useTerminalCheck;
     ProjectExplorer::EnvironmentWidget *m_environmentWidget;
     QComboBox *m_baseEnvironmentComboBox;
+    Utils::DetailsWidget *m_detailsContainer;
 };
 
 } // namespace Internal

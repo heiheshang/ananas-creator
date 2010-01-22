@@ -42,9 +42,9 @@
 
 
 namespace Debugger {
+class DebuggerManager;
 namespace Internal {
 
-class DebuggerManager;
 struct DisassemblerViewAgentPrivate;
 
 class MemoryViewAgent : public QObject
@@ -63,13 +63,14 @@ public slots:
     // Called from Engine
     void addLazyData(quint64 addr, const QByteArray &data);
     // Called from Editor
-    void fetchLazyData(int block, bool sync);
+    void fetchLazyData(quint64 block, bool sync);
 
 private:
     void init(quint64 startaddr);
 
     QPointer<IDebuggerEngine> m_engine;
     QPointer<Core::IEditor> m_editor;
+    QPointer<DebuggerManager> m_manager;
 };
 
 
@@ -83,8 +84,11 @@ public:
     ~DisassemblerViewAgent();
 
     void setFrame(const StackFrame &frame);
+    void resetLocation();
     Q_SLOT void setContents(const QString &contents);
     QString address() const;
+    bool contentsCoversAddress(const QString &contents) const;
+    void cleanup();
 
 private:
     DisassemblerViewAgentPrivate *d;

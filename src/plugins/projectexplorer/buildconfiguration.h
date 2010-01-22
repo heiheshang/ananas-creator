@@ -30,34 +30,69 @@
 #ifndef BUILDCONFIGURATION_H
 #define BUILDCONFIGURATION_H
 
-#include <QtCore/QString>
-#include <QtCore/QVariant>
+#include "projectexplorer_export.h"
+
 #include <QtCore/QHash>
+#include <QtCore/QString>
+#include <QtCore/QStringList>
+#include <QtCore/QList>
+#include <QtCore/QObject>
+#include <QtCore/QVariant>
 
 namespace ProjectExplorer {
-namespace Internal {
 
-class BuildConfiguration
+class Project;
+
+class PROJECTEXPLORER_EXPORT BuildConfiguration : public QObject
 {
+    Q_OBJECT
+
 public:
     BuildConfiguration(const QString &name);
     BuildConfiguration(const QString &name, BuildConfiguration *source);
     QString name() const;
-    QVariant getValue(const QString &key) const;
-    void setValue(const QString &key, QVariant value);
-
-    QString displayName();
+    QString displayName() const;
     void setDisplayName(const QString &name);
+
+    QVariant value(const QString &key) const;
+    void setValue(const QString &key, QVariant value);
 
     QMap<QString, QVariant> toMap() const;
     void setValuesFromMap(QMap<QString, QVariant> map);
 
 private:
+    void setName(const QString &name);
+
     QHash<QString, QVariant> m_values;
     QString m_name;
+    friend class Project;
 };
 
-}
+class PROJECTEXPLORER_EXPORT IBuildConfigurationFactory : public QObject
+{
+    Q_OBJECT
+
+public:
+    IBuildConfigurationFactory(QObject *parent = 0);
+    virtual ~IBuildConfigurationFactory();
+
+    // used to show the list of possible additons to a project, returns a list of types
+    virtual QStringList availableCreationTypes() const = 0;
+    // used to translate the types to names to display to the user
+    virtual QString displayNameForType(const QString &type) const = 0;
+
+    // creates build configuration(s) for given type and adds them to project
+    // returns true if build configuration(s) actually have been added
+    virtual bool create(const QString &type) const = 0;
+
+// to come:
+// restore
+// clone
+
+signals:
+    void availableCreationTypesChanged();
+};
+
 } // namespace ProjectExplorer
 
 #endif // BUILDCONFIGURATION_H

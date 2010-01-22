@@ -30,19 +30,15 @@
 #ifndef PROJECT_H
 #define PROJECT_H
 
-#include "persistentsettings.h"
 #include "projectexplorer_export.h"
-#include "buildconfiguration.h"
-#include "environment.h"
-#include "projectnodes.h"
 
 #include <QtCore/QSharedPointer>
 #include <QtCore/QObject>
-#include <QtCore/QModelIndex>
-#include <QtCore/QFileInfo>
 #include <QtGui/QFileSystemModel>
-#include <QtGui/QMenu>
-#include <QtGui/QIcon>
+
+QT_BEGIN_NAMESPACE
+class QMenu;
+QT_END_NAMESPACE
 
 namespace Core {
 class IFile;
@@ -56,6 +52,12 @@ class BuildConfigWidget;
 class IProjectManager;
 class RunConfiguration;
 class EditorConfiguration;
+class Environment;
+class ProjectNode;
+class PersistentSettingsWriter;
+class PersistentSettingsReader;
+class BuildConfiguration;
+class IBuildConfigurationFactory;
 
 class PROJECTEXPLORER_EXPORT Project
     : public QObject
@@ -94,21 +96,20 @@ public:
     void moveCleanStepUp(int position);
 
     // Build configuration
-    void addBuildConfiguration(const QString &name);
-    void removeBuildConfiguration(const QString  &name);
+    void addBuildConfiguration(BuildConfiguration *configuration);
+    void removeBuildConfiguration(BuildConfiguration *configuration);
     void copyBuildConfiguration(const QString &source, const QString &dest);
-    QStringList buildConfigurations() const;
-    QString displayNameFor(const QString &buildConfiguration);
-    void setDisplayNameFor(const QString &buildConfiguration, const QString &displayName);
+    BuildConfiguration *buildConfiguration(const QString & name) const;
+    QList<BuildConfiguration *> buildConfigurations() const;
+    // remove and add "QString uniqueConfigurationDisplayName(const QString &proposedName) const" instead
+    void setDisplayNameFor(BuildConfiguration *configuration, const QString &displayName);
+    BuildConfiguration *activeBuildConfiguration() const;
+    void setActiveBuildConfiguration(BuildConfiguration *configuration);
 
-    QString activeBuildConfiguration() const;
-    void setActiveBuildConfiguration(const QString& config);
+    virtual IBuildConfigurationFactory *buildConfigurationFactory() const = 0;
 
     void setValue(const QString &name, const QVariant &value);
     QVariant value(const QString &name) const;
-
-    void setValue(const QString &buildConfiguration, const QString &name, const QVariant &value);
-    QVariant value(const QString &buildConfiguration, const QString &name) const;
 
     // Running
     QList<QSharedPointer<RunConfiguration> > runConfigurations() const;
@@ -120,19 +121,14 @@ public:
 
     EditorConfiguration *editorConfiguration() const;
 
-    virtual Environment environment(const QString &buildConfiguration) const = 0;
-    virtual QString buildDirectory(const QString &buildConfiguration) const = 0;
+    virtual Environment environment(BuildConfiguration *configuration) const = 0;
+    virtual QString buildDirectory(BuildConfiguration *configuration) const = 0;
 
     void saveSettings();
     bool restoreSettings();
 
     virtual BuildConfigWidget *createConfigWidget() = 0;
     virtual QList<BuildConfigWidget*> subConfigWidgets();
-
-    /* This method is called for new build configurations. You should probably
-     * set some default values in this method.
-     */
-    virtual void newBuildConfiguration(const QString &buildConfiguration) = 0;
 
     virtual ProjectNode *rootProjectNode() const = 0;
 
@@ -145,13 +141,26 @@ public:
     virtual QStringList includePaths(const QString &fileName) const;
     virtual QStringList frameworkPaths(const QString &fileName) const;
 
+    static QString makeUnique(const QString &preferedName, const QStringList &usedNames);
 signals:
     void fileListChanged();
+    void buildDirectoryChanged();
+
+// TODO clean up signal names
+// might be better to also have
+// a aboutToRemoveRunConfiguration
+// and a removedBuildConfiguration
+// a runconfiguration display name changed is missing
     void activeBuildConfigurationChanged();
     void activeRunConfigurationChanged();
     void runConfigurationsEnabledStateChanged();
-    void removedRunConfiguration(const QString &name);
-    void addedRunConfiguration(const QString &name);
+
+    void removedRunConfiguration(ProjectExplorer::Project *p, const QString &name);
+    void addedRunConfiguration(ProjectExplorer::Project *p, const QString &name);
+
+    void removedBuildConfiguration(ProjectExplorer::Project *p, const QString &name);
+    void addedBuildConfiguration(ProjectExplorer::Project *p, const QString &name);
+
     // This signal is jut there for updating the tree list in the buildsettings wizard
     void buildConfigurationDisplayNameChanged(const QString &buildConfiguration);
     void environmentChanged(const QString &buildConfiguration);
@@ -176,13 +185,10 @@ protected:
     virtual bool restoreSettingsImpl(PersistentSettingsReader &reader);
 
 private:
-    Internal::BuildConfiguration *getBuildConfiguration(const QString & name) const;
-
     QList<BuildStep *> m_buildSteps;
     QList<BuildStep *> m_cleanSteps;
-    QStringList m_buildConfigurations;
     QMap<QString, QVariant> m_values;
-    QList<Internal::BuildConfiguration *> m_buildConfigurationValues;
+    QList<BuildConfiguration *> m_buildConfigurationValues;
     QString m_activeBuildConfiguration;
     QList<QSharedPointer<RunConfiguration> > m_runConfigurations;
     QSharedPointer<RunConfiguration> m_activeRunConfiguration;

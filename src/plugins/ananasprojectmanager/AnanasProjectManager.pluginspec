@@ -1,4 +1,4 @@
-<plugin name="AnanasProjectManager" version="1.2.90" compatVersion="1.2.90">
+<plugin name="AnanasProjectManager" version="1.3.1" compatVersion="1.3.1">
     <vendor>Ananas</vendor>
     <copyright>(C) 2008-2009 Ananas</copyright>
     <license>
@@ -19,11 +19,11 @@ will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.</license>
     <description>Ananas support</description>
     <url></url>
     <dependencyList>
-        <dependency name="TextEditor" version="1.2.90"/>
-        <dependency name="ProjectExplorer" version="1.2.90"/>
-        <dependency name="CppTools" version="1.2.90"/>
-        <dependency name="CppEditor" version="1.2.90"/>
-        <dependency name="Help" version="1.2.90"/>
-         <dependency name="DirectoryEditor" version="1.2.90"/>
+        <dependency name="TextEditor" version="1.3.1"/>
+        <dependency name="ProjectExplorer" version="1.3.1"/>
+        <dependency name="CppTools" version="1.3.1"/>
+        <dependency name="CppEditor" version="1.3.1"/>
+        <dependency name="Help" version="1.3.1"/>
+         <dependency name="DirectoryEditor" version="1.3.1"/>
     </dependencyList>
 </plugin>

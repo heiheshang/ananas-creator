@@ -33,10 +33,9 @@
 #include <QtCore/QStringList>
 #include <QtCore/QFileInfo>
 
-namespace Core {
 namespace Utils {
 
-static QString toAlphaNum(const QString &s)
+QTCREATOR_UTILS_EXPORT QString fileNameToCppIdentifier(const QString &s)
 {
     QString rc;
     const int len = s.size();
@@ -56,9 +55,9 @@ static QString toAlphaNum(const QString &s)
 QTCREATOR_UTILS_EXPORT QString headerGuard(const QString &file)
 {
     const QFileInfo fi(file);
-    QString rc = toAlphaNum(fi.completeBaseName()).toUpper();
+    QString rc = fileNameToCppIdentifier(fi.completeBaseName()).toUpper();
     rc += QLatin1Char('_');
-    rc += toAlphaNum(fi.suffix()).toUpper();
+    rc += fileNameToCppIdentifier(fi.suffix()).toUpper();
     return rc;
 }
 
@@ -101,4 +100,3 @@ void writeClosingNameSpaces(const QStringList &l, const QString &indent,
 }
 
 } // namespace Utils
-} // namespace Core

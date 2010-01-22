@@ -32,14 +32,16 @@
 
 #include <coreplugin/core_global.h>
 #include <coreplugin/icontext.h>
-#include <coreplugin/ifile.h>
 
 namespace Core {
+
+class IFile;
 
 class CORE_EXPORT IEditor : public IContext
 {
     Q_OBJECT
 public:
+
     IEditor(QObject *parent = 0) : IContext(parent) {}
     virtual ~IEditor() {}
 

@@ -36,9 +36,10 @@
 #include <QtCore/QSharedPointer>
 
 namespace Debugger {
+class DebuggerManager;
+
 namespace Internal {
 
-class DebuggerManager;
 class DisassemblerViewAgent;
 class CdbDebugEventCallback;
 class CdbDebugOutput;
@@ -62,7 +63,7 @@ public:
 
     virtual void shutdown();
     virtual void setToolTipExpression(const QPoint &mousePos, TextEditor::ITextEditor *editor, int cursorPos);
-    virtual bool startDebugger(const QSharedPointer<DebuggerStartParameters> &startParameters);
+    virtual void startDebugger(const QSharedPointer<DebuggerStartParameters> &startParameters);
     virtual void exitDebugger();
     virtual void detachDebugger();
     virtual void updateWatchData(const WatchData &data);
@@ -113,15 +114,16 @@ private slots:
     void warning(const QString &w);
 
 private:
+    void setState(DebuggerState state, const char *func, int line);
     bool startAttachDebugger(qint64 pid, DebuggerStartMode sm, QString *errorMessage);
     bool startDebuggerWithExecutable(DebuggerStartMode sm, QString *errorMessage);
     void startWatchTimer();
     void killWatchTimer();
     void processTerminated(unsigned long exitCode);
-    bool executeDebuggerCommand(const QString &command, QString *errorMessage);
     bool evaluateExpression(const QString &expression, QString *value, QString *type, QString *errorMessage);
     void evaluateWatcher(WatchData *wd);
     QString editorToolTip(const QString &exp, const QString &function);
+    bool step(unsigned long executionStatus);
 
     CdbDebugEnginePrivate *m_d;
 

@@ -34,8 +34,15 @@
 #include <projectexplorer/applicationlauncher.h>
 
 #include <QtGui/QWidget>
-#include <QtGui/QLabel>
-#include <QtGui/QLineEdit>
+
+QT_BEGIN_NAMESPACE
+class QLabel;
+class QLineEdit;
+QT_END_NAMESPACE
+
+namespace Utils {
+    class DetailsWidget;
+}
 
 namespace Qt4ProjectManager {
 namespace Internal {
@@ -48,7 +55,7 @@ public:
     ~S60EmulatorRunConfiguration();
 
     QString type() const;
-    bool isEnabled() const;
+    bool isEnabled(ProjectExplorer::BuildConfiguration *configuration) const;
     QWidget *configurationWidget();
     void save(ProjectExplorer::PersistentSettingsWriter &writer) const;
     void restore(const ProjectExplorer::PersistentSettingsReader &reader);
@@ -79,9 +86,11 @@ public:
 private slots:
     void nameEdited(const QString &text);
     void updateTargetInformation();
+    void updateSummary();
 
 private:
     S60EmulatorRunConfiguration *m_runConfiguration;
+    Utils::DetailsWidget *m_detailsWidget;
     QLineEdit *m_nameLineEdit;
     QLabel *m_executableLabel;
 };
@@ -90,7 +99,7 @@ class S60EmulatorRunConfigurationFactory : public ProjectExplorer::IRunConfigura
 {
     Q_OBJECT
 public:
-    S60EmulatorRunConfigurationFactory(QObject *parent);
+    explicit S60EmulatorRunConfigurationFactory(QObject *parent);
     ~S60EmulatorRunConfigurationFactory();
     bool canRestore(const QString &type) const;
     QStringList availableCreationTypes(ProjectExplorer::Project *pro) const;
@@ -99,22 +108,11 @@ public:
     QSharedPointer<ProjectExplorer::RunConfiguration> create(ProjectExplorer::Project *project, const QString &type);
 };
 
-class S60EmulatorRunConfigurationRunner : public ProjectExplorer::IRunConfigurationRunner
-{
-    Q_OBJECT
-public:
-    S60EmulatorRunConfigurationRunner(QObject *parent = 0);
-    bool canRun(QSharedPointer<ProjectExplorer::RunConfiguration> runConfiguration, const QString &mode);
-    ProjectExplorer::RunControl* run(QSharedPointer<ProjectExplorer::RunConfiguration> runConfiguration, const QString &mode);
-    QString displayName() const;
-    QWidget *configurationWidget(QSharedPointer<ProjectExplorer::RunConfiguration> runConfiguration);
-};
-
 class S60EmulatorRunControl : public ProjectExplorer::RunControl
 {
     Q_OBJECT
 public:
-    S60EmulatorRunControl(QSharedPointer<ProjectExplorer::RunConfiguration> runConfiguration);
+    explicit S60EmulatorRunControl(const QSharedPointer<ProjectExplorer::RunConfiguration> &runConfiguration);
     ~S60EmulatorRunControl() {}
     void start();
     void stop();

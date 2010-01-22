@@ -18,7 +18,7 @@ PLUGINSPECS = $${_PRO_FILE_PWD_}/$${TARGET}.pluginspec
 copy2build.input = PLUGINSPECS
 copy2build.output = $$DESTDIR/${QMAKE_FUNC_FILE_IN_stripSrcDir}
 isEmpty(vcproj):copy2build.variable_out = PRE_TARGETDEPS
-copy2build.commands = $$QMAKE_COPY \"${QMAKE_FILE_IN}\" \"${QMAKE_FILE_OUT}\"
+copy2build.commands = $$QMAKE_COPY ${QMAKE_FILE_IN} ${QMAKE_FILE_OUT}
 copy2build.name = COPY ${QMAKE_FILE_IN}
 copy2build.CONFIG += no_link
 QMAKE_EXTRA_COMPILERS += copy2build
@@ -42,7 +42,7 @@ contains(QT_CONFIG, reduce_exports):CONFIG += hide_symbols
 
 CONFIG += plugin plugin_with_soname
 
-unix:!macx {
+!macx {
     target.path = /$$IDE_LIBRARY_BASENAME/qtcreator/plugins/$$PROVIDER
     pluginspec.files += $${TARGET}.pluginspec
     pluginspec.path = /$$IDE_LIBRARY_BASENAME/qtcreator/plugins/$$PROVIDER

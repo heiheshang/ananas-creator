@@ -56,7 +56,7 @@
 #include "Symbols.h"
 #include "Control.h"
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 CheckExpression::CheckExpression(Semantic *semantic)
     : SemanticCheck(semantic),
@@ -168,43 +168,37 @@ bool CheckExpression::visit(ArrayInitializerAST *ast)
 
 bool CheckExpression::visit(QualifiedNameAST *ast)
 {
-    Name *name = semantic()->check(ast, _scope);
-    _scope->addUse(ast->firstToken(), name);
+    (void) semantic()->check(ast, _scope);
     return false;
 }
 
 bool CheckExpression::visit(OperatorFunctionIdAST *ast)
 {
-    Name *name = semantic()->check(ast, _scope);
-    _scope->addUse(ast->firstToken(), name);
+    (void) semantic()->check(ast, _scope);
     return false;
 }
 
 bool CheckExpression::visit(ConversionFunctionIdAST *ast)
 {
-    Name *name = semantic()->check(ast, _scope);
-    _scope->addUse(ast->firstToken(), name);
+    (void) semantic()->check(ast, _scope);
     return false;
 }
 
 bool CheckExpression::visit(SimpleNameAST *ast)
 {
-    Name *name = semantic()->check(ast, _scope);
-    _scope->addUse(ast->firstToken(), name);
+    (void) semantic()->check(ast, _scope);
     return false;
 }
 
 bool CheckExpression::visit(DestructorNameAST *ast)
 {
-    Name *name = semantic()->check(ast, _scope);
-    _scope->addUse(ast->firstToken(), name);
+    (void) semantic()->check(ast, _scope);
     return false;
 }
 
 bool CheckExpression::visit(TemplateIdAST *ast)
 {
-    Name *name = semantic()->check(ast, _scope);
-    _scope->addUse(ast->firstToken(), name);
+    (void) semantic()->check(ast, _scope);
     return false;
 }
 
@@ -213,7 +207,6 @@ bool CheckExpression::visit(NewExpressionAST *ast)
     if (ast->new_placement) {
         for (ExpressionListAST *it = ast->new_placement->expression_list; it; it = it->next) {
             FullySpecifiedType exprTy = semantic()->check(it->expression, _scope);
-            Q_UNUSED(exprTy)
         }
     }
 
@@ -221,18 +214,15 @@ bool CheckExpression::visit(NewExpressionAST *ast)
 
     if (ast->new_type_id) {
         FullySpecifiedType ty = semantic()->check(ast->new_type_id->type_specifier, _scope);
-        Q_UNUSED(ty)
 
         for (NewArrayDeclaratorAST *it = ast->new_type_id->new_array_declarators; it; it = it->next) {
             FullySpecifiedType exprTy = semantic()->check(it->expression, _scope);
-            Q_UNUSED(exprTy)
         }
     }
 
     // ### process new-initializer
     if (ast->new_initializer) {
         FullySpecifiedType exprTy = semantic()->check(ast->new_initializer->expression, _scope);
-        Q_UNUSED(exprTy)
     }
 
     return false;
@@ -246,11 +236,11 @@ bool CheckExpression::visit(TypeidExpressionAST *ast)
 
 bool CheckExpression::visit(TypenameCallExpressionAST *ast)
 {
-    if (Name *name = semantic()->check(ast->name, _scope)) {
-        _scope->addUse(ast->name->firstToken(), name);
-    }
+    (void) semantic()->check(ast->name, _scope);
+
     for (ExpressionListAST *it = ast->expression_list; it; it = it->next) {
         FullySpecifiedType exprTy = semantic()->check(it->expression, _scope);
+        (void) exprTy;
     }
     return false;
 }
@@ -378,17 +368,14 @@ bool CheckExpression::visit(PostIncrDecrAST *)
 
 bool CheckExpression::visit(MemberAccessAST *ast)
 {
-    if (Name *name = semantic()->check(ast->member_name, _scope))
-        _scope->addUse(ast->member_name->firstToken(), name);
+    (void) semantic()->check(ast->member_name, _scope);
     return false;
 }
 
 bool CheckExpression::visit(ObjCMessageExpressionAST *ast)
 {
     semantic()->check(ast->receiver_expression, _scope);
-
-    if (Name *name = semantic()->check(ast->selector, _scope))
-        _scope->addUse(ast->selector->firstToken(), name);
+    (void) semantic()->check(ast->selector, _scope);
 
     accept(ast->argument_list);
     return false;
@@ -402,10 +389,8 @@ bool CheckExpression::visit(ObjCEncodeExpressionAST * /*ast*/)
 
 bool CheckExpression::visit(ObjCSelectorExpressionAST *ast)
 {
-    if (Name *name = semantic()->check(ast->selector, _scope))
-        _scope->addUse(ast->selector->firstToken(), name);
-
+    (void) semantic()->check(ast->selector, _scope);
     return false;
 }
 
-CPLUSPLUS_END_NAMESPACE
+

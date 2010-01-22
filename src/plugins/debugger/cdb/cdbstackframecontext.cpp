@@ -128,6 +128,82 @@ WatchHandleDumperInserter::WatchHandleDumperInserter(WatchHandler *wh,
     Q_ASSERT(m_hexNullPattern.isValid());
 }
 
+// Prevent recursion of the model by setting value and type
+static inline bool fixDumperType(WatchData *wd, const WatchData *source = 0)
+{    
+    const bool missing = wd->isTypeNeeded() || wd->type.isEmpty();
+    if (missing) {
+        static const QString unknownType = QCoreApplication::translate("CdbStackFrameContext", "<Unknown Type>");
+        wd->setType(source ? source->type : unknownType, false);
+    }
+    return missing;
+}
+
+static inline bool fixDumperValue(WatchData *wd, const WatchData *source = 0)
+{
+    const bool missing = wd->isValueNeeded();
+    if (missing) {
+        if (source && source->isValueKnown()) {
+            wd->setValue(source->value);
+        } else {
+            static const QString unknownValue = QCoreApplication::translate("CdbStackFrameContext", "<Unknown Value>");
+            wd->setValue(unknownValue);
+        }
+    }
+    return missing;
+}
+
+// When querying an item, the queried item is sometimes returned in incomplete form.
+// Take over values from source.
+static inline void fixDumperResult(const WatchData &source,
+                                   QList<WatchData> *result,
+                                   bool suppressGrandChildren)
+{
+
+    const int size = result->size();
+    if (!size)
+        return;
+    if (debugCDBWatchHandling)
+        debugWatchDataList(*result, suppressGrandChildren ? ">fixDumperResult suppressGrandChildren" : ">fixDumperResult");
+    WatchData &returned = result->front();
+    if (returned.iname != source.iname)
+        return;
+    fixDumperType(&returned, &source);
+    fixDumperValue(&returned, &source);
+    // Indicate owner and known children
+    returned.source = OwnerDumper;
+    if (returned.isChildrenKnown() && returned.isHasChildrenKnown() && returned.hasChildren)
+        returned.source |= CdbStackFrameContext::ChildrenKnownBit;
+    if (size == 1)
+        return;
+    // If the model queries the expanding item by pretending childrenNeeded=1,
+    // refuse the request as the children are already known
+    returned.source |= CdbStackFrameContext::ChildrenKnownBit;
+    // Fix the children: If the address is missing, we cannot query any further.
+    const QList<WatchData>::iterator wend = result->end();
+    QList<WatchData>::iterator it = result->begin();
+    for (++it; it != wend; ++it) {
+        WatchData &wd = *it;
+        // Indicate owner and known children
+        it->source = OwnerDumper;
+        if (it->isChildrenKnown() && it->isHasChildrenKnown() && it->hasChildren)
+            it->source |= CdbStackFrameContext::ChildrenKnownBit;
+        // Cannot dump items with missing addresses or missing types
+        const bool typeFixed = fixDumperType(&wd); // Order of evaluation!
+        if ((wd.addr.isEmpty() && wd.isSomethingNeeded()) || typeFixed) {
+            wd.setHasChildren(false);
+            wd.setAllUnneeded();
+        } else {
+            // Hack: Suppress endless recursion of the model. To be fixed,
+            // the model should not query non-visible items.
+            if (suppressGrandChildren && (wd.isChildrenNeeded() || wd.isHasChildrenNeeded()))
+                wd.setHasChildren(false);
+        }
+    }
+    if (debugCDBWatchHandling)
+        debugWatchDataList(*result, "<fixDumperResult");
+}
+
 // Is this a non-null pointer to a dumpeable item with a value
 // "0x4343 class QString *" ? - Insert a fake '*' dereferenced item
 // and run dumpers on it. If that succeeds, insert the fake items owned by dumpers,
@@ -137,11 +213,11 @@ WatchHandleDumperInserter::WatchHandleDumperInserter(WatchHandler *wh,
 bool WatchHandleDumperInserter::expandPointerToDumpable(const WatchData &wd, QString *errorMessage)
 {
     if (debugCDBWatchHandling)
-        qDebug() << ">expandPointerToDumpable" << wd.iname;
+        qDebug() << ">expandPointerToDumpable" << wd.toString();
 
     bool handled = false;
     do {
-        if (!isPointerType(wd.type))
+        if (wd.error || !isPointerType(wd.type))
             break;
         const int classPos = wd.value.indexOf(" class ");
         if (classPos == -1)
@@ -156,9 +232,10 @@ bool WatchHandleDumperInserter::expandPointerToDumpable(const WatchData &wd, QSt
         derefedWd.name = QString(QLatin1Char('*'));
         derefedWd.iname = wd.iname + QLatin1String(".*");
         derefedWd.source = OwnerDumper | CdbStackFrameContext::ChildrenKnownBit;
-        const CdbDumperHelper::DumpResult dr = m_dumper->dumpType(derefedWd, true, OwnerDumper, &m_dumperResult, errorMessage);
+        const CdbDumperHelper::DumpResult dr = m_dumper->dumpType(derefedWd, true, &m_dumperResult, errorMessage);
         if (dr != CdbDumperHelper::DumpOk)
             break;
+        fixDumperResult(derefedWd, &m_dumperResult, false);
         // Insert the pointer item with 1 additional child + its dumper results
         // Note: formal arguments might already be expanded in the symbol group.
         WatchData ptrWd = wd;
@@ -166,59 +243,12 @@ bool WatchHandleDumperInserter::expandPointerToDumpable(const WatchData &wd, QSt
         ptrWd.setHasChildren(true);
         ptrWd.setChildrenUnneeded();
         m_wh->insertData(ptrWd);
-        foreach(const WatchData &dwd, m_dumperResult)
-            m_wh->insertData(dwd);
+        m_wh->insertBulkData(m_dumperResult);
         handled = true;
     } while (false);
     if (debugCDBWatchHandling)
         qDebug() << "<expandPointerToDumpable returns " << handled << *errorMessage;
     return handled;
-}
-
-// When querying an item, the queried item is sometimes returned in incomplete form.
-// Take over values from source.
-static inline void fixDumperResult(const WatchData &source,
-                                   QList<WatchData> *result,
-                                   bool suppressGrandChildren)
-{
-    const int size = result->size();
-    if (!size)
-        return;
-    // debugWatchDataList(*result, suppressGrandChildren ? ">fixDumperResult suppressGrandChildren" : ">fixDumperResult");
-    WatchData &returned = result->front();
-    if (returned.iname != source.iname)
-        return;
-    if (returned.type.isEmpty())
-        returned.setType(source.type);
-    if (returned.isValueNeeded()) {
-        if (source.isValueKnown()) {
-            returned.setValue(source.value);
-        } else {
-            // Should not happen
-            returned.setValue(QCoreApplication::translate("CdbStackFrameContext", "<Unknown>"));
-        }
-    }
-    if (size == 1)
-        return;
-    // If the model queries the expanding item by pretending childrenNeeded=1,
-    // refuse the request as the children are already known
-    returned.source |= CdbStackFrameContext::ChildrenKnownBit;
-    // Fix the children: If the address is missing, we cannot query any further.
-    const QList<WatchData>::iterator wend = result->end();
-    QList<WatchData>::iterator it = result->begin();
-    for (++it; it != wend; ++it) {
-        WatchData &wd = *it;
-        if (wd.addr.isEmpty() && wd.isSomethingNeeded()) {
-            wd.setHasChildren(false);
-            wd.setAllUnneeded();
-        } else {
-            // Hack: Suppress endless recursion of the model. To be fixed,
-            // the model should not query non-visible items.
-            if (suppressGrandChildren && (wd.isChildrenNeeded() || wd.isHasChildrenNeeded()))
-                wd.setHasChildren(false);
-        }
-    }
-    // debugWatchDataList(*result, "<fixDumperResult");
 }
 
 WatchHandleDumperInserter &WatchHandleDumperInserter::operator=(WatchData &wd)
@@ -238,15 +268,14 @@ WatchHandleDumperInserter &WatchHandleDumperInserter::operator=(WatchData &wd)
         return *this;
     }
     // Try library dumpers.
-    switch (m_dumper->dumpType(wd, true, OwnerDumper, &m_dumperResult, &errorMessage)) {
+    switch (m_dumper->dumpType(wd, true, &m_dumperResult, &errorMessage)) {
     case CdbDumperHelper::DumpOk:
         if (debugCDBWatchHandling)
             qDebug() << "dumper triggered";
         // Dumpers omit types for complicated templates
         fixDumperResult(wd, &m_dumperResult, false);
         // Discard the original item and insert the dumper results
-        foreach(const WatchData &dwd, m_dumperResult)
-            m_wh->insertData(dwd);
+        m_wh->insertBulkData(m_dumperResult);
         // Nasty side effect: Modify owner for the ignore predicate
         wd.source = OwnerDumper;
         break;
@@ -325,13 +354,12 @@ bool CdbStackFrameContext::completeData(const WatchData &incompleteLocal,
             return true;
         }
         QList<WatchData> dumperResult;
-        const CdbDumperHelper::DumpResult dr = m_dumper->dumpType(incompleteLocal, true, OwnerDumper, &dumperResult, errorMessage);
+        const CdbDumperHelper::DumpResult dr = m_dumper->dumpType(incompleteLocal, true, &dumperResult, errorMessage);
         if (dr == CdbDumperHelper::DumpOk) {
             // Hack to stop endless model recursion
             const bool suppressGrandChildren = !wh->isExpandedIName(incompleteLocal.iname);
             fixDumperResult(incompleteLocal, &dumperResult, suppressGrandChildren);
-            foreach(const WatchData &dwd, dumperResult)
-                wh->insertData(dwd);
+            wh->insertBulkData(dumperResult);
         } else {
             const QString msg = QString::fromLatin1("Unable to further expand dumper watch data: '%1' (%2): %3/%4").arg(incompleteLocal.name, incompleteLocal.type).arg(int(dr)).arg(*errorMessage);
             qWarning("%s", qPrintable(msg));
@@ -368,11 +396,11 @@ bool CdbStackFrameContext::editorToolTip(const QString &iname,
         *errorMessage = QString::fromLatin1("%1 not found.").arg(iname);
         return false;
     }
-    const WatchData wd = m_symbolContext->symbolAt(index);
     // Check dumpers. Should actually be just one item.
-    if (m_useDumpers && m_dumper->state() != CdbDumperHelper::Disabled) {
+    const WatchData wd = m_symbolContext->watchDataAt(index);
+    if (m_useDumpers && !wd.error && m_dumper->state() != CdbDumperHelper::Disabled) {
         QList<WatchData> result;
-        if (CdbDumperHelper::DumpOk == m_dumper->dumpType(wd, false, OwnerDumper, &result, errorMessage))  {
+        if (CdbDumperHelper::DumpOk == m_dumper->dumpType(wd, false, &result, errorMessage))  {
             foreach (const WatchData &dwd, result) {
                 if (!value->isEmpty())
                     value->append(QLatin1Char('\n'));

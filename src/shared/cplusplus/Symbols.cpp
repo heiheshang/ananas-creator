@@ -53,7 +53,27 @@
 #include "Scope.h"
 #include <cstdlib>
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
+
+TemplateParameters::TemplateParameters(Scope *scope)
+    : _previous(0), _scope(scope)
+{ }
+
+TemplateParameters::TemplateParameters(TemplateParameters *previous, Scope *scope)
+    : _previous(previous), _scope(scope)
+{ }
+
+TemplateParameters::~TemplateParameters()
+{
+    delete _previous;
+    delete _scope;
+}
+
+TemplateParameters *TemplateParameters::previous() const
+{ return _previous; }
+
+Scope *TemplateParameters::scope() const
+{ return _scope; }
 
 UsingNamespaceDirective::UsingNamespaceDirective(TranslationUnit *translationUnit,
                                                  unsigned sourceLocation, Name *name)
@@ -91,20 +111,10 @@ Declaration::Declaration(TranslationUnit *translationUnit, unsigned sourceLocati
 Declaration::~Declaration()
 { delete _templateParameters; }
 
-unsigned Declaration::templateParameterCount() const
-{
-    if (! _templateParameters)
-        return 0;
-    return _templateParameters->symbolCount();
-}
-
-Symbol *Declaration::templateParameterAt(unsigned index) const
-{ return _templateParameters->symbolAt(index); }
-
-Scope *Declaration::templateParameters() const
+TemplateParameters *Declaration::templateParameters() const
 { return _templateParameters; }
 
-void Declaration::setTemplateParameters(Scope *templateParameters)
+void Declaration::setTemplateParameters(TemplateParameters *templateParameters)
 { _templateParameters = templateParameters; }
 
 void Declaration::setType(FullySpecifiedType type)
@@ -170,16 +180,17 @@ unsigned Function::templateParameterCount() const
 {
     if (! _templateParameters)
         return 0;
-    return _templateParameters->symbolCount();
+
+    return _templateParameters->scope()->symbolCount();
 }
 
 Symbol *Function::templateParameterAt(unsigned index) const
-{ return _templateParameters->symbolAt(index); }
+{ return _templateParameters->scope()->symbolAt(index); }
 
-Scope *Function::templateParameters() const
+TemplateParameters *Function::templateParameters() const
 { return _templateParameters; }
 
-void Function::setTemplateParameters(Scope *templateParameters)
+void Function::setTemplateParameters(TemplateParameters *templateParameters)
 { _templateParameters = templateParameters; }
 
 bool Function::isEqualTo(const Type *other) const
@@ -247,6 +258,12 @@ bool Function::hasArguments() const
     return ! (argumentCount() == 0 ||
               (argumentCount() == 1 && argumentAt(0)->type()->isVoidType()));
 }
+
+bool Function::isVirtual() const
+{ return f._isVirtual; }
+
+void Function::setVirtual(bool isVirtual)
+{ f._isVirtual = isVirtual; }
 
 bool Function::isVariadic() const
 { return f._isVariadic; }
@@ -435,20 +452,10 @@ ForwardClassDeclaration::ForwardClassDeclaration(TranslationUnit *translationUni
 ForwardClassDeclaration::~ForwardClassDeclaration()
 { delete _templateParameters; }
 
-unsigned ForwardClassDeclaration::templateParameterCount() const
-{
-    if (! _templateParameters)
-        return 0;
-    return _templateParameters->symbolCount();
-}
-
-Symbol *ForwardClassDeclaration::templateParameterAt(unsigned index) const
-{ return _templateParameters->symbolAt(index); }
-
-Scope *ForwardClassDeclaration::templateParameters() const
+TemplateParameters *ForwardClassDeclaration::templateParameters() const
 { return _templateParameters; }
 
-void ForwardClassDeclaration::setTemplateParameters(Scope *templateParameters)
+void ForwardClassDeclaration::setTemplateParameters(TemplateParameters *templateParameters)
 { _templateParameters = templateParameters; }
 
 FullySpecifiedType ForwardClassDeclaration::type() const
@@ -501,16 +508,17 @@ unsigned Class::templateParameterCount() const
 {
     if (! _templateParameters)
         return 0;
-    return _templateParameters->symbolCount();
+
+    return _templateParameters->scope()->symbolCount();
 }
 
 Symbol *Class::templateParameterAt(unsigned index) const
-{ return _templateParameters->symbolAt(index); }
+{ return _templateParameters->scope()->symbolAt(index); }
 
-Scope *Class::templateParameters() const
+TemplateParameters *Class::templateParameters() const
 { return _templateParameters; }
 
-void Class::setTemplateParameters(Scope *templateParameters)
+void Class::setTemplateParameters(TemplateParameters *templateParameters)
 { _templateParameters = templateParameters; }
 
 void Class::accept0(TypeVisitor *visitor)
@@ -553,9 +561,37 @@ void Class::visitSymbol0(SymbolVisitor *visitor)
     }
 }
 
+ObjCBaseClass::ObjCBaseClass(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name)
+    : Symbol(translationUnit, sourceLocation, name)
+{ }
+
+ObjCBaseClass::~ObjCBaseClass()
+{ }
+
+FullySpecifiedType ObjCBaseClass::type() const
+{ return FullySpecifiedType(); }
+
+void ObjCBaseClass::visitSymbol0(SymbolVisitor *visitor)
+{ visitor->visit(this); }
+
+ObjCBaseProtocol::ObjCBaseProtocol(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name)
+    : Symbol(translationUnit, sourceLocation, name)
+{ }
+
+ObjCBaseProtocol::~ObjCBaseProtocol()
+{ }
+
+FullySpecifiedType ObjCBaseProtocol::type() const
+{ return FullySpecifiedType(); }
+
+void ObjCBaseProtocol::visitSymbol0(SymbolVisitor *visitor)
+{ visitor->visit(this); }
+
 ObjCClass::ObjCClass(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name):
         ScopedSymbol(translationUnit, sourceLocation, name),
-        _categoryName(0)
+        _isInterface(false),
+        _categoryName(0),
+        _baseClass(0)
 {
 }
 
@@ -582,10 +618,14 @@ bool ObjCClass::isEqualTo(const Type *other) const
 void ObjCClass::visitSymbol0(SymbolVisitor *visitor)
 {
     if (visitor->visit(this)) {
-        for (unsigned i = 0; i < _baseClasses.size(); ++i)
-            visitSymbol(_baseClasses.at(i), visitor);
+        if (_baseClass)
+            visitSymbol(_baseClass, visitor);
+
         for (unsigned i = 0; i < _protocols.size(); ++i)
             visitSymbol(_protocols.at(i), visitor);
+
+        for (unsigned i = 0; i < memberCount(); ++i)
+            visitSymbol(memberAt(i), visitor);
     }
 }
 
@@ -639,7 +679,24 @@ ObjCForwardClassDeclaration::~ObjCForwardClassDeclaration()
 FullySpecifiedType ObjCForwardClassDeclaration::type() const
 { return FullySpecifiedType(); }
 
+bool ObjCForwardClassDeclaration::isEqualTo(const Type *other) const
+{
+    if (const ObjCForwardClassDeclaration *otherFwdClass = other->asObjCForwardClassDeclarationType()) {
+        if (name() == otherFwdClass->name())
+            return true;
+        else if (name() && otherFwdClass->name())
+            return name()->isEqualTo(otherFwdClass->name());
+        else
+            return false;
+    }
+
+    return false;
+}
+
 void ObjCForwardClassDeclaration::visitSymbol0(SymbolVisitor *visitor)
+{ visitor->visit(this); }
+
+void ObjCForwardClassDeclaration::accept0(TypeVisitor *visitor)
 { visitor->visit(this); }
 
 ObjCForwardProtocolDeclaration::ObjCForwardProtocolDeclaration(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name):
@@ -653,7 +710,24 @@ ObjCForwardProtocolDeclaration::~ObjCForwardProtocolDeclaration()
 FullySpecifiedType ObjCForwardProtocolDeclaration::type() const
 { return FullySpecifiedType(); }
 
+bool ObjCForwardProtocolDeclaration::isEqualTo(const Type *other) const
+{
+    if (const ObjCForwardProtocolDeclaration *otherFwdProtocol = other->asObjCForwardProtocolDeclarationType()) {
+        if (name() == otherFwdProtocol->name())
+            return true;
+        else if (name() && otherFwdProtocol->name())
+            return name()->isEqualTo(otherFwdProtocol->name());
+        else
+            return false;
+    }
+
+    return false;
+}
+
 void ObjCForwardProtocolDeclaration::visitSymbol0(SymbolVisitor *visitor)
+{ visitor->visit(this); }
+
+void ObjCForwardProtocolDeclaration::accept0(TypeVisitor *visitor)
 { visitor->visit(this); }
 
 ObjCMethod::ObjCMethod(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name)
@@ -746,4 +820,4 @@ void ObjCMethod::visitSymbol0(SymbolVisitor *visitor)
     }
 }
 
-CPLUSPLUS_END_NAMESPACE
+

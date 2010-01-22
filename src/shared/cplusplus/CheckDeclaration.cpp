@@ -58,7 +58,7 @@
 #include "Literals.h"
 #include <cassert>
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 CheckDeclaration::CheckDeclaration(Semantic *semantic)
     : SemanticCheck(semantic),
@@ -72,10 +72,10 @@ CheckDeclaration::~CheckDeclaration()
 { }
 
 void CheckDeclaration::check(DeclarationAST *declaration,
-                             Scope *scope, Scope *templateParameters)
+                             Scope *scope, TemplateParameters *templateParameters)
 {
     Scope *previousScope = switchScope(scope);
-    Scope *previousTemplateParameters = switchTemplateParameters(templateParameters);
+    TemplateParameters *previousTemplateParameters = switchTemplateParameters(templateParameters);
     DeclarationAST *previousDeclaration = switchDeclaration(declaration);
     accept(declaration);
     (void) switchDeclaration(previousDeclaration);
@@ -97,9 +97,9 @@ Scope *CheckDeclaration::switchScope(Scope *scope)
     return previousScope;
 }
 
-Scope *CheckDeclaration::switchTemplateParameters(Scope *templateParameters)
+TemplateParameters *CheckDeclaration::switchTemplateParameters(TemplateParameters *templateParameters)
 {
-    Scope *previousTemplateParameters = _templateParameters;
+    TemplateParameters *previousTemplateParameters = _templateParameters;
     _templateParameters = templateParameters;
     return previousTemplateParameters;
 }
@@ -190,6 +190,7 @@ bool CheckDeclaration::visit(SimpleDeclarationAST *ast)
             fun->setScope(_scope);
             fun->setName(name);
             fun->setMethodKey(semantic()->currentMethodKey());
+            fun->setVirtual(ty.isVirtual());
             if (isQ_SIGNAL)
                 fun->setMethodKey(Function::SignalMethod);
             else if (isQ_SLOT)
@@ -227,7 +228,6 @@ bool CheckDeclaration::visit(SimpleDeclarationAST *ast)
 
         if (it->declarator && it->declarator->initializer) {
             FullySpecifiedType initTy = semantic()->check(it->declarator->initializer, _scope);
-            Q_UNUSED(initTy)
         }
 
         *decl_it = new (translationUnit()->memoryPool()) List<Declaration *>();
@@ -263,8 +263,29 @@ bool CheckDeclaration::visit(AsmDefinitionAST *)
     return false;
 }
 
-bool CheckDeclaration::visit(ExceptionDeclarationAST *)
+bool CheckDeclaration::visit(ExceptionDeclarationAST *ast)
 {
+    FullySpecifiedType ty = semantic()->check(ast->type_specifier, _scope);
+    FullySpecifiedType qualTy = ty.qualifiedType();
+
+    Name *name = 0;
+    FullySpecifiedType declTy = semantic()->check(ast->declarator, qualTy,
+                                                  _scope, &name);
+
+    unsigned location = locationOfDeclaratorId(ast->declarator);
+    if (! location) {
+        if (ast->declarator)
+            location = ast->declarator->firstToken();
+        else
+            location = ast->firstToken();
+    }
+
+    Declaration *symbol = control()->newDeclaration(location, name);
+    symbol->setStartOffset(tokenAt(ast->firstToken()).offset);
+    symbol->setEndOffset(tokenAt(ast->lastToken()).offset);
+    symbol->setType(declTy);
+    _scope->enterSymbol(symbol);
+
     return false;
 }
 
@@ -282,6 +303,7 @@ bool CheckDeclaration::visit(FunctionDefinitionAST *ast)
     }
 
     Function *fun = funTy->asFunctionType();
+    fun->setVirtual(ty.isVirtual());
     fun->setStartOffset(tokenAt(ast->firstToken()).offset);
     fun->setEndOffset(tokenAt(ast->lastToken()).offset);
     if (ast->declarator)
@@ -316,6 +338,7 @@ bool CheckDeclaration::visit(FunctionDefinitionAST *ast)
                 translationUnit()->error(ast->ctor_initializer->firstToken(),
                                          "only constructors take base initializers");
             }
+            accept(ast->ctor_initializer);
         }
 
         const int previousVisibility = semantic()->switchVisibility(Symbol::Public);
@@ -327,6 +350,13 @@ bool CheckDeclaration::visit(FunctionDefinitionAST *ast)
         semantic()->switchVisibility(previousVisibility);
     }
 
+    return false;
+}
+
+bool CheckDeclaration::visit(MemInitializerAST *ast)
+{
+    (void) semantic()->check(ast->name, _scope);
+    FullySpecifiedType ty = semantic()->check(ast->expression, _scope);
     return false;
 }
 
@@ -395,13 +425,15 @@ bool CheckDeclaration::visit(ParameterDeclarationAST *ast)
 
 bool CheckDeclaration::visit(TemplateDeclarationAST *ast)
 {
-    Scope *previousScope = switchScope(new Scope(_scope->owner()));
+    Scope *scope = new Scope(_scope->owner());
+
     for (DeclarationListAST *param = ast->template_parameters; param; param = param->next) {
-       semantic()->check(param->declaration, _scope);
+       semantic()->check(param->declaration, scope);
     }
 
-    Scope *templateParameters = switchScope(previousScope);
-    semantic()->check(ast->declaration, _scope, templateParameters);
+    semantic()->check(ast->declaration, _scope,
+                      new TemplateParameters(_templateParameters, scope));
+
     return false;
 }
 
@@ -503,11 +535,25 @@ bool CheckDeclaration::visit(ObjCProtocolDeclarationAST *ast)
     ObjCProtocol *protocol = control()->newObjCProtocol(sourceLocation, protocolName);
     protocol->setStartOffset(tokenAt(ast->firstToken()).offset);
     protocol->setEndOffset(tokenAt(ast->lastToken()).offset);
-    ast->symbol = protocol;
 
+    if (ast->protocol_refs && ast->protocol_refs->identifier_list) {
+        for (IdentifierListAST *iter = ast->protocol_refs->identifier_list; iter; iter = iter->next) {
+            NameAST* name = iter->name;
+            Name *protocolName = semantic()->check(name, _scope);
+            ObjCBaseProtocol *baseProtocol = control()->newObjCBaseProtocol(name->firstToken(), protocolName);
+            protocol->addProtocol(baseProtocol);
+        }
+    }
+
+    int previousObjCVisibility = semantic()->switchObjCVisibility(Function::Public);
+    for (DeclarationListAST *it = ast->member_declarations; it; it = it->next) {
+        semantic()->check(it->declaration, protocol->members());
+    }
+    (void) semantic()->switchObjCVisibility(previousObjCVisibility);
+
+    ast->symbol = protocol;
     _scope->enterSymbol(protocol);
 
-    // TODO EV: walk protocols and method prototypes
     return false;
 }
 
@@ -559,7 +605,21 @@ bool CheckDeclaration::visit(ObjCClassDeclarationAST *ast)
         klass->setCategoryName(categoryName);
     }
 
-    // TODO: super-class, and protocols (EV)
+    if (ast->superclass) {
+        Name *superClassName = semantic()->check(ast->superclass, _scope);
+        ObjCBaseClass *superKlass = control()->newObjCBaseClass(ast->superclass->firstToken(), superClassName);
+        klass->setBaseClass(superKlass);
+    }
+
+    if (ast->protocol_refs && ast->protocol_refs->identifier_list) {
+        for (IdentifierListAST *iter = ast->protocol_refs->identifier_list; iter; iter = iter->next) {
+            NameAST* name = iter->name;
+            Name *protocolName = semantic()->check(name, _scope);
+            ObjCBaseProtocol *baseProtocol = control()->newObjCBaseProtocol(name->firstToken(), protocolName);
+            klass->addProtocol(baseProtocol);
+        }
+    }
+
     _scope->enterSymbol(klass);
 
     int previousObjCVisibility = semantic()->switchObjCVisibility(Function::Protected);
@@ -592,16 +652,16 @@ bool CheckDeclaration::visit(ObjCMethodDeclarationAST *ast)
         return false;
 
     Symbol *symbol;
-    if (!ast->function_body) {
-        Declaration *decl = control()->newDeclaration(ast->firstToken(), methodType->name());
-        decl->setType(methodType);
-        symbol = decl;
-    } else {
+    if (ast->function_body) {
         if (!semantic()->skipFunctionBodies()) {
             semantic()->check(ast->function_body, methodType->members());
         }
 
         symbol = methodType;
+    } else {
+        Declaration *decl = control()->newDeclaration(ast->firstToken(), methodType->name());
+        decl->setType(methodType);
+        symbol = decl;
     }
 
     symbol->setStartOffset(tokenAt(ast->firstToken()).offset);
@@ -624,4 +684,86 @@ bool CheckDeclaration::visit(ObjCVisibilityDeclarationAST *ast)
     return false;
 }
 
-CPLUSPLUS_END_NAMESPACE
+enum PropertyAttributes {
+    None = 0,
+    Assign = 1 << 0,
+    Retain = 1 << 1,
+    Copy = 1 << 2,
+    ReadOnly = 1 << 3,
+    ReadWrite = 1 << 4,
+    Getter = 1 << 5,
+    Setter = 1 << 6,
+    NonAtomic = 1 << 7,
+
+    WritabilityMask = ReadOnly | ReadWrite,
+    SetterSemanticsMask = Assign | Retain | Copy,
+};
+
+bool CheckDeclaration::checkPropertyAttribute(ObjCPropertyAttributeAST *attrAst,
+                                              int &flags,
+                                              int attr)
+{
+    if (flags & attr) {
+        translationUnit()->warning(attrAst->attribute_identifier_token,
+                                   "duplicate property attribute \"%s\"",
+                                   spell(attrAst->attribute_identifier_token));
+        return false;
+    } else {
+        flags |= attr;
+        return true;
+    }
+}
+
+bool CheckDeclaration::visit(ObjCPropertyDeclarationAST *ast)
+{
+    int propAttrs = None;
+
+    for (ObjCPropertyAttributeListAST *iter= ast->property_attributes; iter; iter = iter->next) {
+        ObjCPropertyAttributeAST *attrAst = iter->attr;
+        if (!attrAst)
+            continue;
+
+        Identifier *attrId = identifier(attrAst->attribute_identifier_token);
+        if (attrId == control()->objcGetterId()) {
+            if (checkPropertyAttribute(attrAst, propAttrs, Getter)) {
+                // TODO: find method declaration for getter
+            }
+        } else if (attrId == control()->objcSetterId()) {
+            if (checkPropertyAttribute(attrAst, propAttrs, Setter)) {
+                // TODO: find method declaration for setter
+            }
+        } else if (attrId == control()->objcReadwriteId()) {
+            checkPropertyAttribute(attrAst, propAttrs, ReadWrite);
+        } else if (attrId == control()->objcReadonlyId()) {
+            checkPropertyAttribute(attrAst, propAttrs, ReadOnly);
+        } else if (attrId == control()->objcAssignId()) {
+            checkPropertyAttribute(attrAst, propAttrs, Assign);
+        } else if (attrId == control()->objcRetainId()) {
+            checkPropertyAttribute(attrAst, propAttrs, Retain);
+        } else if (attrId == control()->objcCopyId()) {
+            checkPropertyAttribute(attrAst, propAttrs, Copy);
+        } else if (attrId == control()->objcNonatomicId()) {
+            checkPropertyAttribute(attrAst, propAttrs, NonAtomic);
+        }
+    }
+
+    if (propAttrs & ReadOnly && propAttrs & ReadWrite)
+        // Should this be an error instead of only a warning?
+        translationUnit()->warning(ast->property_token,
+                                   "property can have at most one attribute \"readonly\" or \"readwrite\" specified");
+    int setterSemAttrs = propAttrs & SetterSemanticsMask;
+    if (setterSemAttrs
+            && setterSemAttrs != Assign
+            && setterSemAttrs != Retain
+            && setterSemAttrs != Copy) {
+        // Should this be an error instead of only a warning?
+        translationUnit()->warning(ast->property_token,
+                                   "property can have at most one attribute \"assign\", \"retain\", or \"copy\" specified");
+    }
+
+    // TODO: Check if the next line is correct (EV)
+    semantic()->check(ast->simple_declaration, _scope);
+    return false;
+}
+
+

@@ -55,8 +55,23 @@
 #include "FullySpecifiedType.h"
 #include "Array.h"
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
+
+namespace CPlusPlus {
+
+class TemplateParameters
+{
+public:
+    TemplateParameters(Scope *scope);
+    TemplateParameters(TemplateParameters *previous, Scope *scope);
+    ~TemplateParameters();
+
+    TemplateParameters *previous() const;
+    Scope *scope() const;
+
+private:
+    TemplateParameters *_previous;
+    Scope *_scope;
+};
 
 class CPLUSPLUS_EXPORT UsingNamespaceDirective: public Symbol
 {
@@ -102,11 +117,8 @@ public:
     Declaration(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name);
     virtual ~Declaration();
 
-    unsigned templateParameterCount() const;
-    Symbol *templateParameterAt(unsigned index) const;
-
-    Scope *templateParameters() const;
-    void setTemplateParameters(Scope *templateParameters);
+    TemplateParameters *templateParameters() const;
+    void setTemplateParameters(TemplateParameters *templateParameters);
 
     void setType(FullySpecifiedType type);
 
@@ -124,7 +136,7 @@ protected:
 
 private:
     FullySpecifiedType _type;
-    Scope *_templateParameters;
+    TemplateParameters *_templateParameters;
 };
 
 class CPLUSPLUS_EXPORT Argument: public Symbol
@@ -201,11 +213,8 @@ public:
     ForwardClassDeclaration(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name);
     virtual ~ForwardClassDeclaration();
 
-    unsigned templateParameterCount() const;
-    Symbol *templateParameterAt(unsigned index) const;
-
-    Scope *templateParameters() const;
-    void setTemplateParameters(Scope *templateParameters);
+    TemplateParameters *templateParameters() const;
+    void setTemplateParameters(TemplateParameters *templateParameters);
 
     virtual FullySpecifiedType type() const;
 
@@ -228,7 +237,7 @@ protected:
     virtual void accept0(TypeVisitor *visitor);
 
 private:
-    Scope *_templateParameters;
+    TemplateParameters *_templateParameters;
 };
 
 class CPLUSPLUS_EXPORT Enum: public ScopedSymbol, public Type
@@ -279,11 +288,11 @@ public:
     int methodKey() const;
     void setMethodKey(int key);
 
-    unsigned templateParameterCount() const;
-    Symbol *templateParameterAt(unsigned index) const;
+    unsigned templateParameterCount() const; // ### remove me
+    Symbol *templateParameterAt(unsigned index) const; // ### remove me
 
-    Scope *templateParameters() const;
-    void setTemplateParameters(Scope *templateParameters);
+    TemplateParameters *templateParameters() const;
+    void setTemplateParameters(TemplateParameters *templateParameters);
 
     FullySpecifiedType returnType() const;
     void setReturnType(FullySpecifiedType returnType);
@@ -297,6 +306,9 @@ public:
 
     /** Convenience function that returns whether the function receives any arguments. */
     bool hasArguments() const;
+
+    bool isVirtual() const;
+    void setVirtual(bool isVirtual);
 
     bool isVariadic() const;
     void setVariadic(bool isVariadic);
@@ -336,9 +348,10 @@ protected:
     virtual void accept0(TypeVisitor *visitor);
 
 private:
-    Scope *_templateParameters;
+    TemplateParameters *_templateParameters;
     FullySpecifiedType _returnType;
     struct Flags {
+        unsigned _isVirtual: 1;
         unsigned _isVariadic: 1;
         unsigned _isPureVirtual: 1;
         unsigned _isConst: 1;
@@ -425,11 +438,11 @@ public:
     Key classKey() const;
     void setClassKey(Key key);
 
-    unsigned templateParameterCount() const;
-    Symbol *templateParameterAt(unsigned index) const;
+    unsigned templateParameterCount() const; // ### remove me
+    Symbol *templateParameterAt(unsigned index) const; // ### remove me
 
-    Scope *templateParameters() const;
-    void setTemplateParameters(Scope *templateParameters);
+    TemplateParameters *templateParameters() const;
+    void setTemplateParameters(TemplateParameters *templateParameters);
 
     unsigned baseClassCount() const;
     BaseClass *baseClassAt(unsigned index) const;
@@ -459,18 +472,61 @@ protected:
 
 private:
     Key _key;
-    Scope *_templateParameters;
+    TemplateParameters *_templateParameters;
     Array<BaseClass *> _baseClasses;
 };
 
-class CPLUSPLUS_EXPORT ObjCForwardProtocolDeclaration: public Symbol
+class CPLUSPLUS_EXPORT ObjCBaseClass: public Symbol
+{
+public:
+    ObjCBaseClass(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name);
+    virtual ~ObjCBaseClass();
+
+    // Symbol's interface
+    virtual FullySpecifiedType type() const;
+
+    virtual const ObjCBaseClass *asObjCBaseClass() const
+    { return this; }
+
+    virtual ObjCBaseClass *asObjCBaseClass()
+    { return this; }
+
+protected:
+    virtual void visitSymbol0(SymbolVisitor *visitor);
+
+private:
+};
+
+class CPLUSPLUS_EXPORT ObjCBaseProtocol: public Symbol
+{
+public:
+    ObjCBaseProtocol(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name);
+    virtual ~ObjCBaseProtocol();
+
+    // Symbol's interface
+    virtual FullySpecifiedType type() const;
+
+    virtual const ObjCBaseProtocol *asObjCBaseProtocol() const
+    { return this; }
+
+    virtual ObjCBaseProtocol *asObjCBaseProtocol()
+    { return this; }
+
+protected:
+    virtual void visitSymbol0(SymbolVisitor *visitor);
+
+private:
+};
+
+class CPLUSPLUS_EXPORT ObjCForwardProtocolDeclaration: public Symbol, public Type
 {
 public:
     ObjCForwardProtocolDeclaration(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name);
     virtual ~ObjCForwardProtocolDeclaration();
 
-    // Symbol's interface
     virtual FullySpecifiedType type() const;
+
+    virtual bool isEqualTo(const Type *other) const;
 
     virtual const ObjCForwardProtocolDeclaration *asObjCForwardProtocolDeclaration() const
     { return this; }
@@ -478,8 +534,15 @@ public:
     virtual ObjCForwardProtocolDeclaration *asObjCForwardProtocolDeclaration()
     { return this; }
 
+    virtual const ObjCForwardProtocolDeclaration *asObjCForwardProtocolDeclarationType() const
+    { return this; }
+
+    virtual ObjCForwardProtocolDeclaration *asObjCForwardProtocolDeclarationType()
+    { return this; }
+
 protected:
     virtual void visitSymbol0(SymbolVisitor *visitor);
+    virtual void accept0(TypeVisitor *visitor);
 
 private:
 };
@@ -489,6 +552,15 @@ class CPLUSPLUS_EXPORT ObjCProtocol: public ScopedSymbol, public Type
 public:
     ObjCProtocol(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name);
     virtual ~ObjCProtocol();
+
+    unsigned protocolCount() const
+    { return _protocols.count(); }
+
+    ObjCBaseProtocol *protocolAt(unsigned index) const
+    { return _protocols.at(index); }
+
+    void addProtocol(ObjCBaseProtocol *protocol)
+    { _protocols.push_back(protocol); }
 
     // Symbol's interface
     virtual FullySpecifiedType type() const;
@@ -513,17 +585,18 @@ protected:
     virtual void accept0(TypeVisitor *visitor);
 
 private:
-    Array<ObjCProtocol *> _protocols;
+    Array<ObjCBaseProtocol *> _protocols;
 };
 
-class CPLUSPLUS_EXPORT ObjCForwardClassDeclaration: public Symbol
+class CPLUSPLUS_EXPORT ObjCForwardClassDeclaration: public Symbol, public Type
 {
 public:
     ObjCForwardClassDeclaration(TranslationUnit *translationUnit, unsigned sourceLocation, Name *name);
     virtual ~ObjCForwardClassDeclaration();
 
-    // Symbol's interface
     virtual FullySpecifiedType type() const;
+
+    virtual bool isEqualTo(const Type *other) const;
 
     virtual const ObjCForwardClassDeclaration *asObjCForwardClassDeclaration() const
     { return this; }
@@ -531,8 +604,15 @@ public:
     virtual ObjCForwardClassDeclaration *asObjCForwardClassDeclaration()
     { return this; }
 
+    virtual const ObjCForwardClassDeclaration *asObjCForwardClassDeclarationType() const
+    { return this; }
+
+    virtual ObjCForwardClassDeclaration *asObjCForwardClassDeclarationType()
+    { return this; }
+
 protected:
     virtual void visitSymbol0(SymbolVisitor *visitor);
+    virtual void accept0(TypeVisitor *visitor);
 
 private:
 };
@@ -549,6 +629,20 @@ public:
     bool isCategory() const { return _categoryName != 0; }
     Name *categoryName() const { return _categoryName; }
     void setCategoryName(Name *categoryName) { _categoryName = categoryName; }
+
+    ObjCBaseClass *baseClass() const
+    { return _baseClass; }
+    void setBaseClass(ObjCBaseClass *baseClass)
+    { _baseClass = baseClass; }
+
+    unsigned protocolCount() const
+    { return _protocols.count(); }
+
+    ObjCBaseProtocol *protocolAt(unsigned index) const
+    { return _protocols.at(index); }
+
+    void addProtocol(ObjCBaseProtocol *protocol)
+    { _protocols.push_back(protocol); }
 
     // Symbol's interface
     virtual FullySpecifiedType type() const;
@@ -575,8 +669,8 @@ protected:
 private:
     bool _isInterface;
     Name *_categoryName;
-    Array<ObjCClass *> _baseClasses;
-    Array<ObjCProtocol *> _protocols;
+    ObjCBaseClass * _baseClass;
+    Array<ObjCBaseProtocol *> _protocols;
 };
 
 class CPLUSPLUS_EXPORT ObjCMethod: public ScopedSymbol, public Type
@@ -635,7 +729,7 @@ private:
     Scope *_arguments;
 };
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // CPLUSPLUS_SYMBOLS_H

@@ -37,20 +37,15 @@
 #include <find/ifindsupport.h>
 
 #include <QtGui/QPlainTextEdit>
-#include <QtGui/QLabel>
-#include <QtGui/QKeyEvent>
-#include <QtCore/QTimeLine>
-#include <QtCore/QDebug>
 
 QT_BEGIN_NAMESPACE
-class QLabel;
+class QKeyEvent;
 class QToolBar;
+class QTimeLine;
 QT_END_NAMESPACE
 
-namespace Core {
-    namespace Utils {
-        class LineColumnLabel;
-    }
+namespace Utils {
+    class LineColumnLabel;
 }
 
 namespace TextEditor {
@@ -128,6 +123,7 @@ public:
     inline void clearParentheses() { m_parentheses.clear(); }
     inline const Parentheses &parentheses() const { return m_parentheses; }
     inline bool hasParentheses() const { return !m_parentheses.isEmpty(); }
+    int braceDepthDelta() const;
 
     inline bool setIfdefedOut() { bool result = m_ifdefedOut; m_ifdefedOut = true; return !result; }
     inline bool clearIfdefedOut() { bool result = m_ifdefedOut; m_ifdefedOut = false; return result;}
@@ -137,21 +133,20 @@ public:
         TextBlockUserData *data = static_cast<TextBlockUserData*>(block.userData());
         if (!data || data->collapseMode() != CollapseAfter) {
             data = static_cast<TextBlockUserData*>(block.next().userData());
-            if (!data || data->collapseMode() != TextBlockUserData::CollapseThis || data->m_ifdefedOut)
+            if (!data || data->collapseMode() != TextBlockUserData::CollapseThis)
                 data = 0;
         }
+        if (data && data->m_ifdefedOut)
+            data = 0;
         return data;
     }
 
     inline static bool hasCollapseAfter(const QTextBlock & block)
     {
-        if (!block.isValid())
-            return false;
-        TextBlockUserData *data = static_cast<TextBlockUserData*>(block.userData());
-        if (data && data->collapseMode() != NoCollapse) {
+        if (!block.isValid()) {
             return false;
         } else if (block.next().isValid()) {
-            data = static_cast<TextBlockUserData*>(block.next().userData());
+            TextBlockUserData *data = static_cast<TextBlockUserData*>(block.next().userData());
             if (data && data->collapseMode() == TextBlockUserData::CollapseThis &&  !data->m_ifdefedOut)
                 return true;
         }
@@ -218,6 +213,10 @@ public:
     static bool setIfdefedOut(const QTextBlock &block);
     static bool clearIfdefedOut(const QTextBlock &block);
     static bool ifdefedOut(const QTextBlock &block);
+    static int braceDepthDelta(const QTextBlock &block);
+    static int braceDepth(const QTextBlock &block);
+    static void setBraceDepth(QTextBlock &block, int depth);
+    static void changeBraceDepth(QTextBlock &block, int delta);
 
     static TextBlockUserData *testUserData(const QTextBlock &block) {
         return static_cast<TextBlockUserData*>(block.userData());
@@ -245,22 +244,23 @@ class TEXTEDITOR_EXPORT BaseTextEditorAnimator : public QObject
 public:
     BaseTextEditorAnimator(QObject *parent);
 
-    void setPosition(int position) { m_position = position; }
-    int position() const { return m_position; }
+    inline void setPosition(int position) { m_position = position; }
+    inline int position() const { return m_position; }
 
     void setData(QFont f, QPalette pal, const QString &text);
 
     void draw(QPainter *p, const QPointF &pos);
     QRectF rect() const;
 
-    qreal value() const { return m_value; }
+    inline qreal value() const { return m_value; }
+    inline QPointF lastDrawPos() const { return m_lastDrawPos; }
 
     void finish();
 
     bool isRunning() const;
 
 signals:
-    void updateRequest(int position, QRectF rect);
+    void updateRequest(int position, QPointF lastPos, QRectF rect);
 
 
 private slots:
@@ -270,6 +270,7 @@ private:
     QTimeLine *m_timeline;
     qreal m_value;
     int m_position;
+    QPointF m_lastDrawPos;
     QFont m_font;
     QPalette m_palette;
     QString m_text;
@@ -277,8 +278,7 @@ private:
 };
 
 
-class TEXTEDITOR_EXPORT BaseTextEditor
-  : public QPlainTextEdit
+class TEXTEDITOR_EXPORT BaseTextEditor : public QPlainTextEdit
 {
     Q_OBJECT
 
@@ -321,6 +321,8 @@ public:
     void setMimeType(const QString &mt);
 
 
+    void appendStandardContextMenuActions(QMenu *menu);
+
     // Works only in conjunction with a syntax highlighter that puts
     // parentheses into text block user data
     void setParenthesesMatchingEnabled(bool b);
@@ -347,6 +349,9 @@ public:
 
     void setCodeFoldingSupported(bool b);
     bool codeFoldingSupported() const;
+
+    void setMouseNavigationEnabled(bool b);
+    bool mouseNavigationEnabled() const;
 
     void setRevisionsVisible(bool b);
     bool revisionsVisible() const;
@@ -499,13 +504,64 @@ protected:
     void timerEvent(QTimerEvent *);
     void mouseMoveEvent(QMouseEvent *);
     void mousePressEvent(QMouseEvent *);
+    void mouseReleaseEvent(QMouseEvent *);
+    void leaveEvent(QEvent *);
+    void keyReleaseEvent(QKeyEvent *);
 
-    // Rertuns true if key triggers an indent.
+    // Returns true if key triggers an indent.
     virtual bool isElectricCharacter(const QChar &ch) const;
+    // Returns the text to complete at the cursor position, or an empty string
+    virtual QString autoComplete(QTextCursor &cursor, const QString &text) const;
+    // Handles backspace. When returning true, backspace processing is stopped
+    virtual bool autoBackspace(QTextCursor &cursor);
+    // Hook to insert special characters on enter. Returns the number of extra blocks inserted.
+    virtual int paragraphSeparatorAboutToBeInserted(QTextCursor &cursor);
     // Indent a text block based on previous line. Default does nothing
     virtual void indentBlock(QTextDocument *doc, QTextBlock block, QChar typedChar);
     // Indent at cursor. Calls indentBlock for selection or current line.
     virtual void indent(QTextDocument *doc, const QTextCursor &cursor, QChar typedChar);
+    // Reindent at cursor. Selection will be adjusted according to the indentation change of the first block
+    virtual void reindent(QTextDocument *doc, const QTextCursor &cursor);
+
+    struct Link
+    {
+        Link(const QString &fileName = QString(),
+             int line = 0,
+             int column = 0)
+            : pos(-1)
+            , length(-1)
+            , fileName(fileName)
+            , line(line)
+            , column(column)
+        {}
+
+        bool isValid() const
+        { return !(pos == -1 || length == -1); }
+
+        bool operator==(const Link &other) const
+        { return pos == other.pos && length == other.length; }
+
+        int pos;           // Link position
+        int length;        // Link length
+
+        QString fileName;  // Target file
+        int line;          // Target line
+        int column;        // Target column
+    };
+
+    /*!
+       Reimplement this function to enable code navigation.
+
+       \a resolveTarget is set to true when the target of the link is relevant
+       (it isn't until the link is used).
+     */
+    virtual Link findLinkAt(const QTextCursor &, bool resolveTarget = true);
+
+    /*!
+       Reimplement this function if you want to customize the way a link is
+       opened. Returns whether the link was opened succesfully.
+     */
+    virtual bool openLink(const Link &link);
 
 protected slots:
     virtual void slotUpdateExtraAreaWidth();
@@ -540,13 +596,16 @@ private:
 
     QTextBlock collapsedBlockAt(const QPoint &pos, QRect *box = 0) const;
 
+    void updateLink(QMouseEvent *e);
+    void showLink(const Link &);
+    void clearLink();
 
     // parentheses matcher
 private slots:
     void _q_matchParentheses();
     void _q_highlightBlocks();
     void slotSelectionChanged();
-    void _q_animateUpdate(int position, QRectF rect);
+    void _q_animateUpdate(int position, QPointF lastPos, QRectF rect);
 };
 
 
@@ -620,7 +679,7 @@ private:
     BaseTextEditor *e;
     mutable QString m_contextHelpId;
     QToolBar *m_toolBar;
-    Core::Utils::LineColumnLabel *m_cursorPositionLabel;
+    Utils::LineColumnLabel *m_cursorPositionLabel;
 };
 
 } // namespace TextEditor

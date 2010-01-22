@@ -39,7 +39,7 @@
 #define PROGRESSBAR_HEIGHT 11
 
 ProgressBar::ProgressBar(QWidget *parent)
-    : QProgressBar(parent), m_error(false)
+    : QWidget(parent), m_error(false), m_minimum(1), m_maximum(100), m_value(1)
 {
     setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
     setMouseTracking(true);
@@ -47,6 +47,32 @@ ProgressBar::ProgressBar(QWidget *parent)
 
 ProgressBar::~ProgressBar()
 {
+}
+
+void ProgressBar::reset()
+{
+    m_value = m_minimum;
+    update();
+}
+
+void ProgressBar::setRange(int minimum, int maximum)
+{
+    m_minimum = minimum;
+    m_maximum = maximum;
+    if (m_value < m_minimum || m_value > m_maximum)
+        m_value = m_minimum;
+    update();
+}
+
+void ProgressBar::setValue(int value)
+{
+    if (m_value == value
+            || m_value < m_minimum
+            || m_value > m_maximum) {
+        return;
+    }
+    m_value = value;
+    update();
 }
 
 QString ProgressBar::title() const
@@ -62,6 +88,7 @@ bool ProgressBar::hasError() const
 void ProgressBar::setTitle(const QString &title)
 {
     m_title = title;
+    update();
 }
 
 void ProgressBar::setError(bool on)
@@ -88,7 +115,7 @@ void ProgressBar::mousePressEvent(QMouseEvent *event)
         emit clicked();
         return;
     }
-    QProgressBar::mousePressEvent(event);
+    QWidget::mousePressEvent(event);
 }
 
 void ProgressBar::mouseMoveEvent(QMouseEvent *)
@@ -98,8 +125,8 @@ void ProgressBar::mouseMoveEvent(QMouseEvent *)
 
 void ProgressBar::paintEvent(QPaintEvent *)
 {
-    // TODO move font into stylehelper
-    // TODO use stylehelper white
+    // TODO move font into Utils::StyleHelper
+    // TODO use Utils::StyleHelper white
 
     double range = maximum() - minimum();
     double percent = 0.50;
@@ -112,7 +139,7 @@ void ProgressBar::paintEvent(QPaintEvent *)
 
     QPainter p(this);
     QFont boldFont(p.font());
-    boldFont.setPointSizeF(StyleHelper::sidebarFontSize());
+    boldFont.setPointSizeF(Utils::StyleHelper::sidebarFontSize());
     boldFont.setBold(true);
     p.setFont(boldFont);
     QFontMetrics fm(boldFont);
@@ -131,7 +158,7 @@ void ProgressBar::paintEvent(QPaintEvent *)
     p.setPen(QColor(30, 30, 30, 80));
     p.drawText(textRect, Qt::AlignHCenter | Qt::AlignBottom, m_title);
     p.translate(0, -1);
-    p.setPen(StyleHelper::panelTextColor());
+    p.setPen(Utils::StyleHelper::panelTextColor());
     p.drawText(textRect, Qt::AlignHCenter | Qt::AlignBottom, m_title);
     p.translate(0, 1);
 
@@ -139,11 +166,11 @@ void ProgressBar::paintEvent(QPaintEvent *)
     m_progressHeight += ((m_progressHeight % 2) + 1) % 2; // make odd
     // draw outer rect
     QRect rect(INDENT - 1, h+6, size().width()-2*INDENT, m_progressHeight-1);
-    p.setPen(StyleHelper::panelTextColor());
+    p.setPen(Utils::StyleHelper::panelTextColor());
     p.drawRect(rect);
 
     // draw inner rect
-    QColor c = StyleHelper::panelTextColor();
+    QColor c = Utils::StyleHelper::panelTextColor();
     c.setAlpha(180);
     p.setPen(Qt::NoPen);
 
@@ -169,7 +196,7 @@ void ProgressBar::paintEvent(QPaintEvent *)
     p.drawRect(inner);
 
     if (value() < maximum() && !m_error) {
-        QColor cancelOutline = StyleHelper::panelTextColor();
+        QColor cancelOutline = Utils::StyleHelper::panelTextColor();
         p.setPen(cancelOutline);
         QRect cancelRect(rect.right() - m_progressHeight + 2, rect.top(), m_progressHeight-1, rect.height());
         if (cancelRect.contains(mapFromGlobal(QCursor::pos())))
@@ -183,7 +210,7 @@ void ProgressBar::paintEvent(QPaintEvent *)
         p.drawLine(cancelRect.center()+QPoint(-1,-1), cancelRect.center()+QPoint(+3,+3));
         p.drawLine(cancelRect.center()+QPoint(+3,-1), cancelRect.center()+QPoint(-1,+3));
 
-        p.setPen(StyleHelper::panelTextColor());
+        p.setPen(Utils::StyleHelper::panelTextColor());
         p.drawLine(cancelRect.center()+QPoint(-1,-1), cancelRect.center()+QPoint(+3,+3));
         p.drawLine(cancelRect.center()+QPoint(+3,-1), cancelRect.center()+QPoint(-1,+3));
     }

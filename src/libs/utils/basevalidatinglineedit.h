@@ -34,7 +34,6 @@
 
 #include <QtGui/QLineEdit>
 
-namespace Core {
 namespace Utils {
 
 struct BaseValidatingLineEditPrivate;
@@ -82,6 +81,7 @@ public:
 
 signals:
     void validChanged();
+    void validChanged(bool validState);
     void validReturnPressed();
 
 protected:
@@ -98,6 +98,5 @@ private:
 };
 
 } // namespace Utils
-} // namespace Core
 
 #endif // BASEVALIDATINGLINEEDIT_H

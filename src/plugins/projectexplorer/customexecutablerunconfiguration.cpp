@@ -30,9 +30,13 @@
 #include "customexecutablerunconfiguration.h"
 #include "environment.h"
 #include "project.h"
+#include "persistentsettings.h"
+#include "environmenteditmodel.h"
 
 #include <coreplugin/icore.h>
 #include <projectexplorer/debugginghelper.h>
+#include <utils/detailswidget.h>
+#include <utils/pathchooser.h>
 
 #include <QtGui/QCheckBox>
 #include <QtGui/QFormLayout>
@@ -49,11 +53,11 @@
 using namespace ProjectExplorer;
 using namespace ProjectExplorer::Internal;
 
-class CustomDirectoryPathChooser : public Core::Utils::PathChooser
+class CustomDirectoryPathChooser : public Utils::PathChooser
 {
 public:
     CustomDirectoryPathChooser(QWidget *parent)
-        : Core::Utils::PathChooser(parent)
+        : Utils::PathChooser(parent)
     {
     }
     virtual bool validatePath(const QString &path, QString *errorMessage = 0)
@@ -74,8 +78,8 @@ CustomExecutableConfigurationWidget::CustomExecutableConfigurationWidget(CustomE
     m_userName = new QLineEdit(this);
     layout->addRow(tr("Name:"), m_userName);
 
-    m_executableChooser = new Core::Utils::PathChooser(this);
-    m_executableChooser->setExpectedKind(Core::Utils::PathChooser::Command);
+    m_executableChooser = new Utils::PathChooser(this);
+    m_executableChooser->setExpectedKind(Utils::PathChooser::Command);
     layout->addRow(tr("Executable:"), m_executableChooser);
 
     m_commandLineArgumentsLineEdit = new QLineEdit(this);
@@ -83,15 +87,21 @@ CustomExecutableConfigurationWidget::CustomExecutableConfigurationWidget(CustomE
     layout->addRow(tr("Arguments:"), m_commandLineArgumentsLineEdit);
 
     m_workingDirectory = new CustomDirectoryPathChooser(this);
-    m_workingDirectory->setExpectedKind(Core::Utils::PathChooser::Directory);
+    m_workingDirectory->setExpectedKind(Utils::PathChooser::Directory);
     layout->addRow(tr("Working Directory:"), m_workingDirectory);
 
     m_useTerminalCheck = new QCheckBox(tr("Run in &Terminal"), this);
     layout->addRow(QString(), m_useTerminalCheck);
 
     QVBoxLayout *vbox = new QVBoxLayout(this);
-    vbox->setContentsMargins(0, -1, 0, -1);
-    vbox->addLayout(layout);
+    vbox->setMargin(0);
+
+    m_detailsContainer = new Utils::DetailsWidget(this);
+    vbox->addWidget(m_detailsContainer);
+
+    QWidget *detailsWidget = new QWidget(m_detailsContainer);
+    m_detailsContainer->setWidget(detailsWidget);
+    detailsWidget->setLayout(layout);
 
     QLabel *environmentLabel = new QLabel(this);
     environmentLabel->setText(tr("Run Environment"));
@@ -123,7 +133,7 @@ CustomExecutableConfigurationWidget::CustomExecutableConfigurationWidget(CustomE
     vbox->addWidget(m_environmentWidget);
 
     changed();
-    
+
     connect(m_userName, SIGNAL(textEdited(QString)),
             this, SLOT(setUserName(QString)));
     connect(m_executableChooser, SIGNAL(changed(QString)),
@@ -204,25 +214,33 @@ void CustomExecutableConfigurationWidget::setUserName(const QString &name)
 void CustomExecutableConfigurationWidget::termToggled(bool on)
 {
     m_ignoreChange = true;
-    m_runConfiguration->setRunMode(on ? ApplicationRunConfiguration::Console
-                                      : ApplicationRunConfiguration::Gui);
+    m_runConfiguration->setRunMode(on ? LocalApplicationRunConfiguration::Console
+                                      : LocalApplicationRunConfiguration::Gui);
     m_ignoreChange = false;
 }
 
 void CustomExecutableConfigurationWidget::changed()
 {
+    const QString &executable = m_runConfiguration->baseExecutable();
+    QString text = tr("No Executable specified.");
+    if (!executable.isEmpty())
+        text = tr("Running executable: <b>%1</b> %2").
+               arg(executable,
+                   ProjectExplorer::Environment::joinArgumentList(m_runConfiguration->commandLineArguments()));
+
+    m_detailsContainer->setSummaryText(text);
     // We triggered the change, don't update us
     if (m_ignoreChange)
         return;
-    m_executableChooser->setPath(m_runConfiguration->baseExecutable());
+    m_executableChooser->setPath(executable);
     m_commandLineArgumentsLineEdit->setText(ProjectExplorer::Environment::joinArgumentList(m_runConfiguration->commandLineArguments()));
     m_workingDirectory->setPath(m_runConfiguration->baseWorkingDirectory());
-    m_useTerminalCheck->setChecked(m_runConfiguration->runMode() == ApplicationRunConfiguration::Console);
+    m_useTerminalCheck->setChecked(m_runConfiguration->runMode() == LocalApplicationRunConfiguration::Console);
     m_userName->setText(m_runConfiguration->userName());
 }
 
 CustomExecutableRunConfiguration::CustomExecutableRunConfiguration(Project *pro)
-    : ApplicationRunConfiguration(pro),
+    : LocalApplicationRunConfiguration(pro),
       m_runMode(Gui),
       m_userSetName(false),
       m_baseEnvironmentBase(CustomExecutableRunConfiguration::BuildEnvironmentBase)
@@ -282,7 +300,7 @@ QString CustomExecutableRunConfiguration::executable() const
         QString oldExecutable = m_executable;
         QString oldWorkingDirectory = m_workingDirectory;
         QStringList oldCmdArguments = m_cmdArguments;
-        
+
         if (dialog.exec()) {
             return executable();
         } else {
@@ -297,7 +315,7 @@ QString CustomExecutableRunConfiguration::executable() const
     return exec;
 }
 
-ApplicationRunConfiguration::RunMode CustomExecutableRunConfiguration::runMode() const
+LocalApplicationRunConfiguration::RunMode CustomExecutableRunConfiguration::runMode() const
 {
     return m_runMode;
 }
@@ -327,7 +345,6 @@ ProjectExplorer::Environment CustomExecutableRunConfiguration::baseEnvironment()
     } else  if (m_baseEnvironmentBase == CustomExecutableRunConfiguration::SystemEnvironmentBase) {
         env = ProjectExplorer::Environment::systemEnvironment();
     } else  if (m_baseEnvironmentBase == CustomExecutableRunConfiguration::BuildEnvironmentBase) {
-        QString config = project()->activeBuildConfiguration();
         env = project()->environment(project()->activeBuildConfiguration());
     }
     return env;
@@ -376,7 +393,7 @@ void CustomExecutableRunConfiguration::save(PersistentSettingsWriter &writer) co
     writer.saveValue("UserName", m_userName);
     writer.saveValue("UserEnvironmentChanges", ProjectExplorer::EnvironmentItem::toStringList(m_userEnvironmentChanges));
     writer.saveValue("BaseEnvironmentBase", m_baseEnvironmentBase);
-    ApplicationRunConfiguration::save(writer);
+    LocalApplicationRunConfiguration::save(writer);
 }
 
 void CustomExecutableRunConfiguration::restore(const PersistentSettingsReader &reader)
@@ -388,7 +405,7 @@ void CustomExecutableRunConfiguration::restore(const PersistentSettingsReader &r
     m_userSetName = reader.restoreValue("UserSetName").toBool();
     m_userName = reader.restoreValue("UserName").toString();
     m_userEnvironmentChanges = ProjectExplorer::EnvironmentItem::fromStringList(reader.restoreValue("UserEnvironmentChanges").toStringList());
-    ApplicationRunConfiguration::restore(reader);
+    LocalApplicationRunConfiguration::restore(reader);
     QVariant tmp = reader.restoreValue("BaseEnvironmentBase");
     m_baseEnvironmentBase = tmp.isValid() ? BaseEnvironmentBase(tmp.toInt()) : CustomExecutableRunConfiguration::BuildEnvironmentBase;
 }
@@ -441,13 +458,15 @@ void CustomExecutableRunConfiguration::setUserName(const QString &name)
 QString CustomExecutableRunConfiguration::dumperLibrary() const
 {
     QString qmakePath = ProjectExplorer::DebuggingHelperLibrary::findSystemQt(environment());
-    return ProjectExplorer::DebuggingHelperLibrary::debuggingHelperLibrary(qmakePath);
+    QString qtInstallData = ProjectExplorer::DebuggingHelperLibrary::qtInstallDataDir(qmakePath);
+    return ProjectExplorer::DebuggingHelperLibrary::debuggingHelperLibraryByInstallData(qtInstallData);
 }
 
 QStringList CustomExecutableRunConfiguration::dumperLibraryLocations() const
 {
     QString qmakePath = ProjectExplorer::DebuggingHelperLibrary::findSystemQt(environment());
-    return ProjectExplorer::DebuggingHelperLibrary::debuggingHelperLibraryLocations(qmakePath);
+    QString qtInstallData = ProjectExplorer::DebuggingHelperLibrary::qtInstallDataDir(qmakePath);
+    return ProjectExplorer::DebuggingHelperLibrary::debuggingHelperLibraryLocationsByInstallData(qtInstallData);
 }
 
 ProjectExplorer::ToolChain::ToolChainType CustomExecutableRunConfiguration::toolChainType() const

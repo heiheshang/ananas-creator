@@ -81,9 +81,9 @@ public:
     CppModelManagerInterface(QObject *parent = 0) : QObject(parent) {}
     virtual ~CppModelManagerInterface() {}
 
-    virtual void GC() = 0;
-    virtual void updateSourceFiles(const QStringList &sourceFiles) = 0;
+    static CppModelManagerInterface *instance();
 
+    virtual QMap<QString, QString> workingCopy() const = 0;
     virtual CPlusPlus::Snapshot snapshot() const = 0;
 
     virtual QList<ProjectInfo> projectInfos() const = 0;
@@ -94,6 +94,18 @@ public:
 
     virtual void addEditorSupport(AbstractEditorSupport *editorSupport) = 0;
     virtual void removeEditorSupport(AbstractEditorSupport *editorSupport) = 0;
+
+    virtual QList<int> references(CPlusPlus::Symbol *symbol,
+                                  CPlusPlus::Document::Ptr doc,
+                                  const CPlusPlus::Snapshot &snapshot) = 0;
+
+    virtual void renameUsages(CPlusPlus::Symbol *symbol) = 0;
+    virtual void findUsages(CPlusPlus::Symbol *symbol) = 0;
+
+public Q_SLOTS:
+    void updateModifiedSourceFiles();
+    virtual void updateSourceFiles(const QStringList &sourceFiles) = 0;    
+    virtual void GC() = 0;
 };
 
 class CPPTOOLS_EXPORT AbstractEditorSupport

@@ -28,10 +28,12 @@
 **************************************************************************/
 
 #include <QtCore/QStringList>
+#include <QtCore/QLinkedList>
 #include <QtCore/QVector>
 #include <QtCore/QSharedPointer>
 #include <QtCore/QTimer>
 #include <QtCore/QMap>
+#include <QtCore/QSet>
 #include <QtCore/QVariant>
 #include <QtGui/QAction>
 
@@ -46,13 +48,32 @@
 
 // Test uninitialized variables allocing memory
 bool optTestUninitialized = false;
+bool optTestAll = false;
+bool optEmptyContainers = false;
+unsigned optVerbose = 0;
 
+// Provide address of type of be tested.
+// When testing unitialized memory, allocate at random.
 template <class T>
         inline T* testAddress(T* in)
 {
-    return optTestUninitialized ?
-        (reinterpret_cast<T*>(new char[sizeof(T)]))
-        : in;
+    unsigned char *mem = 0;
+    if (optTestUninitialized) {
+        mem = new unsigned char[sizeof(T)];
+        for (unsigned int i = 0; i < sizeof(T); i++) {
+            mem[i] = char(rand() % 255u);
+        }
+    } else {
+        mem = reinterpret_cast<unsigned char*>(in);
+    }
+    if (optVerbose) {
+        for (unsigned int i = 0; i < sizeof(T); i++) {
+            unsigned int b = mem[i];
+            printf("%2d %2x %3d\n", i, b, b);
+        }
+        fflush(stdout);
+    }
+    return reinterpret_cast<T*>(mem);
 }
 
 /* Test program for Dumper development/porting.
@@ -138,6 +159,16 @@ static int dumpQIntList()
     return 0;
 }
 
+static int dumpQIntLinkedList()
+{
+    QLinkedList<int> test = QLinkedList<int>() << 1 << 2;
+    prepareInBuffer("QLinkedList", "local.qintlinkedlist", "local.qlinkedintlist", "int");
+    qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(int), 0, 0, 0);
+    fputs(qDumpOutBuffer, stdout);
+    fputc('\n', stdout);
+    return 0;
+}
+
 static int dumpQIntVector()
 {
     QVector<int> test = QVector<int>() << 42 << 43;
@@ -148,13 +179,25 @@ static int dumpQIntVector()
     return 0;
 }
 
+static int dumpQQStringVector()
+{
+    QVector<QString> test = QVector<QString>() << "42s" << "43s";
+    prepareInBuffer("QVector", "local.qstringvector", "local.qstringvector", "QString");
+    qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(QString), 0, 0, 0);
+    fputs(qDumpOutBuffer, stdout);
+    fputc('\n', stdout);
+    return 0;
+}
+
 static int dumpQMapIntInt()
 {
     QMap<int,int> test;
     QMapNode<int,int> mapNode;
     const int valueOffset = (char*)&(mapNode.value) - (char*)&mapNode;
-    test.insert(42, 43);
-    test.insert(43, 44);
+    if (!optEmptyContainers) {
+        test.insert(42, 43);
+        test.insert(43, 44);
+    }
     prepareInBuffer("QMap", "local.qmapintint", "local.qmapintint", "int@int");
     qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(int), sizeof(int), sizeof(mapNode), valueOffset);
     fputs(qDumpOutBuffer, stdout);
@@ -167,8 +210,10 @@ static int dumpQMapIntString()
     QMap<int,QString> test;
     QMapNode<int,QString> mapNode;
     const int valueOffset = (char*)&(mapNode.value) - (char*)&mapNode;
-    test.insert(42, QLatin1String("fortytwo"));
-    test.insert(43, QLatin1String("fortytree"));
+    if (!optEmptyContainers) {
+        test.insert(42, QLatin1String("fortytwo"));
+        test.insert(43, QLatin1String("fortytree"));
+    }
     prepareInBuffer("QMap", "local.qmapintqstring", "local.qmapintqstring", "int@QString");
     qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(int), sizeof(QString), sizeof(mapNode), valueOffset);
     fputs(qDumpOutBuffer, stdout);
@@ -176,9 +221,50 @@ static int dumpQMapIntString()
     return 0;
 }
 
+static int dumpQSetInt()
+{
+    QSet<int> test;
+    if (!optEmptyContainers) {
+        test.insert(42);
+        test.insert(43);
+    }
+    prepareInBuffer("QSet", "local.qsetint", "local.qsetint", "int");
+    qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(int), 0, 0, 0);
+    fputs(qDumpOutBuffer, stdout);
+    fputc('\n', stdout);
+    return 0;
+}
+
+
+static int dumpQMapQStringString()
+{
+    QMap<QString,QString> test;
+    QMapNode<QString,QString> mapNode;
+    const int valueOffset = (char*)&(mapNode.value) - (char*)&mapNode;
+    if (!optEmptyContainers) {
+        test.insert(QLatin1String("42s"), QLatin1String("fortytwo"));
+        test.insert(QLatin1String("423"), QLatin1String("fortytree"));
+    }
+    prepareInBuffer("QMap", "local.qmapqstringqstring", "local.qmapqstringqstring", "QString@QString");    
+    qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(QString), sizeof(QString), sizeof(mapNode), valueOffset);
+    fputs(qDumpOutBuffer, stdout);
+    fputc('\n', stdout);
+    return 0;
+}
+
 static int dumpQVariant()
 {
-    QVariant test(QLatin1String("item"));
+    QVariant test = QLatin1String("item");
+    prepareInBuffer("QVariant", "local.qvariant", "local.qvariant", "");
+    qDumpObjectData440(2, 42, testAddress(&test), 1, 0, 0,0 ,0);
+    fputs(qDumpOutBuffer, stdout);
+    fputs("\n\n", stdout);
+    test = QVariant(int(42));
+    prepareInBuffer("QVariant", "local.qvariant", "local.qvariant", "");
+    qDumpObjectData440(2, 42, testAddress(&test), 1, 0, 0,0 ,0);
+    fputs(qDumpOutBuffer, stdout);
+    fputs("\n\n", stdout);
+    test = QVariant(double(3.141));
     prepareInBuffer("QVariant", "local.qvariant", "local.qvariant", "");
     qDumpObjectData440(2, 42, testAddress(&test), 1, 0, 0,0 ,0);
     fputs(qDumpOutBuffer, stdout);
@@ -191,6 +277,27 @@ static int dumpQVariant()
     prepareInBuffer("QVariant", "local.qvariant", "local.qvariant", "");
     qDumpObjectData440(2, 42, testAddress(&test), 1, 0, 0,0 ,0);
     fputs(qDumpOutBuffer, stdout);
+    return 0;
+}
+
+static int dumpQVariantList()
+{
+    QVariantList test;
+    if (!optEmptyContainers) {
+        test.push_back(QVariant(QLatin1String("hallo")));
+        test.push_back(QVariant(42));
+        test.push_back(QVariant(3.141));
+    }
+    // As a list
+    prepareInBuffer("QList", "local.qvariantlist", "local.qvariantlist", "QVariant");
+    qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(QVariant), 0,0 ,0);
+    fputs(qDumpOutBuffer, stdout);
+    // As typedef
+    fputs("\n\n", stdout);
+    prepareInBuffer("QVariantList", "local.qvariantlist", "local.qvariantlist", "");
+    qDumpObjectData440(2, 42, testAddress(&test), 1, 0, 0,0 ,0);
+    fputs(qDumpOutBuffer, stdout);
+    fputc('\n', stdout);
     return 0;
 }
 
@@ -219,8 +326,10 @@ static int dumpStdWString()
 static int dumpStdStringList()
 {
     std::list<std::string> test;
-    test.push_back("item1");
-    test.push_back("item2");
+    if (!optEmptyContainers) {
+        test.push_back("item1");
+        test.push_back("item2");
+    }
     prepareInBuffer("std::list", "local.stringlist", "local.stringlist", "std::string");
     qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(std::string), sizeof(std::list<std::string>::allocator_type), 0, 0);
     fputs(qDumpOutBuffer, stdout);
@@ -231,8 +340,10 @@ static int dumpStdStringList()
 static int dumpStdStringQList()
 {
     QList<std::string> test;
-    test.push_back("item1");
-    test.push_back("item2");
+    if (!optEmptyContainers) {
+        test.push_back("item1");
+        test.push_back("item2");
+    }
     prepareInBuffer("QList", "local.stringqlist", "local.stringqlist", "std::string");
     qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(std::string), 0, 0, 0);
     fputs(qDumpOutBuffer, stdout);
@@ -243,8 +354,10 @@ static int dumpStdStringQList()
 static int dumpStdIntList()
 {
     std::list<int> test;
-    test.push_back(1);
-    test.push_back(2);
+    if (!optEmptyContainers) {
+        test.push_back(1);
+        test.push_back(2);
+    }
     prepareInBuffer("std::list", "local.intlist", "local.intlist", "int");
     qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(int), sizeof(std::list<int>::allocator_type), 0, 0);
     fputs(qDumpOutBuffer, stdout);
@@ -255,8 +368,10 @@ static int dumpStdIntList()
 static int dumpStdIntVector()
 {
     std::vector<int> test;
-    test.push_back(1);
-    test.push_back(2);
+    if (!optEmptyContainers) {
+        test.push_back(1);
+        test.push_back(2);
+    }
     prepareInBuffer("std::vector", "local.intvector", "local.intvector", "int");
     qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(int), sizeof(std::list<int>::allocator_type), 0, 0);
     fputs(qDumpOutBuffer, stdout);
@@ -267,8 +382,10 @@ static int dumpStdIntVector()
 static int dumpStdStringVector()
 {
     std::vector<std::string> test;
-    test.push_back("item1");
-    test.push_back("item2");
+    if (!optEmptyContainers) {
+        test.push_back("item1");
+        test.push_back("item2");
+    }
     prepareInBuffer("std::vector", "local.stringvector", "local.stringvector", "std::string");
     qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(std::string), sizeof(std::list<int>::allocator_type), 0, 0);
     fputs(qDumpOutBuffer, stdout);
@@ -279,8 +396,10 @@ static int dumpStdStringVector()
 static int dumpStdWStringVector()
 {
     std::vector<std::wstring> test;
-    test.push_back(L"item1");
-    test.push_back(L"item2");
+    if (!optEmptyContainers) {
+        test.push_back(L"item1");
+        test.push_back(L"item2");
+    }
     prepareInBuffer("std::vector", "local.wstringvector", "local.wstringvector", "std::wstring");
     qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(std::wstring), sizeof(std::list<int>::allocator_type), 0, 0);
     fputs(qDumpOutBuffer, stdout);
@@ -291,8 +410,10 @@ static int dumpStdWStringVector()
 static int dumpStdIntSet()
 {
     std::set<int> test;
-    test.insert(1);
-    test.insert(2);
+    if (!optEmptyContainers) {
+        test.insert(1);
+        test.insert(2);
+    }
     prepareInBuffer("std::set", "local.intset", "local.intset", "int");
     qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(int), sizeof(std::list<int>::allocator_type), 0, 0);
     fputs(qDumpOutBuffer, stdout);
@@ -303,8 +424,10 @@ static int dumpStdIntSet()
 static int dumpStdStringSet()
 {
     std::set<std::string> test;
-    test.insert("item1");
-    test.insert("item2");
+    if (!optEmptyContainers) {
+        test.insert("item1");
+        test.insert("item2");
+    }
     prepareInBuffer("std::set", "local.stringset", "local.stringset", "std::string");
     qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(std::string), sizeof(std::list<int>::allocator_type), 0, 0);
     fputs(qDumpOutBuffer, stdout);
@@ -315,8 +438,10 @@ static int dumpStdStringSet()
 static int dumpStdQStringSet()
 {
     std::set<QString> test;
-    test.insert(QLatin1String("item1"));
-    test.insert(QLatin1String("item2"));
+    if (!optEmptyContainers) {
+        test.insert(QLatin1String("item1"));
+        test.insert(QLatin1String("item2"));
+    }
     prepareInBuffer("std::set", "local.stringset", "local.stringset", "QString");
     qDumpObjectData440(2, 42, testAddress(&test), 1, sizeof(QString), sizeof(std::list<int>::allocator_type), 0, 0);
     fputs(qDumpOutBuffer, stdout);
@@ -326,9 +451,11 @@ static int dumpStdQStringSet()
 
 static int dumpStdMapIntString()
 {
-    std::map<int,std::string> test;
+    std::map<int,std::string> test;    
     std::map<int,std::string>::value_type entry(42, std::string("fortytwo"));
-    test.insert(entry);
+    if (!optEmptyContainers) {
+        test.insert(entry);
+    }
     const int valueOffset = (char*)&(entry.second) - (char*)&entry;
     prepareInBuffer("std::map", "local.stdmapintstring", "local.stdmapintstring",
                     "int@std::basic_string<char,std::char_traits<char>,std::allocator<char> >@std::less<int>@std::allocator<std::pair<const int,std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >");
@@ -343,7 +470,9 @@ static int dumpStdMapStringString()
     typedef std::map<std::string,std::string> TestType;
     TestType test;
     const TestType::value_type entry("K", "V");
-    test.insert(entry);
+    if (!optEmptyContainers) {
+        test.insert(entry);
+    }
     const int valueOffset = (char*)&(entry.second) - (char*)&entry;
     prepareInBuffer("std::map", "local.stdmapstringstring", "local.stdmapstringstring",
                     "std::basic_string<char,std::char_traits<char>,std::allocator<char> >@std::basic_string<char,std::char_traits<char>,std::allocator<char> >@std::less<int>@std::allocator<std::pair<const std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >");
@@ -417,10 +546,14 @@ static TypeDumpFunctionMap registerTypes()
     rc.insert("QSharedPointer<QString>", dumpQSharedPointerQString);
     rc.insert("QStringList", dumpQStringList);
     rc.insert("QList<int>", dumpQIntList);
+    rc.insert("QLinkedList<int>", dumpQIntLinkedList);
     rc.insert("QList<std::string>", dumpStdStringQList);
     rc.insert("QVector<int>", dumpQIntVector);
+    rc.insert("QVector<QString>", dumpQQStringVector);
     rc.insert("QMap<int,QString>", dumpQMapIntString);
+    rc.insert("QMap<QString,QString>", dumpQMapQStringString);
     rc.insert("QMap<int,int>", dumpQMapIntInt);
+    rc.insert("QSet<int>", dumpQSetInt);
     rc.insert("string", dumpStdString);
     rc.insert("wstring", dumpStdWString);
     rc.insert("list<int>", dumpStdIntList);
@@ -436,7 +569,25 @@ static TypeDumpFunctionMap registerTypes()
     rc.insert("QObject", dumpQObject);
     rc.insert("QObjectList", dumpQObjectList);
     rc.insert("QVariant", dumpQVariant);
+    rc.insert("QVariantList", dumpQVariantList);
     return rc;
+}
+
+static void usage(const char *b, const TypeDumpFunctionMap &tdm)
+{
+    printf("Usage: %s [-v][-u][-e] <type1> <type2..>\n", b);
+    printf("Usage: %s [-v][-u][-e] -a excluded_type1 <excluded_type2...>\n", b);
+    printf("Options:  -u  Test uninitialized memory\n");
+    printf("          -e  Empty containers\n");
+    printf("          -v  Verbose\n");
+    printf("          -a  Test all available types\n");
+    printf("Supported types: ");
+    const TypeDumpFunctionMap::const_iterator cend = tdm.constEnd();
+    for (TypeDumpFunctionMap::const_iterator it = tdm.constBegin(); it != cend; ++it) {
+        fputs(qPrintable(it.key()), stdout);
+        fputc(' ', stdout);
+    }
+    fputc('\n', stdout);
 }
 
 int main(int argc, char *argv[])
@@ -452,30 +603,57 @@ int main(int argc, char *argv[])
     const TypeDumpFunctionMap::const_iterator cend = tdm.constEnd();
 
     if (argc < 2) {
-        printf("Usage: %s [-a]|<type1> <type2..>\n", argv[0]);
-        printf("Supported types: ");
-        for (TypeDumpFunctionMap::const_iterator it = tdm.constBegin(); it != cend; ++it) {
-            fputs(qPrintable(it.key()), stdout);
-            fputc(' ', stdout);
-        }
-        fputc('\n', stdout);
+        usage(argv[0], tdm);
         return 0;
     }
-
+    // Parse args
+    QStringList tests;
+    for (int a = 1; a < argc; a++) {
+        const char *arg = argv[a];
+        if (arg[0] == '-') {
+            switch (arg[1]) {
+            case 'a':
+                optTestAll = true;
+                break;
+            case 'u':
+                optTestUninitialized = true;
+                break;
+            case 'v':
+                optVerbose++;
+                break;
+            case 'e':
+                optEmptyContainers = true;
+                break;
+            default:
+                fprintf(stderr, "Invalid option %s\n", arg);
+                usage(argv[0], tdm);
+                return -1;
+            }
+        } else {
+            tests.push_back(QLatin1String(arg));
+        }
+    }
+    // Go
     int rc = 0;
-    if (argc == 2 && !qstrcmp(argv[1], "-a")) {
+    if (optTestAll) {
         for (TypeDumpFunctionMap::const_iterator it = tdm.constBegin(); it != cend; ++it) {
-            printf("\nTesting: %s\n", qPrintable(it.key()));
-            rc += (*it.value())();
+            const QString test = it.key();
+            if (tests.contains(test)) {
+                printf("\nSkipping: %s\n", qPrintable(test));
+            } else {
+                printf("\nTesting: %s\n", qPrintable(test));
+                rc += (*it.value())();
+                if (optTestUninitialized)
+                    printf("Survived: %s\n", qPrintable(test));
+            }
         }
     } else {
-        for (int i = 1; i < argc; i++) {
-            const char *arg = argv[i];
-            printf("\nTesting: %s\n", arg);
-            const TypeDumpFunctionMap::const_iterator it = tdm.constFind(QLatin1String(arg));
+        foreach(const QString &test, tests) {
+            printf("\nTesting: %s\n", qPrintable(test));
+            const TypeDumpFunctionMap::const_iterator it = tdm.constFind(test);
             if (it == cend) {
                 rc = -1;
-                fprintf(stderr, "\nUnhandled type: %s\n", argv[i]);
+                fprintf(stderr, "\nUnhandled type: %s\n", qPrintable(test));
             } else {
                 rc = (*it.value())();
             }

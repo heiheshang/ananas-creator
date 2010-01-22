@@ -29,7 +29,6 @@
 
 #include "buildstepspage.h"
 
-#include "ui_buildstepspage.h"
 #include "project.h"
 
 #include <coreplugin/coreconstants.h>
@@ -38,6 +37,10 @@
 
 #include <QtGui/QLabel>
 #include <QtGui/QPushButton>
+#include <QtGui/QMenu>
+#include <QtGui/QVBoxLayout>
+#include <QtGui/QHBoxLayout>
+#include <QtGui/QToolButton>
 
 using namespace ProjectExplorer;
 using namespace ProjectExplorer::Internal;
@@ -48,7 +51,8 @@ BuildStepsPage::BuildStepsPage(Project *project, bool clean) :
     m_clean(clean)
 {
     m_vbox = new QVBoxLayout(this);
-    m_vbox->setContentsMargins(20, 0, 0, 0);
+    m_vbox->setContentsMargins(0, 0, 0, 0);
+    m_vbox->setSpacing(0);
     const QList<BuildStep *> &steps = m_clean ? m_pro->cleanSteps() : m_pro->buildSteps();
     foreach (BuildStep *bs, steps) {
         addBuildStepWidget(-1, bs);
@@ -60,15 +64,20 @@ BuildStepsPage::BuildStepsPage(Project *project, bool clean) :
 
     QHBoxLayout *hboxLayout = new QHBoxLayout();
     m_addButton = new QPushButton(this);
-    m_addButton->setText(tr("Add build step"));
+    m_addButton->setText(clean ? tr("Add clean step") :  tr("Add build step"));
     m_addButton->setMenu(new QMenu(this));
     hboxLayout->addWidget(m_addButton);
 
     m_removeButton = new QPushButton(this);
-    m_removeButton->setText(tr("Remove build step"));
+    m_removeButton->setText(clean ? tr("Remove clean step") : tr("Remove build step"));
     m_removeButton->setMenu(new QMenu(this));
     hboxLayout->addWidget(m_removeButton);
     hboxLayout->addStretch(10);
+
+#ifdef Q_OS_MAC
+    m_addButton->setAttribute(Qt::WA_MacSmallSize);
+    m_removeButton->setAttribute(Qt::WA_MacSmallSize);
+#endif
 
     m_vbox->addLayout(hboxLayout);
 
@@ -84,27 +93,10 @@ BuildStepsPage::BuildStepsPage(Project *project, bool clean) :
 BuildStepsPage::~BuildStepsPage()
 {
     foreach(BuildStepsWidgetStruct s, m_buildSteps) {
-        delete s.detailsLabel;
-        delete s.upButton;
-        delete s.downButton;
-        delete s.detailsButton;
-        delete s.hbox;
         delete s.widget;
+        delete s.detailsWidget;
     }
     m_buildSteps.clear();
-}
-
-void BuildStepsPage::toggleDetails()
-{
-    QToolButton *tb = qobject_cast<QToolButton *>(sender());
-    if (tb) {
-        foreach(const BuildStepsWidgetStruct &s, m_buildSteps) {
-            if (s.detailsButton == tb) {
-                s.widget->setVisible(!s.widget->isVisible());
-                fixupLayout(s.widget);
-            }
-        }
-    }
 }
 
 void BuildStepsPage::updateSummary()
@@ -113,7 +105,7 @@ void BuildStepsPage::updateSummary()
     if (widget)
         foreach(const BuildStepsWidgetStruct &s, m_buildSteps)
             if (s.widget == widget)
-                s.detailsLabel->setText(widget->summaryText());
+                s.detailsWidget->setSummaryText(widget->summaryText());
 }
 
 QString BuildStepsPage::displayName() const
@@ -128,7 +120,7 @@ void BuildStepsPage::init(const QString &buildConfiguration)
     // make sure widget is updated
     foreach(BuildStepsWidgetStruct s, m_buildSteps) {
         s.widget->init(m_configuration);
-        s.detailsLabel->setText(s.widget->summaryText());
+        s.detailsWidget->setSummaryText(s.widget->summaryText());
     }
 }
 
@@ -166,21 +158,31 @@ void BuildStepsPage::addBuildStepWidget(int pos, BuildStep *step)
     // create everything
     BuildStepsWidgetStruct s;
     s.widget = step->createConfigWidget();
-    s.detailsLabel = new QLabel(this);
-    s.detailsLabel->setText(s.widget->summaryText());
+    s.detailsWidget = new Utils::DetailsWidget(this);
+    s.detailsWidget->setSummaryText(s.widget->summaryText());
+    s.detailsWidget->setWidget(s.widget);
+
     s.upButton = new QToolButton(this);
     s.upButton->setArrowType(Qt::UpArrow);
+    s.upButton->setMaximumHeight(22);
+    s.upButton->setMaximumWidth(22);
     s.downButton = new QToolButton(this);
     s.downButton->setArrowType(Qt::DownArrow);
-    s.detailsButton = new QToolButton(this);
-    s.detailsButton->setText(tr("Details"));
-
+    s.downButton->setMaximumHeight(22);
+    s.downButton->setMaximumWidth(22);
+#ifdef Q_OS_MAC
+    s.upButton->setIconSize(QSize(10, 10));
+    s.downButton->setIconSize(QSize(10, 10));
+#endif
     // layout
-    s.hbox = new QHBoxLayout();
-    s.hbox->addWidget(s.detailsLabel);
+    QWidget *toolWidget = new QWidget(s.detailsWidget);
+    toolWidget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    s.hbox = new QHBoxLayout(toolWidget);
+    s.hbox->setMargin(0);
+    s.hbox->setSpacing(0);
     s.hbox->addWidget(s.upButton);
     s.hbox->addWidget(s.downButton);
-    s.hbox->addWidget(s.detailsButton);
+    s.detailsWidget->setToolWidget(toolWidget);
 
     if (pos == -1)
         m_buildSteps.append(s);
@@ -188,17 +190,10 @@ void BuildStepsPage::addBuildStepWidget(int pos, BuildStep *step)
         m_buildSteps.insert(pos, s);
 
     if (pos == -1) {
-        m_vbox->addLayout(s.hbox);
-        m_vbox->addWidget(s.widget);
+        m_vbox->addWidget(s.detailsWidget);
     } else {
-        m_vbox->insertLayout(pos *2, s.hbox);
-        m_vbox->insertWidget(pos *2 + 1, s.widget);
+        m_vbox->insertWidget(pos, s.detailsWidget);
     }
-    s.widget->hide();
-
-    // connect
-    connect(s.detailsButton, SIGNAL(clicked()),
-            this, SLOT(toggleDetails()));
 
     connect(s.widget, SIGNAL(updateSummary()),
             this, SLOT(updateSummary()));
@@ -220,7 +215,7 @@ void BuildStepsPage::addBuildStep()
         addBuildStepWidget(pos, newStep);
         const BuildStepsWidgetStruct s = m_buildSteps.at(pos);
         s.widget->init(m_configuration);
-        s.detailsLabel->setText(s.widget->summaryText());
+        s.detailsWidget->setSummaryText(s.widget->summaryText());
     }
     updateBuildStepButtonsState();
 }
@@ -249,12 +244,8 @@ void BuildStepsPage::removeBuildStep()
             return;
 
         BuildStepsWidgetStruct s = m_buildSteps.at(pos);
-        delete s.detailsLabel;
-        delete s.upButton;
-        delete s.downButton;
-        delete s.detailsButton;
-        delete s.hbox;
         delete s.widget;
+        delete s.detailsWidget;
         m_buildSteps.removeAt(pos);
         m_clean ? m_pro->removeCleanStep(pos) : m_pro->removeBuildStep(pos);
     }
@@ -305,9 +296,7 @@ void BuildStepsPage::stepMoveUp(int pos)
 {
     m_clean ? m_pro->moveCleanStepUp(pos) : m_pro->moveBuildStepUp(pos);
 
-    m_buildSteps.at(pos).hbox->setParent(0);
-    m_vbox->insertLayout((pos - 1) * 2, m_buildSteps.at(pos).hbox);
-    m_vbox->insertWidget((pos - 1) * 2 + 1, m_buildSteps.at(pos).widget);
+    m_vbox->insertWidget(pos - 1, m_buildSteps.at(pos).detailsWidget);
 
     BuildStepsWidgetStruct tmp = m_buildSteps.at(pos -1);
     m_buildSteps[pos -1] = m_buildSteps.at(pos);

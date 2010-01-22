@@ -41,7 +41,6 @@
 
 enum { debugNewClassWidget = 0 };
 
-namespace Core {
 namespace Utils {
 
 struct NewClassWidgetPrivate {
@@ -58,6 +57,7 @@ struct NewClassWidgetPrivate {
     bool m_baseClassInputVisible;
     bool m_formInputVisible;
     bool m_pathInputVisible;
+    bool m_qobjectCheckBoxVisible;
     bool m_formInputCheckable;
 };
 
@@ -70,7 +70,9 @@ NewClassWidgetPrivate:: NewClassWidgetPrivate() :
     m_baseClassInputVisible(true),
     m_formInputVisible(true),
     m_pathInputVisible(true),
+    m_qobjectCheckBoxVisible(false),
     m_formInputCheckable(false)
+
 {
 }
 
@@ -120,6 +122,7 @@ NewClassWidget::NewClassWidget(QWidget *parent) :
 
     m_d->m_ui.generateFormCheckBox->setChecked(true);
     setFormInputCheckable(false, true);
+    setClassType(NoClassType);
 }
 
 NewClassWidget::~NewClassWidget()
@@ -367,6 +370,27 @@ void NewClassWidget::setLowerCaseFiles(bool v)
     m_d->m_ui.classLineEdit->setLowerCaseFileName(v);
 }
 
+NewClassWidget::ClassType NewClassWidget::classType() const
+{
+    return static_cast<ClassType>(m_d->m_ui.classTypeComboBox->currentIndex());
+}
+
+void NewClassWidget::setClassType(ClassType ct)
+{
+    m_d->m_ui.classTypeComboBox->setCurrentIndex(ct);
+}
+
+bool NewClassWidget::isClassTypeComboVisible() const
+{
+    return m_d->m_ui.classTypeLabel->isVisible();
+}
+
+void NewClassWidget::setClassTypeComboVisible(bool v)
+{
+    m_d->m_ui.classTypeLabel->setVisible(v);
+    m_d->m_ui.classTypeComboBox->setVisible(v);
+}
+
 void NewClassWidget::slotValidChanged()
 {
     const bool newValid = isValid();
@@ -485,4 +509,3 @@ QStringList NewClassWidget::files() const
 }
 
 } // namespace Utils
-} // namespace Core

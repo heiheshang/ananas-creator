@@ -52,7 +52,7 @@ GuiAppWizardDialog::GuiAppWizardDialog(const QString &templateName,
                                        const QList<QWizardPage*> &extensionPages,
                                        QWidget *parent) :
     QWizard(parent),
-    m_introPage(new  Core::Utils::ProjectIntroPage),
+    m_introPage(new  Utils::ProjectIntroPage),
     m_modulesPage(new ModulesPage),
     m_filesPage(new FilesPage)
 {
@@ -74,6 +74,7 @@ GuiAppWizardDialog::GuiAppWizardDialog(const QString &templateName,
     setPage(ModulesPageId, m_modulesPage);
 
     m_filesPage->setFormInputCheckable(true);
+    m_filesPage->setClassTypeComboVisible(false);
     setPage(FilesPageId, m_filesPage);
 
     foreach (QWizardPage *p, extensionPages)

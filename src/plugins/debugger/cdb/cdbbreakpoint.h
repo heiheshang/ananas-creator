@@ -63,7 +63,10 @@ struct CDBBreakPoint
     // Apply parameters
     bool apply(IDebugBreakpoint2 *ibp, QString *errorMessage) const;
     // Convenience to add to a IDebugControl4
-    bool add(CIDebugControl* debugControl, quint64 *address, unsigned long *id, QString *errorMessage) const;
+    bool add(CIDebugControl* debugControl,
+             QString *errorMessage,
+             unsigned long *id = 0,
+             quint64 *address = 0) const;
 
     // Retrieve/parse breakpoints from the interfaces
     bool retrieve(IDebugBreakpoint2 *ibp, QString *errorMessage);
@@ -77,7 +80,8 @@ struct CDBBreakPoint
                                        QString *errorMessage, QStringList *warnings);
 
     // Return a 'canonical' file (using '/' and capitalized drive letter)
-    static QString canonicalSourceFile(const QString &f);
+    static QString normalizeFileName(const QString &f);
+    static void clearNormalizeFileNameCache();
 
     QString fileName;       // short name of source file
     QString condition;      // condition associated with breakpoint

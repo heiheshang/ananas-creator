@@ -46,7 +46,7 @@ using namespace CMakeProjectManager;
 using namespace CMakeProjectManager::Internal;
 
 CMakeRunConfiguration::CMakeRunConfiguration(CMakeProject *pro, const QString &target, const QString &workingDirectory, const QString &title)
-    : ProjectExplorer::ApplicationRunConfiguration(pro)
+    : ProjectExplorer::LocalApplicationRunConfiguration(pro)
     , m_runMode(Gui)
     , m_target(target)
     , m_workingDirectory(workingDirectory)
@@ -76,7 +76,7 @@ QString CMakeRunConfiguration::executable() const
     return m_target;
 }
 
-ProjectExplorer::ApplicationRunConfiguration::RunMode CMakeRunConfiguration::runMode() const
+ProjectExplorer::LocalApplicationRunConfiguration::RunMode CMakeRunConfiguration::runMode() const
 {
     return m_runMode;
 }
@@ -127,7 +127,7 @@ void CMakeRunConfiguration::setUserWorkingDirectory(const QString &wd)
 
 void CMakeRunConfiguration::save(ProjectExplorer::PersistentSettingsWriter &writer) const
 {
-    ProjectExplorer::ApplicationRunConfiguration::save(writer);
+    ProjectExplorer::LocalApplicationRunConfiguration::save(writer);
     writer.saveValue("CMakeRunConfiguration.Target", m_target);
     writer.saveValue("CMakeRunConfiguration.WorkingDirectory", m_workingDirectory);
     writer.saveValue("CMakeRunConfiguration.UserWorkingDirectory", m_userWorkingDirectory);
@@ -141,7 +141,7 @@ void CMakeRunConfiguration::save(ProjectExplorer::PersistentSettingsWriter &writ
 
 void CMakeRunConfiguration::restore(const ProjectExplorer::PersistentSettingsReader &reader)
 {
-    ProjectExplorer::ApplicationRunConfiguration::restore(reader);
+    ProjectExplorer::LocalApplicationRunConfiguration::restore(reader);
     m_target = reader.restoreValue("CMakeRunConfiguration.Target").toString();
     m_workingDirectory = reader.restoreValue("CMakeRunConfiguration.WorkingDirectory").toString();
     m_userWorkingDirectory = reader.restoreValue("CMakeRunConfiguration.UserWorkingDirectory").toString();
@@ -166,14 +166,16 @@ void CMakeRunConfiguration::setArguments(const QString &newText)
 QString CMakeRunConfiguration::dumperLibrary() const
 {
     QString qmakePath = ProjectExplorer::DebuggingHelperLibrary::findSystemQt(environment());
-    QString dhl = ProjectExplorer::DebuggingHelperLibrary::debuggingHelperLibrary(qmakePath);
+    QString qtInstallData = ProjectExplorer::DebuggingHelperLibrary::qtInstallDataDir(qmakePath);
+    QString dhl = ProjectExplorer::DebuggingHelperLibrary::debuggingHelperLibraryByInstallData(qtInstallData);
     return dhl;
 }
 
 QStringList CMakeRunConfiguration::dumperLibraryLocations() const
 {
     QString qmakePath = ProjectExplorer::DebuggingHelperLibrary::findSystemQt(environment());
-    return ProjectExplorer::DebuggingHelperLibrary::debuggingHelperLibraryLocations(qmakePath);
+    QString qtInstallData = ProjectExplorer::DebuggingHelperLibrary::qtInstallDataDir(qmakePath);
+    return ProjectExplorer::DebuggingHelperLibrary::debuggingHelperLibraryLocationsByInstallData(qtInstallData);
 }
 
 ProjectExplorer::Environment CMakeRunConfiguration::baseEnvironment() const
@@ -184,7 +186,6 @@ ProjectExplorer::Environment CMakeRunConfiguration::baseEnvironment() const
     } else  if (m_baseEnvironmentBase == CMakeRunConfiguration::SystemEnvironmentBase) {
         env = ProjectExplorer::Environment::systemEnvironment();
     } else  if (m_baseEnvironmentBase == CMakeRunConfiguration::BuildEnvironmentBase) {
-        QString config = project()->activeBuildConfiguration();
         env = project()->environment(project()->activeBuildConfiguration());
     }
     return env;
@@ -245,9 +246,9 @@ CMakeRunConfigurationWidget::CMakeRunConfigurationWidget(CMakeRunConfiguration *
             this, SLOT(setArguments(QString)));
     fl->addRow(tr("Arguments:"), argumentsLineEdit);
 
-    m_workingDirectoryEdit = new Core::Utils::PathChooser();
+    m_workingDirectoryEdit = new Utils::PathChooser();
     m_workingDirectoryEdit->setPath(m_cmakeRunConfiguration->workingDirectory());
-    m_workingDirectoryEdit->setExpectedKind(Core::Utils::PathChooser::Directory);
+    m_workingDirectoryEdit->setExpectedKind(Utils::PathChooser::Directory);
     m_workingDirectoryEdit->setPromptDialogTitle(tr("Select the working directory"));
 
     QToolButton *resetButton = new QToolButton();
@@ -260,9 +261,15 @@ CMakeRunConfigurationWidget::CMakeRunConfigurationWidget(CMakeRunConfiguration *
 
     fl->addRow(tr("Working Directory:"), boxlayout);
 
+    m_detailsContainer = new Utils::DetailsWidget(this);
+
+    QWidget *m_details = new QWidget(m_detailsContainer);
+    m_detailsContainer->setWidget(m_details);
+    m_details->setLayout(fl);
+
     QVBoxLayout *vbx = new QVBoxLayout(this);
-    vbx->setContentsMargins(0, -1, 0, -1);
-    vbx->addLayout(fl);
+    vbx->setMargin(0);;
+    vbx->addWidget(m_detailsContainer);
 
     QLabel *environmentLabel = new QLabel(this);
     environmentLabel->setText(tr("Run Environment"));
@@ -288,17 +295,19 @@ CMakeRunConfigurationWidget::CMakeRunConfigurationWidget(CMakeRunConfiguration *
     baseEnvironmentLayout->addWidget(m_baseEnvironmentComboBox);
     baseEnvironmentLayout->addStretch(10);
 
-    connect(m_workingDirectoryEdit, SIGNAL(changed(QString)),
-            this, SLOT(setWorkingDirectory()));
-
-    connect(resetButton, SIGNAL(clicked()),
-            this, SLOT(resetWorkingDirectory()));
-
     m_environmentWidget = new ProjectExplorer::EnvironmentWidget(this, baseEnvironmentWidget);
     m_environmentWidget->setBaseEnvironment(m_cmakeRunConfiguration->baseEnvironment());
     m_environmentWidget->setUserChanges(m_cmakeRunConfiguration->userEnvironmentChanges());
 
     vbx->addWidget(m_environmentWidget);
+
+    updateSummary();
+
+    connect(m_workingDirectoryEdit, SIGNAL(changed(QString)),
+            this, SLOT(setWorkingDirectory()));
+
+    connect(resetButton, SIGNAL(clicked()),
+            this, SLOT(resetWorkingDirectory()));
 
     connect(m_environmentWidget, SIGNAL(userChangesUpdated()),
             this, SLOT(userChangesUpdated()));
@@ -365,6 +374,15 @@ void CMakeRunConfigurationWidget::userEnvironmentChangesChanged()
 void CMakeRunConfigurationWidget::setArguments(const QString &args)
 {
     m_cmakeRunConfiguration->setArguments(args);
+    updateSummary();
+}
+
+void CMakeRunConfigurationWidget::updateSummary()
+{
+    QString text = tr("Running executable: <b>%1</b> %2")
+                   .arg(QFileInfo(m_cmakeRunConfiguration->executable()).fileName(),
+                        ProjectExplorer::Environment::joinArgumentList(m_cmakeRunConfiguration->commandLineArguments()));
+    m_detailsContainer->setSummaryText(text);
 }
 
 

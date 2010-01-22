@@ -37,6 +37,8 @@
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectnodes.h>
 #include <projectexplorer/nodesvisitor.h>
+#include <projectexplorer/project.h>
+#include <projectexplorer/session.h>
 
 #include <utils/qtcassert.h>
 
@@ -56,7 +58,9 @@
 #include <QtCore/QTemporaryFile>
 #include <QtCore/QDebug>
 #include <QtGui/QToolBar>
+#include <QtGui/QDockWidget>
 
+using namespace Designer;
 using namespace Designer::Internal;
 using namespace Designer::Constants;
 using namespace SharedTools;
@@ -381,4 +385,19 @@ QString FormWindowEditor::contents() const
 #endif
 */
     return m_formWindow->contents();
+}
+
+QDockWidget* const* FormWindowEditor::dockWidgets() const
+{
+    return m_editorWidget->dockWidgets();
+}
+
+bool FormWindowEditor::isLocked() const
+{
+    return m_editorWidget->isLocked();
+}
+
+void FormWindowEditor::setLocked(bool locked)
+{
+    m_editorWidget->setLocked(locked);
 }

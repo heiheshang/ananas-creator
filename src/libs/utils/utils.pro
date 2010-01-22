@@ -2,7 +2,7 @@ TEMPLATE = lib
 TARGET = Utils
 QT += gui \
     network
-DEFINES += QTCREATOR_UTILS_LIBRARY
+DEFINES += QTCREATOR_UTILS_LIB
 include(../../qtcreatorlibrary.pri)
 SOURCES += reloadpromptutils.cpp \
     settingsutils.cpp \
@@ -33,7 +33,10 @@ SOURCES += reloadpromptutils.cpp \
     styledbar.cpp \
     stylehelper.cpp \
     welcomemodetreewidget.cpp \
-    fancymainwindow.cpp
+    iwelcomepage.cpp \
+    fancymainwindow.cpp \
+    detailsbutton.cpp \
+    detailswidget.cpp
 win32 { 
     SOURCES += abstractprocess_win.cpp \
         consoleprocess_win.cpp \
@@ -74,7 +77,10 @@ HEADERS += utils_global.h \
     styledbar.h \
     stylehelper.h \
     welcomemodetreewidget.h \
-    fancymainwindow.h
+    iwelcomepage.h \
+    fancymainwindow.h \
+    detailsbutton.h \
+    detailswidget.h
 FORMS += filewizardpage.ui \
     projectintropage.ui \
     newclasswidget.ui \

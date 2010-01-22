@@ -10,6 +10,7 @@
 #include <texteditor/fontsettings.h>
 #include <texteditor/texteditorsettings.h>
 #include <qtscripteditor/qtscripteditor.h>
+#include <projectexplorer/project.h>
 #include "libananas/configinfo.h"
 
 using namespace AnanasProjectManager;

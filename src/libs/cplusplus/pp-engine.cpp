@@ -138,6 +138,18 @@ using namespace CPlusPlus;
 
 namespace {
 
+bool isMacroDefined(QByteArray name, unsigned offset, Environment *env, Client *client)
+{
+    Macro *m = env->resolve(name);
+    if (client) {
+        if (m)
+            client->passedMacroDefinitionCheck(offset, *m);
+        else
+            client->failedMacroDefinitionCheck(offset, name);
+    }
+    return m != 0;
+}
+
 class RangeLexer
 {
     const Token *first;
@@ -193,8 +205,8 @@ class ExpressionEvaluator
     void operator = (const ExpressionEvaluator &other);
 
 public:
-    ExpressionEvaluator(Environment *env)
-        : env(env), _lex(0)
+    ExpressionEvaluator(Client *client, Environment *env)
+        : client(client), env(env), _lex(0)
     { }
 
     Value operator()(const Token *firstToken, const Token *lastToken,
@@ -255,13 +267,13 @@ protected:
         } else if (isTokenDefined()) {
             ++(*_lex);
             if ((*_lex)->is(T_IDENTIFIER)) {
-                _value.set_long(env->resolve(tokenSpell()) != 0);
+                _value.set_long(isMacroDefined(tokenSpell(), (*_lex)->offset, env, client));
                 ++(*_lex);
                 return true;
             } else if ((*_lex)->is(T_LPAREN)) {
                 ++(*_lex);
                 if ((*_lex)->is(T_IDENTIFIER)) {
-                    _value.set_long(env->resolve(tokenSpell()) != 0);
+                    _value.set_long(isMacroDefined(tokenSpell(), (*_lex)->offset, env, client));
                     ++(*_lex);
                     if ((*_lex)->is(T_RPAREN)) {
                         ++(*_lex);
@@ -519,6 +531,7 @@ protected:
     }
 
 private:
+    Client *client;
     Environment *env;
     QByteArray source;
     RangeLexer *_lex;
@@ -532,6 +545,9 @@ Preprocessor::Preprocessor(Client *client, Environment *env)
     : client(client),
       env(env),
       _expand(env),
+      _skipping(MAX_LEVEL),
+      _trueTest(MAX_LEVEL),
+      _dot(_tokens.end()),
       _result(0),
       _markGeneratedTokens(false),
       _expandMacros(true)
@@ -730,6 +746,9 @@ bool Preprocessor::markGeneratedTokens(bool markGeneratedTokens,
             else
                 out(*it);
         }
+
+        if (! markGeneratedTokens && dot->f.newline)
+            processNewline(/*force = */ true);
     }
 
     return previous;
@@ -962,18 +981,9 @@ Macro *Preprocessor::processObjectLikeMacro(TokenIterator identifierToken,
 void Preprocessor::expandBuiltinMacro(TokenIterator identifierToken,
                                       const QByteArray &spell)
 {
-    const Macro trivial;
-
-    if (client)
-        client->startExpandingMacro(identifierToken->offset,
-                                    trivial, spell);
-
     const bool was = markGeneratedTokens(true, identifierToken);
     expand(spell, _result);
     (void) markGeneratedTokens(was);
-
-    if (client)
-        client->stopExpandingMacro(_dot->offset, trivial);
 }
 
 void Preprocessor::expandObjectLikeMacro(TokenIterator identifierToken,
@@ -983,7 +993,7 @@ void Preprocessor::expandObjectLikeMacro(TokenIterator identifierToken,
 {
     if (client)
         client->startExpandingMacro(identifierToken->offset,
-                                    *m, spell);
+                                    *m, spell, false);
 
     m->setHidden(true);
     expand(m->definition(), result);
@@ -1007,7 +1017,7 @@ void Preprocessor::expandFunctionLikeMacro(TokenIterator identifierToken,
                                         endOfText - beginOfText);
 
         client->startExpandingMacro(identifierToken->offset,
-                                    *m, text, actuals);
+                                    *m, text, false, actuals);
     }
 
     const bool was = markGeneratedTokens(true, identifierToken);
@@ -1228,7 +1238,7 @@ void Preprocessor::processDefine(TokenIterator firstToken, TokenIterator lastTok
     } else {
         // ### make me fast!
         const char *startOfDefinition = startOfToken(*tk);
-        const char *endOfDefinition = startOfToken(*lastToken);
+        const char *endOfDefinition = endOfToken(lastToken[- 1]);
         QByteArray definition(startOfDefinition,
                               endOfDefinition - startOfDefinition);
         definition.replace("\\\n", " ");
@@ -1253,7 +1263,7 @@ void Preprocessor::processIf(TokenIterator firstToken, TokenIterator lastToken)
         const char *first = startOfToken(*tk);
         const char *last = startOfToken(*lastToken);
 
-        MacroExpander expandCondition (env);
+        MacroExpander expandCondition (env, 0, client, tk.dot()->offset);
         QByteArray condition;
         condition.reserve(256);
         expandCondition(first, last, &condition);
@@ -1264,7 +1274,7 @@ void Preprocessor::processIf(TokenIterator firstToken, TokenIterator lastToken)
                                             tokens.constEnd() - 1,
                                             condition);
 
-        _true_test[iflevel] = ! result.is_zero ();
+        _trueTest[iflevel] = ! result.is_zero ();
         _skipping[iflevel]  =   result.is_zero ();
     }
 }
@@ -1278,7 +1288,7 @@ void Preprocessor::processElse(TokenIterator firstToken, TokenIterator lastToken
     } else if (iflevel > 0 && _skipping[iflevel - 1]) {
         _skipping[iflevel] = true;
     } else {
-        _skipping[iflevel] = _true_test[iflevel];
+        _skipping[iflevel] = _trueTest[iflevel];
     }
 }
 
@@ -1292,12 +1302,12 @@ void Preprocessor::processElif(TokenIterator firstToken, TokenIterator lastToken
         // std::cerr << "*** WARNING: " << __FILE__ << __LINE__ << std::endl;
     } else if (iflevel == 0 && !skipping()) {
         // std::cerr << "*** WARNING #else without #if" << std::endl;
-    } else if (!_true_test[iflevel] && !_skipping[iflevel - 1]) {
+    } else if (!_trueTest[iflevel] && !_skipping[iflevel - 1]) {
 
         const char *first = startOfToken(*tk);
         const char *last = startOfToken(*lastToken);
 
-        MacroExpander expandCondition (env);
+        MacroExpander expandCondition (env, 0, client, tk.dot()->offset);
         QByteArray condition;
         condition.reserve(256);
         expandCondition(first, last, &condition);
@@ -1308,7 +1318,7 @@ void Preprocessor::processElif(TokenIterator firstToken, TokenIterator lastToken
                                             tokens.constEnd() - 1,
                                             condition);
 
-        _true_test[iflevel] = ! result.is_zero ();
+        _trueTest[iflevel] = ! result.is_zero ();
         _skipping[iflevel]  =   result.is_zero ();
     } else {
         _skipping[iflevel] = true;
@@ -1321,7 +1331,7 @@ void Preprocessor::processEndif(TokenIterator, TokenIterator)
         // std::cerr << "*** WARNING #endif without #if" << std::endl;
     } else {
         _skipping[iflevel] = false;
-        _true_test[iflevel] = false;
+        _trueTest[iflevel] = false;
 
         --iflevel;
     }
@@ -1338,12 +1348,12 @@ void Preprocessor::processIfdef(bool checkUndefined,
     if (testIfLevel()) {
         if (tk->is(T_IDENTIFIER)) {
             const QByteArray macroName = tokenSpell(*tk);
-            bool value = env->resolve(macroName) != 0 || env->isBuiltinMacro(macroName);
+            bool value = isMacroDefined(macroName, tk->offset, env, client) || env->isBuiltinMacro(macroName);
 
             if (checkUndefined)
                 value = ! value;
 
-            _true_test[iflevel] =   value;
+            _trueTest[iflevel] =   value;
             _skipping [iflevel] = ! value;
         }
     }
@@ -1369,7 +1379,7 @@ void Preprocessor::resetIfLevel ()
 {
     iflevel = 0;
     _skipping[iflevel] = false;
-    _true_test[iflevel] = false;
+    _trueTest[iflevel] = false;
 }
 
 Preprocessor::PP_DIRECTIVE_TYPE Preprocessor::classifyDirective(const QByteArray &directive) const
@@ -1427,7 +1437,7 @@ bool Preprocessor::testIfLevel()
 {
     const bool result = !_skipping[iflevel++];
     _skipping[iflevel] = _skipping[iflevel - 1];
-    _true_test[iflevel] = false;
+    _trueTest[iflevel] = false;
     return result;
 }
 
@@ -1437,7 +1447,7 @@ int Preprocessor::skipping() const
 Value Preprocessor::evalExpression(TokenIterator firstToken, TokenIterator lastToken,
                                    const QByteArray &source) const
 {
-    ExpressionEvaluator eval(env);
+    ExpressionEvaluator eval(client, env);
     const Value result = eval(firstToken, lastToken, source);
     return result;
 }

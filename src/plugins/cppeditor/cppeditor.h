@@ -70,28 +70,21 @@ public:
         unsigned column;
         unsigned length;
 
-        Use()
-                : line(0), column(0), length(0) {}
-
-        Use(unsigned line, unsigned column, unsigned length)
-                : line(line), column(column), length(length) {}
+        Use(unsigned line = 0, unsigned column = 0, unsigned length = 0)
+            : line(line), column(column), length(length) {}
     };
 
     typedef QHash<CPlusPlus::Symbol *, QList<Use> > LocalUseMap;
     typedef QHashIterator<CPlusPlus::Symbol *, QList<Use> > LocalUseIterator;
 
-    typedef QHash<CPlusPlus::Identifier *, QList<Use> > ExternalUseMap;
-    typedef QHashIterator<CPlusPlus::Identifier *, QList<Use> > ExternalUseIterator;
-
     SemanticInfo()
-            : revision(-1)
+        : revision(-1)
     { }
 
     int revision;
     CPlusPlus::Snapshot snapshot;
     CPlusPlus::Document::Ptr doc;
     LocalUseMap localUses;
-    ExternalUseMap externalUses;
 };
 
 class SemanticHighlighter: public QThread
@@ -112,9 +105,10 @@ public:
         int line;
         int column;
         int revision;
+        bool force;
 
         Source()
-                : line(0), column(0), revision(0)
+            : line(0), column(0), revision(0), force(false)
         { }
 
         Source(const CPlusPlus::Snapshot &snapshot,
@@ -124,7 +118,7 @@ public:
                int revision)
             : snapshot(snapshot), fileName(fileName),
               code(code), line(line), column(column),
-              revision(revision)
+              revision(revision), force(false)
         { }
 
         void clear()
@@ -135,6 +129,7 @@ public:
             line = 0;
             column = 0;
             revision = 0;
+            force = false;
         }
     };
 
@@ -171,6 +166,7 @@ public:
     const char *kind() const;
 
     bool isTemporary() const { return false; }
+    virtual bool open(const QString & fileName);
 
 private:
     QList<int> m_context;
@@ -193,31 +189,36 @@ public:
 
 public Q_SLOTS:
     virtual void setFontSettings(const TextEditor::FontSettings &);
-    virtual void setDisplaySettings(const TextEditor::DisplaySettings &);
     void setSortedMethodOverview(bool sort);
     void switchDeclarationDefinition();
     void jumpToDefinition();
     void renameSymbolUnderCursor();
-
-    void moveToPreviousToken();
-    void moveToNextToken();
-
-    void deleteStartOfToken();
-    void deleteEndOfToken();
+    void renameUsages();
+    void findUsages();
+    void renameUsagesNow();
+    void hideRenameNotification();
 
 protected:
     bool event(QEvent *e);
     void contextMenuEvent(QContextMenuEvent *);
-    void mouseMoveEvent(QMouseEvent *);
-    void mouseReleaseEvent(QMouseEvent *);
-    void leaveEvent(QEvent *);
-    void keyReleaseEvent(QKeyEvent *);
     void keyPressEvent(QKeyEvent *);
 
     TextEditor::BaseTextEditorEditable *createEditableInterface();
 
-    // Rertuns true if key triggers anindent.
-    virtual bool isElectricCharacter(const QChar &ch) const;
+    // These override BaseTextEditor
+    bool isElectricCharacter(const QChar &ch) const;
+    QString autoComplete(QTextCursor &cursor, const QString &text) const;
+    bool autoBackspace(QTextCursor &cursor);
+    int paragraphSeparatorAboutToBeInserted(QTextCursor &cursor);
+
+    bool contextAllowsAutoParentheses(const QTextCursor &cursor,
+                                      const QString &textToInsert = QString()) const;
+
+    bool isInComment(const QTextCursor &cursor) const;
+
+    CPlusPlus::Symbol *findCanonicalSymbol(const QTextCursor &cursor,
+                                           CPlusPlus::Document::Ptr doc,
+                                           const CPlusPlus::Snapshot &snapshot) const;
 
 private Q_SLOTS:
     void updateFileName();
@@ -228,13 +229,16 @@ private Q_SLOTS:
     void updateUses();
     void updateUsesNow();
     void onDocumentUpdated(CPlusPlus::Document::Ptr doc);
-    void reformatDocument();
     void onContentsChanged(int position, int charsRemoved, int charsAdded);
 
     void semanticRehighlight();
     void updateSemanticInfo(const SemanticInfo &semanticInfo);
 
 private:
+    bool showWarningMessage() const;
+    void setShowWarningMessage(bool showWarningMessage);
+
+    CPlusPlus::Symbol *markSymbols();
     bool sortedMethodOverview() const;
     CPlusPlus::Symbol *findDefinition(CPlusPlus::Symbol *symbol);
     virtual void indentBlock(QTextDocument *doc, QTextBlock block, QChar typedChar);
@@ -242,11 +246,10 @@ private:
     TextEditor::ITextEditor *openCppEditorAt(const QString &fileName, int line,
                                              int column = 0);
 
-    int previousBlockState(QTextBlock block) const;
-    QTextCursor moveToPreviousToken(QTextCursor::MoveMode mode) const;
-    QTextCursor moveToNextToken(QTextCursor::MoveMode mode) const;
+    SemanticHighlighter::Source currentSource(bool force = false);
 
-    SemanticHighlighter::Source currentSource();
+    void highlightUses(const QList<SemanticInfo::Use> &uses,
+                       QList<QTextEdit::ExtraSelection> *selections);
 
     void createToolBar(CPPEditorEditable *editable);
 
@@ -261,36 +264,11 @@ private:
                                const QString &text = QString());
     void abortRename();
 
-    struct Link
-    {
-        Link(const QString &fileName = QString(),
-             int line = 0,
-             int column = 0)
-            : pos(-1)
-            , length(-1)
-            , fileName(fileName)
-            , line(line)
-            , column(column)
-        {}
-
-        int pos;           // Link position
-        int length;        // Link length
-
-        QString fileName;  // Target file
-        int line;          // Target line
-        int column;        // Target column
-    };
-
-    void showLink(const Link &);
-    void clearLink();
-
-    Link findLinkAt(const QTextCursor &, bool lookupDefinition = true);
-    static Link linkToSymbol(CPlusPlus::Symbol *symbol);
+    Link findLinkAt(const QTextCursor &, bool resolveTarget = true);
+    bool openLink(const Link &link) { return openCppEditorAt(link); }
     bool openCppEditorAt(const Link &);
 
-    bool m_mouseNavigationEnabled;
-    bool m_showingLink;
-    QTextCharFormat m_linkFormat;
+    static Link linkToSymbol(CPlusPlus::Symbol *symbol);
 
     CppTools::CppModelManagerInterface *m_modelManager;
 
@@ -302,14 +280,18 @@ private:
     QTimer *m_updateMethodBoxTimer;
     QTimer *m_updateUsesTimer;
     QTextCharFormat m_occurrencesFormat;
+    QTextCharFormat m_occurrencesUnusedFormat;
     QTextCharFormat m_occurrenceRenameFormat;
 
     QList<QTextEdit::ExtraSelection> m_renameSelections;
     int m_currentRenameSelection;
     bool m_inRename;
 
+    mutable bool m_allowSkippingOfBlockEnd;
+
     SemanticHighlighter *m_semanticHighlighter;
     SemanticInfo m_lastSemanticInfo;
+    bool m_initialized;
 };
 
 

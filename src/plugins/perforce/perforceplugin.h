@@ -45,14 +45,11 @@
 QT_BEGIN_NAMESPACE
 class QFile;
 class QAction;
-class QTemporaryFile;
 class QTextCodec;
 QT_END_NAMESPACE
 
-namespace Core {
-    namespace Utils {
-        class ParameterAction;
-    }
+namespace Utils {
+    class ParameterAction;
 }
 
 namespace Perforce {
@@ -162,37 +159,39 @@ private:
     bool checkP4Configuration(QString *errorMessage = 0) const;
     void annotate(const QString &fileName);
     void filelog(const QString &fileName);
-    void cleanChangeTmpFile();
+    void cleanCommitMessageFile();
+    bool isCommitEditorOpen() const;
+
     void updateCheckout(const QStringList &dirs = QStringList());
 
     ProjectExplorer::ProjectExplorerPlugin *m_projectExplorer;
 
-    Core::Utils::ParameterAction *m_editAction;
-    Core::Utils::ParameterAction *m_addAction;
-    Core::Utils::ParameterAction *m_deleteAction;
+    Utils::ParameterAction *m_editAction;
+    Utils::ParameterAction *m_addAction;
+    Utils::ParameterAction *m_deleteAction;
     QAction *m_openedAction;
-    Core::Utils::ParameterAction *m_revertAction;
-    Core::Utils::ParameterAction *m_diffCurrentAction;
-    Core::Utils::ParameterAction *m_diffProjectAction;
-    Core::Utils::ParameterAction *m_updateProjectAction;
+    Utils::ParameterAction *m_revertAction;
+    Utils::ParameterAction *m_diffCurrentAction;
+    Utils::ParameterAction *m_diffProjectAction;
+    Utils::ParameterAction *m_updateProjectAction;
     QAction *m_diffAllAction;
     QAction *m_resolveAction;
     QAction *m_submitAction;
     QAction *m_pendingAction;
     QAction *m_describeAction;
-    Core::Utils::ParameterAction *m_annotateCurrentAction;
+    Utils::ParameterAction *m_annotateCurrentAction;
     QAction *m_annotateAction;
-    Core::Utils::ParameterAction *m_filelogCurrentAction;
+    Utils::ParameterAction *m_filelogCurrentAction;
     QAction *m_filelogAction;
     QAction *m_submitCurrentLogAction;
     QAction *m_updateAllAction;
     bool m_submitActionTriggered;
     QAction *m_diffSelectedFiles;
+    QString m_commitMessageFileName;
 
     QAction *m_undoAction;
     QAction *m_redoAction;
 
-    QTemporaryFile *m_changeTmpFile;
 
     static PerforcePlugin *m_perforcePluginInstance;
     QString pendingChangesData();

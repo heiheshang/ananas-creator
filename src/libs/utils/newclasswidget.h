@@ -38,7 +38,6 @@ QT_BEGIN_NAMESPACE
 class QStringList;
 QT_END_NAMESPACE
 
-namespace Core {
 namespace Utils {
 
 struct NewClassWidgetPrivate;
@@ -58,6 +57,7 @@ class QTCREATOR_UTILS_EXPORT NewClassWidget : public QWidget
     Q_PROPERTY(bool baseClassEditable READ isBaseClassEditable WRITE setBaseClassEditable DESIGNABLE false)
     Q_PROPERTY(bool formInputVisible READ isFormInputVisible WRITE setFormInputVisible DESIGNABLE true)
     Q_PROPERTY(bool pathInputVisible READ isPathInputVisible WRITE setPathInputVisible DESIGNABLE true)
+    Q_PROPERTY(bool classTypeComboVisible READ isClassTypeComboVisible WRITE setClassTypeComboVisible DESIGNABLE true)
     Q_PROPERTY(QString className READ className WRITE setClassName DESIGNABLE true)
     Q_PROPERTY(QString baseClassName READ baseClassName WRITE setBaseClassName DESIGNABLE true)
     Q_PROPERTY(QString sourceFileName READ sourceFileName DESIGNABLE false)
@@ -72,9 +72,13 @@ class QTCREATOR_UTILS_EXPORT NewClassWidget : public QWidget
     Q_PROPERTY(bool formInputChecked READ formInputChecked WRITE setFormInputChecked DESIGNABLE true)
     Q_PROPERTY(bool allowDirectories READ allowDirectories WRITE setAllowDirectories)
     Q_PROPERTY(bool lowerCaseFiles READ lowerCaseFiles WRITE setLowerCaseFiles)
+    Q_PROPERTY(ClassType classType READ classType WRITE setClassType)
     // Utility "USER" property for wizards containing file names.
     Q_PROPERTY(QStringList files READ files DESIGNABLE false USER true)
+    Q_ENUMS(ClassType)
 public:
+    enum ClassType { NoClassType, ClassInheritsQObject, ClassInheritsQWidget };
+
     explicit NewClassWidget(QWidget *parent = 0);
     ~NewClassWidget();
 
@@ -98,6 +102,8 @@ public:
     QString formExtension() const;
     bool allowDirectories() const;
     bool lowerCaseFiles() const;
+    ClassType classType() const;
+    bool isClassTypeComboVisible() const;
 
     bool isValid(QString *error = 0) const;
 
@@ -129,6 +135,8 @@ public slots:
     void setFormExtension(const QString &e);
     void setAllowDirectories(bool v);
     void setLowerCaseFiles(bool v);
+    void setClassType(ClassType ct);
+    void setClassTypeComboVisible(bool v);
 
     /**
      * Suggest a class name from the base class by stripping the leading 'Q'
@@ -148,7 +156,6 @@ private slots:
     void classNameEdited();
     void slotFormInputChecked();
 
-
 private:
     void setFormInputCheckable(bool checkable, bool force);
 
@@ -157,6 +164,5 @@ private:
 };
 
 } // namespace Utils
-} // namespace Core
 
 #endif // NEWCLASSWIDGET_H

@@ -48,9 +48,11 @@
 #include <QtCore/QProcess>
 #include <QtGui/QFormLayout>
 #include <QtGui/QMainWindow>
+#include <QtGui/QInputDialog>
 
 using namespace CMakeProjectManager;
 using namespace CMakeProjectManager::Internal;
+using namespace ProjectExplorer;
 using ProjectExplorer::Environment;
 using ProjectExplorer::EnvironmentItem;
 
@@ -63,10 +65,71 @@ using ProjectExplorer::EnvironmentItem;
 // Open Questions
 // Who sets up the environment for cl.exe ? INCLUDEPATH and so on
 
+/*!
+  \class CMakeBuildConfigurationFactory
+*/
 
+CMakeBuildConfigurationFactory::CMakeBuildConfigurationFactory(CMakeProject *project)
+    : IBuildConfigurationFactory(project),
+    m_project(project)
+{
+}
+
+CMakeBuildConfigurationFactory::~CMakeBuildConfigurationFactory()
+{
+}
+
+QStringList CMakeBuildConfigurationFactory::availableCreationTypes() const
+{
+    return QStringList() << "Create";
+}
+
+QString CMakeBuildConfigurationFactory::displayNameForType(const QString & /* type */) const
+{
+    return tr("Create");
+}
+
+bool CMakeBuildConfigurationFactory::create(const QString &type) const
+{
+    QTC_ASSERT(type == "Create", return false);
+
+    //TODO configuration name should be part of the cmakeopenprojectwizard
+    bool ok;
+    QString buildConfigurationName = QInputDialog::getText(0,
+                          tr("New configuration"),
+                          tr("New Configuration Name:"),
+                          QLineEdit::Normal,
+                          QString(),
+                          &ok);
+    if (!ok || buildConfigurationName.isEmpty())
+        return false;
+    BuildConfiguration *bc = new BuildConfiguration(buildConfigurationName);
+
+    CMakeOpenProjectWizard copw(m_project->projectManager(),
+                                m_project->sourceDirectory(),
+                                m_project->buildDirectory(bc),
+                                m_project->environment(bc));
+    if (copw.exec() != QDialog::Accepted) {
+        delete bc;
+        return false;
+    }
+    m_project->addBuildConfiguration(bc); // this also makes the name unique
+    // Default to all
+    if (m_project->targets().contains("all"))
+        m_project->makeStep()->setBuildTarget(buildConfigurationName, "all", true);
+    bc->setValue("buildDirectory", copw.buildDirectory());
+    bc->setValue("msvcVersion", copw.msvcVersion());
+    m_project->parseCMakeLists();
+    return true;
+}
+
+/*!
+  \class CMakeProject
+*/
 CMakeProject::CMakeProject(CMakeManager *manager, const QString &fileName)
     : m_manager(manager),
       m_fileName(fileName),
+      m_buildConfigurationFactory(new CMakeBuildConfigurationFactory(this)),
       m_rootNode(new CMakeProjectNode(m_fileName)),
       m_toolChain(0),
       m_insideFileChanged(false)
@@ -80,31 +143,39 @@ CMakeProject::~CMakeProject()
     delete m_toolChain;
 }
 
+IBuildConfigurationFactory *CMakeProject::buildConfigurationFactory() const
+{
+    return m_buildConfigurationFactory;
+}
+
 void CMakeProject::slotActiveBuildConfiguration()
 {
+    BuildConfiguration *activeBC = activeBuildConfiguration();
     // Pop up a dialog asking the user to rerun cmake
     QFileInfo sourceFileInfo(m_fileName);
-    QStringList needToCreate;
-    QStringList needToUpdate;
 
-    QString cbpFile = CMakeManager::findCbpFile(QDir(buildDirectory(activeBuildConfiguration())));
+    QString cbpFile = CMakeManager::findCbpFile(QDir(buildDirectory(activeBC)));
     QFileInfo cbpFileFi(cbpFile);
-    CMakeOpenProjectWizard::Mode mode;
-    if (!cbpFileFi.exists())
+    CMakeOpenProjectWizard::Mode mode = CMakeOpenProjectWizard::Nothing;
+    if (!cbpFileFi.exists()) {
         mode = CMakeOpenProjectWizard::NeedToCreate;
-    else if (cbpFileFi.lastModified() < sourceFileInfo.lastModified())
-        mode = CMakeOpenProjectWizard::NeedToUpdate;
-    else
-        mode = CMakeOpenProjectWizard::Nothing;
+    } else {
+        foreach(const QString &file, m_watchedFiles) {
+            if (QFileInfo(file).lastModified() > cbpFileFi.lastModified()) {
+                mode = CMakeOpenProjectWizard::NeedToUpdate;
+                break;
+            }
+        }
+    }
 
     if (mode != CMakeOpenProjectWizard::Nothing) {
         CMakeOpenProjectWizard copw(m_manager,
                                     sourceFileInfo.absolutePath(),
-                                    buildDirectory(activeBuildConfiguration()),
+                                    buildDirectory(activeBC),
                                     mode,
-                                    environment(activeBuildConfiguration()));
+                                    environment(activeBC));
         copw.exec();
-        setValue(activeBuildConfiguration(), "msvcVersion", copw.msvcVersion());
+        activeBC->setValue("msvcVersion", copw.msvcVersion());
     }
     // reparse
     parseCMakeLists();
@@ -112,13 +183,11 @@ void CMakeProject::slotActiveBuildConfiguration()
 
 void CMakeProject::fileChanged(const QString &fileName)
 {
+    Q_UNUSED(fileName)
     if (m_insideFileChanged== true)
         return;
     m_insideFileChanged = true;
-    if (fileName == m_fileName) {
-        // Oh we have changed...
-        slotActiveBuildConfiguration();
-    }
+    slotActiveBuildConfiguration();
     m_insideFileChanged = false;
 }
 
@@ -133,8 +202,7 @@ void CMakeProject::updateToolChain(const QString &compiler)
         newToolChain = ProjectExplorer::ToolChain::createGccToolChain("gcc");
 #endif
     } else if (compiler == "msvc8") {
-        // TODO MSVC toolchain
-        newToolChain = ProjectExplorer::ToolChain::createMSVCToolChain(value(activeBuildConfiguration(), "msvcVersion").toString(), false);
+        newToolChain = ProjectExplorer::ToolChain::createMSVCToolChain(activeBuildConfiguration()->value("msvcVersion").toString(), false);
     } else {
         // TODO other toolchains
         qDebug()<<"Not implemented yet!!! Qt Creator doesn't know which toolchain to use for"<<compiler;
@@ -149,16 +217,16 @@ void CMakeProject::updateToolChain(const QString &compiler)
     }
 }
 
-ProjectExplorer::ToolChain *CMakeProject::toolChain(const QString &buildConfiguration) const
+ProjectExplorer::ToolChain *CMakeProject::toolChain(BuildConfiguration *configuration) const
 {
-    if (buildConfiguration != activeBuildConfiguration())
+    if (configuration != activeBuildConfiguration())
         qWarning()<<"CMakeProject asked for toolchain of a not active buildconfiguration";
     return m_toolChain;
 }
 
-void CMakeProject::changeBuildDirectory(const QString &buildConfiguration, const QString &newBuildDirectory)
+void CMakeProject::changeBuildDirectory(BuildConfiguration *configuration, const QString &newBuildDirectory)
 {
-    setValue(buildConfiguration, "buildDirectory", newBuildDirectory);
+    configuration->setValue("buildDirectory", newBuildDirectory);
     parseCMakeLists();
 }
 
@@ -177,7 +245,7 @@ bool CMakeProject::parseCMakeLists()
     CMakeCbpParser cbpparser;
     // Parsing
     //qDebug()<<"Parsing file "<<cbpFile;
-    if (cbpparser.parseCbpFile(cbpFile)) {        
+    if (cbpparser.parseCbpFile(cbpFile)) {
         // ToolChain
         updateToolChain(cbpparser.compilerName());
 
@@ -189,12 +257,26 @@ bool CMakeProject::parseCMakeLists()
 
         QList<ProjectExplorer::FileNode *> fileList = cbpparser.fileList();
 
+        QSet<QString> projectFiles;
         if (cbpparser.hasCMakeFiles()) {
             fileList.append(cbpparser.cmakeFileList());
+            foreach(ProjectExplorer::FileNode *node, cbpparser.cmakeFileList())
+                projectFiles.insert(node->path());
         } else {
             // Manually add the CMakeLists.txt file
-            fileList.append(new ProjectExplorer::FileNode(sourceDirectory() + "/CMakeLists.txt", ProjectExplorer::ProjectFileType, false));
+            QString cmakeListTxt = sourceDirectory() + "/CMakeLists.txt";
+            fileList.append(new ProjectExplorer::FileNode(cmakeListTxt, ProjectExplorer::ProjectFileType, false));
+            projectFiles.insert(cmakeListTxt);
         }
+
+
+        QSet<QString> added = projectFiles;
+        added.subtract(m_watchedFiles);
+        foreach(const QString &add, added)
+            m_watcher->addFile(add);
+        foreach(const QString &remove, m_watchedFiles.subtract(projectFiles))
+            m_watcher->removeFile(remove);
+        m_watchedFiles = projectFiles;
 
         m_files.clear();
         foreach (ProjectExplorer::FileNode *fn, fileList)
@@ -250,7 +332,7 @@ bool CMakeProject::parseCMakeLists()
         //qDebug()<<"Create run configurations of m_targets";
         QMultiMap<QString, QSharedPointer<CMakeRunConfiguration> > existingRunConfigurations;
         foreach(QSharedPointer<ProjectExplorer::RunConfiguration> cmakeRunConfiguration, runConfigurations()) {
-            if (QSharedPointer<CMakeRunConfiguration> rc = cmakeRunConfiguration.dynamicCast<CMakeRunConfiguration>()) {
+            if (QSharedPointer<CMakeRunConfiguration> rc = cmakeRunConfiguration.objectCast<CMakeRunConfiguration>()) {
                 existingRunConfigurations.insert(rc->title(), rc);
             }
         }
@@ -304,11 +386,11 @@ bool CMakeProject::parseCMakeLists()
     return true;
 }
 
-QString CMakeProject::buildParser(const QString &buildConfiguration) const
+QString CMakeProject::buildParser(BuildConfiguration *configuration) const
 {
-    Q_UNUSED(buildConfiguration)
+    Q_UNUSED(configuration)
     // TODO this is actually slightly wrong, but do i care?
-    // this should call toolchain(buildConfiguration)
+    // this should call toolchain(configuration)
     if (!m_toolChain)
         return QString::null;
     if (m_toolChain->type() == ProjectExplorer::ToolChain::GCC
@@ -415,11 +497,13 @@ ProjectExplorer::FolderNode *CMakeProject::findOrCreateFolder(CMakeProjectNode *
     QString relativePath = QDir(QFileInfo(rootNode->path()).path()).relativeFilePath(directory);
     QStringList parts = relativePath.split("/", QString::SkipEmptyParts);
     ProjectExplorer::FolderNode *parent = rootNode;
+    QString path = QFileInfo(rootNode->path()).path();
     foreach (const QString &part, parts) {
+        path += "/" + part;
         // Find folder in subFolders
         bool found = false;
         foreach (ProjectExplorer::FolderNode *folder, parent->subFolderNodes()) {
-            if (QFileInfo(folder->path()).fileName() == part) {
+            if (folder->path() == path) {
                 // yeah found something :)
                 parent = folder;
                 found = true;
@@ -428,7 +512,8 @@ ProjectExplorer::FolderNode *CMakeProject::findOrCreateFolder(CMakeProjectNode *
         }
         if (!found) {
             // No FolderNode yet, so create it
-            ProjectExplorer::FolderNode *tmp = new ProjectExplorer::FolderNode(part);
+            ProjectExplorer::FolderNode *tmp = new ProjectExplorer::FolderNode(path);
+            tmp->setFolderName(part);
             rootNode->addFolderNodes(QList<ProjectExplorer::FolderNode *>() << tmp, parent);
             parent = tmp;
         }
@@ -463,50 +548,51 @@ bool CMakeProject::isApplication() const
     return true;
 }
 
-ProjectExplorer::Environment CMakeProject::baseEnvironment(const QString &buildConfiguration) const
+ProjectExplorer::Environment CMakeProject::baseEnvironment(BuildConfiguration *configuration) const
 {
-    Environment env = useSystemEnvironment(buildConfiguration) ? Environment(QProcess::systemEnvironment()) : Environment();
+    Environment env = useSystemEnvironment(configuration) ? Environment(QProcess::systemEnvironment()) : Environment();
     return env;
 }
 
-ProjectExplorer::Environment CMakeProject::environment(const QString &buildConfiguration) const
+ProjectExplorer::Environment CMakeProject::environment(BuildConfiguration *configuration) const
 {
-    Environment env = baseEnvironment(buildConfiguration);
-    env.modify(userEnvironmentChanges(buildConfiguration));
+    Environment env = baseEnvironment(configuration);
+    env.modify(userEnvironmentChanges(configuration));
     return env;
 }
 
-void CMakeProject::setUseSystemEnvironment(const QString &buildConfiguration, bool b)
+void CMakeProject::setUseSystemEnvironment(BuildConfiguration *configuration, bool b)
 {
-    if (b == useSystemEnvironment(buildConfiguration))
+    if (b == useSystemEnvironment(configuration))
         return;
-    setValue(buildConfiguration, "clearSystemEnvironment", !b);
-    emit environmentChanged(buildConfiguration);
+    configuration->setValue("clearSystemEnvironment", !b);
+    emit environmentChanged(configuration->name());
 }
 
-bool CMakeProject::useSystemEnvironment(const QString &buildConfiguration) const
+bool CMakeProject::useSystemEnvironment(BuildConfiguration *configuration) const
 {
-    bool b = !(value(buildConfiguration, "clearSystemEnvironment").isValid() && value(buildConfiguration, "clearSystemEnvironment").toBool());
+    bool b = !(configuration->value("clearSystemEnvironment").isValid() &&
+               configuration->value("clearSystemEnvironment").toBool());
     return b;
 }
 
-QList<ProjectExplorer::EnvironmentItem> CMakeProject::userEnvironmentChanges(const QString &buildConfig) const
+QList<ProjectExplorer::EnvironmentItem> CMakeProject::userEnvironmentChanges(BuildConfiguration *configuration) const
 {
-    return EnvironmentItem::fromStringList(value(buildConfig, "userEnvironmentChanges").toStringList());
+    return EnvironmentItem::fromStringList(configuration->value("userEnvironmentChanges").toStringList());
 }
 
-void CMakeProject::setUserEnvironmentChanges(const QString &buildConfig, const QList<ProjectExplorer::EnvironmentItem> &diff)
+void CMakeProject::setUserEnvironmentChanges(BuildConfiguration *configuration, const QList<ProjectExplorer::EnvironmentItem> &diff)
 {
     QStringList list = EnvironmentItem::toStringList(diff);
-    if (list == value(buildConfig, "userEnvironmentChanges"))
+    if (list == configuration->value("userEnvironmentChanges"))
         return;
-    setValue(buildConfig, "userEnvironmentChanges", EnvironmentItem::toStringList(diff));
-    emit environmentChanged(buildConfig);
+    configuration->setValue("userEnvironmentChanges", list);
+    emit environmentChanged(configuration->name());
 }
 
-QString CMakeProject::buildDirectory(const QString &buildConfiguration) const
+QString CMakeProject::buildDirectory(BuildConfiguration *configuration) const
 {
-    QString buildDirectory = value(buildConfiguration, "buildDirectory").toString();
+    QString buildDirectory = configuration->value("buildDirectory").toString();
     if (buildDirectory.isEmpty())
         buildDirectory = sourceDirectory() + "/qtcreator-build";
     return buildDirectory;
@@ -523,21 +609,6 @@ QList<ProjectExplorer::BuildConfigWidget*> CMakeProject::subConfigWidgets()
     list <<  new CMakeBuildEnvironmentWidget(this);
     return list;
 }
-
-// This method is called for new build configurations
-// You should probably set some default values in this method
- void CMakeProject::newBuildConfiguration(const QString &buildConfiguration)
- {
-     // Default to all
-     makeStep()->setBuildTarget(buildConfiguration, "all", true);
-
-    CMakeOpenProjectWizard copw(projectManager(), sourceDirectory(), buildDirectory(buildConfiguration), environment(buildConfiguration));
-    if (copw.exec() == QDialog::Accepted) {
-        setValue(buildConfiguration, "buildDirectory", copw.buildDirectory());
-        setValue(buildConfiguration, "msvcVersion", copw.msvcVersion());
-        parseCMakeLists();
-    }
- }
 
 ProjectExplorer::ProjectNode *CMakeProject::rootProjectNode() const
 {
@@ -571,41 +642,41 @@ bool CMakeProject::restoreSettingsImpl(ProjectExplorer::PersistentSettingsReader
 {
     Project::restoreSettingsImpl(reader);
     bool hasUserFile = !buildConfigurations().isEmpty();
+    MakeStep *makeStep = 0;
     if (!hasUserFile) {
         // Ask the user for where he wants to build it
         // and the cmake command line
 
         CMakeOpenProjectWizard copw(m_manager, sourceDirectory(), ProjectExplorer::Environment::systemEnvironment());
-        copw.exec();
-        // TODO handle cancel....
+        if (copw.exec() != QDialog::Accepted)
+            return false;
 
         qDebug()<<"ccd.buildDirectory()"<<copw.buildDirectory();
 
         // Now create a standard build configuration
-        MakeStep *makeStep = new MakeStep(this);
+        makeStep = new MakeStep(this);
 
         insertBuildStep(0, makeStep);
 
-        addBuildConfiguration("all");
-        setValue("all", "msvcVersion", copw.msvcVersion());
-        makeStep->setBuildTarget("all", "all", true);
+        ProjectExplorer::BuildConfiguration *bc = new ProjectExplorer::BuildConfiguration("all");
+        addBuildConfiguration(bc);
+        bc->setValue("msvcVersion", copw.msvcVersion());
         if (!copw.buildDirectory().isEmpty())
-            setValue("all", "buildDirectory", copw.buildDirectory());
+            bc->setValue("buildDirectory", copw.buildDirectory());
         //TODO save arguments somewhere copw.arguments()
 
         MakeStep *cleanMakeStep = new MakeStep(this);
         insertCleanStep(0, cleanMakeStep);
         cleanMakeStep->setValue("clean", true);
-        setActiveBuildConfiguration("all");
-
-
+        setActiveBuildConfiguration(bc);
     } else {
         // We have a user file, but we could still be missing the cbp file
         // or simply run createXml with the saved settings
         QFileInfo sourceFileInfo(m_fileName);
         QStringList needToCreate;
         QStringList needToUpdate;
-        QString cbpFile = CMakeManager::findCbpFile(QDir(buildDirectory(activeBuildConfiguration())));
+        BuildConfiguration *activeBC = activeBuildConfiguration();
+        QString cbpFile = CMakeManager::findCbpFile(QDir(buildDirectory(activeBC)));
         QFileInfo cbpFileFi(cbpFile);
 
         CMakeOpenProjectWizard::Mode mode = CMakeOpenProjectWizard::Nothing;
@@ -617,20 +688,23 @@ bool CMakeProject::restoreSettingsImpl(ProjectExplorer::PersistentSettingsReader
         if (mode != CMakeOpenProjectWizard::Nothing) {
             CMakeOpenProjectWizard copw(m_manager,
                                         sourceFileInfo.absolutePath(),
-                                        buildDirectory(activeBuildConfiguration()),
+                                        buildDirectory(activeBC),
                                         mode,
-                                        environment(activeBuildConfiguration()));
-            copw.exec();
-            setValue(activeBuildConfiguration(), "msvcVersion", copw.msvcVersion());
+                                        environment(activeBC));
+            if (copw.exec() != QDialog::Accepted)
+                return false;
+            activeBC->setValue("msvcVersion", copw.msvcVersion());
         }
     }
-    bool result = parseCMakeLists(); // Gets the directory from the active buildconfiguration
-    if (!result)
-        return false;
+
+    if (!hasUserFile && targets().contains("all"))
+        makeStep->setBuildTarget("all", "all", true);
 
     m_watcher = new ProjectExplorer::FileWatcher(this);
     connect(m_watcher, SIGNAL(fileChanged(QString)), this, SLOT(fileChanged(QString)));
-    m_watcher->addFile(m_fileName);
+    bool result = parseCMakeLists(); // Gets the directory from the active buildconfiguration
+    if (!result)
+        return false;
 
     connect(this, SIGNAL(activeBuildConfigurationChanged()),
             this, SLOT(slotActiveBuildConfiguration()));
@@ -739,11 +813,12 @@ QString CMakeBuildSettingsWidget::displayName() const
     return "CMake";
 }
 
-void CMakeBuildSettingsWidget::init(const QString &buildConfiguration)
+void CMakeBuildSettingsWidget::init(const QString &buildConfigurationName)
 {
-    m_buildConfiguration = buildConfiguration;
-    m_pathLineEdit->setText(m_project->buildDirectory(buildConfiguration));
-    if (m_project->buildDirectory(buildConfiguration) == m_project->sourceDirectory())
+    m_buildConfiguration = buildConfigurationName;
+    BuildConfiguration *bc = m_project->buildConfiguration(buildConfigurationName);
+    m_pathLineEdit->setText(m_project->buildDirectory(bc));
+    if (m_project->buildDirectory(bc) == m_project->sourceDirectory())
         m_changeButton->setEnabled(false);
     else
         m_changeButton->setEnabled(true);
@@ -751,13 +826,14 @@ void CMakeBuildSettingsWidget::init(const QString &buildConfiguration)
 
 void CMakeBuildSettingsWidget::openChangeBuildDirectoryDialog()
 {
+    BuildConfiguration *bc = m_project->buildConfiguration(m_buildConfiguration);
     CMakeOpenProjectWizard copw(m_project->projectManager(),
                                 m_project->sourceDirectory(),
-                                m_project->buildDirectory(m_buildConfiguration),
-                                m_project->environment(m_buildConfiguration));
+                                m_project->buildDirectory(bc),
+                                m_project->environment(bc));
     if (copw.exec() == QDialog::Accepted) {
-        m_project->changeBuildDirectory(m_buildConfiguration, copw.buildDirectory());
-        m_pathLineEdit->setText(m_project->buildDirectory(m_buildConfiguration));
+        m_project->changeBuildDirectory(bc, copw.buildDirectory());
+        m_pathLineEdit->setText(m_project->buildDirectory(bc));
     }
 }
 

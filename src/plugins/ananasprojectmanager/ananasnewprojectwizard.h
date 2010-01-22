@@ -43,14 +43,12 @@ class QStringList;
 class QTreeView;
 QT_END_NAMESPACE
 
-namespace Core {
 namespace Utils {
 
 class FileWizardPage;
 class ProjectIntroPage;
 
 } // namespace Utils
-} // namespace Core
 
 namespace AnanasProjectManager {
 namespace Internal {
@@ -79,7 +77,7 @@ protected:
 private:
     int m_secondPageId;
 
-    Core::Utils::ProjectIntroPage *m_introPage;
+    Utils::ProjectIntroPage *m_introPage;
 
     QTreeView *m_dirView;
     QDirModel *m_dirModel;

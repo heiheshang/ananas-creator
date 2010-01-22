@@ -44,6 +44,9 @@ class QDebug;
 QT_END_NAMESPACE
 
 namespace Debugger {
+
+class DebuggerManager;
+
 namespace Internal {
 
 class WatchItem;
@@ -75,7 +78,7 @@ public:
     };
 
     void setValue(const QString &);
-    void setType(const QString &);
+    void setType(const QString &, bool guessChildrenFromType = true);
     void setValueToolTip(const QString &);
     void setError(const QString &);
     void setAddress(const QString &address);
@@ -111,6 +114,11 @@ public:
     bool isLocal() const { return iname.startsWith(QLatin1String("local.")); }
     bool isWatcher() const { return iname.startsWith(QLatin1String("watch.")); }
     bool isValid() const { return !iname.isEmpty(); }
+    
+    bool isEqual(const WatchData &other) const;
+
+    static QString msgNotInScope();
+    static QString shadowedName(const QString &name, int seen);
 
 public:
     QString iname;        // internal name sth like 'local.baz.public.a'
@@ -128,7 +136,9 @@ public:
     QScriptValue scriptValue; // if needed...
     bool hasChildren;
     int generation;       // when updated?
-    bool valuedisabled;   // value will be greyed out
+    bool valueEnabled;    // value will be greyed out or not
+    bool valueEditable;   // value will be editable
+    bool error;
 
 private:
 
@@ -170,6 +180,7 @@ class WatchModel : public QAbstractItemModel
 
 private:
     explicit WatchModel(WatchHandler *handler, WatchType type);
+    virtual ~WatchModel();
 
     QVariant data(const QModelIndex &index, int role) const;
     bool setData(const QModelIndex &index, const QVariant &value, int role);
@@ -199,18 +210,24 @@ private:
     void removeOutdated();
     void removeOutdatedHelper(WatchItem *item);
     WatchItem *rootItem() const;
-    void removeItem(WatchItem *item);
-    void setActiveData(const QString &data) { m_activeData = data; }
+    void destroyItem(WatchItem *item);
 
     void emitDataChanged(int column,
         const QModelIndex &parentIndex = QModelIndex());
+    void beginCycle(); // called at begin of updateLocals() cycle
+    void endCycle(); // called after all results have been received
 
     friend QDebug operator<<(QDebug d, const WatchModel &m);
+
+    void dump();
+    void dumpHelper(WatchItem *item);
+signals:
+    void enableUpdates(bool);
+
 private:
     WatchHandler *m_handler;
     WatchType m_type;
     WatchItem *m_root;
-    QString m_activeData;
 };
 
 class WatchHandler : public QObject
@@ -218,7 +235,7 @@ class WatchHandler : public QObject
     Q_OBJECT
 
 public:
-    WatchHandler();
+    explicit WatchHandler(DebuggerManager *manager);
     WatchModel *model(WatchType type) const;
     WatchModel *modelForIName(const QString &data) const;
 
@@ -250,11 +267,6 @@ public:
 
     static QString watcherEditPlaceHolder();
 
-signals:
-    void watchDataUpdateNeeded(const WatchData &data);
-    void sessionValueRequested(const QString &name, QVariant *value);
-    void setSessionValueRequested(const QString &name, const QVariant &value);
-
 private:
     friend class WatchModel;
 
@@ -283,6 +295,7 @@ private:
     WatchModel *m_locals;
     WatchModel *m_watchers;
     WatchModel *m_tooltips;
+    DebuggerManager *m_manager;
 };
 
 } // namespace Internal

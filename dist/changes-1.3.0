@@ -13,7 +13,7 @@ adapted accordingly.
 
 General
    * Added the option to automatically reload files when externally modified,
-     or to ignore external modifications (contributed by Henrik Abelsson)
+     or to ignore external modifications
    * Improved the general resizing behavior for small screen sizes
    * Fixed a crash in the RSS reader that sometimes causes Qt Creator to crash
      on startup
@@ -22,27 +22,35 @@ General
    * Reworked the projects pane
    * Made the welcome screen tabs into plugins, reimplement IWelcomePage 
      to add your own welcome screen page
+   * Overhauled the project pane.
 
 Editing
    * Added support for text editor color schemes
    * Added highlighting of uses of the symbol under the cursor
    * Added completion of include directives
    * Added the option to turn off marking of text changes
+   * Added automatic matching of brackets and quotes
    * Objective-C: Much improved parsing
    * Objective-C: Added partial semantic checking and symbol navigation
    * Fixed searching in files to take open documents into account
    * Added a Locator filter for symbols in the current document
    * Handle block selection in fakevim
-   * Add Copy full path to the editors combobox.
+   * Added Copy full path to the editors combobox
+   * Added left/right arrow buttons for "Go back/forward" in navigation history
+   * Added smart indentation for pasted text blocks
+
+Refactoring
+   * Added rename symbol under cursor
+   * Find usages of a symbol
 
 Project support
    * Added support for adding and removing files from a generic Makefile-based
-     project (contributed by Kevin Michel)
+     project
    * Added better control over the environment used for running.
-   * Add all cmake files to the project tree. (Only works with a cvs cmake.)
-   * Support cmake with Microsoft Visual Studio Compiler (Only works with cvs
-     cmake)
-   * Fix a few cmake wizard bugs, where canceling left creator in a strange 
+   * Add all cmake files to the project tree (only works with a  cmake 2.8)
+   * Support cmake with Microsoft Visual Studio Compiler (only works with 
+     cmake 2.8 )
+   * Fix a few cmake wizard bugs, where canceling left creator in a strange
      state
    * The qmake and make steps can now be removed.
    * The qmake step is a lot smarter and tries harder to not run
@@ -51,6 +59,9 @@ Project support
    * Show subdirectory structure below .pro/.pri files in project tree
    * Add "Show file in Finder/Explorer" (Mac/Windows) to context menu.
      On Linux it opens the containing directory.
+   * The qmake step and make step can be removed from qt projects now.
+   * Made importing build settings for qt projects more robust
+   * Only run qmake, if it needs to be run.
 
 Compilation
    * Support multi-core compilation on Windows/MSVC via jom
@@ -61,19 +72,25 @@ Debugging
    * CDB: Added more types to the dumpers (QSharedPointer, QVector, common
      QMap/QSet types), dereference reference and pointer parameters
    * CDB: Simplified display of STL types in the locals window
-   * CDB: Fixed thread handling
+   * CDB: Fixed thread handling, display thread position
    * CDB: Added internal dumpers for string types for debuggee crashes
+   * CDB: Set symbol paths correctly
    * Improved QObject dumping, print out QRect/QSize, enumerations and flags
    * Made it possible to use the BinEditor plugin for displaying raw memory
    * Replace disassembler window by a real text editor enabling "mixed" output
+   * Improved dumper building on options page, run in background
 
 Designer
    * Added support for rearranging and floating form editor tools
 
 Version control plugins
    * Added CVS support
-   * Added "sync" menu item to the perforce plugin
-
+   * Display diff/annotation with correct encoding
+   * Added "sync" menu item to the Perforce plugin
+   * Fixed locking of temporary submit message files on Windows
+   * Use a single, colored output pane for all version control systems
+   * Position annotation view of file at current line of editor
+   
 Wizards
    * Fixed GUI project and form class wizards to use the same settings.
    * Added version control checkout wizards
@@ -81,5 +98,15 @@ Wizards
    * Added a wizard for Qt Designer custom widgets
    * Added a gitorious clone wizard
 
+Platform Specific
+
+Mac
+   * Make use of system's language settings
+
+Symbian Target
+   * Preliminary support for targeting Qt for Symbian applications
+
 Additional credits go to:
    * Christian Hoenig (Locator filter for symbols in current document)
+   * Henrik Abelsson (Configure what to do with externally modified files)
+   * Kevin Michel (Adding and removing files from a generic project)

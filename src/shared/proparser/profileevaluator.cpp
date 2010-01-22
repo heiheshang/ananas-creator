@@ -63,17 +63,6 @@
 
 QT_BEGIN_NAMESPACE
 
-namespace {
-    template<class K, class T> void updateHash(QHash<K,T> *out, const QHash<K,T> &in)
-    {
-        typename QHash<K,T>::const_iterator i = in.begin();
-        while (i != in.end()) {
-            out->insert(i.key(), i.value());
-            ++i;
-        }
-    }
-} // anon namespace
-
 static void refFunctions(QHash<QString, ProBlock *> *defs)
 {
     foreach (ProBlock *itm, *defs)
@@ -150,8 +139,8 @@ public:
     /////////////// Reading pro file
 
     bool read(ProFile *pro);
-    bool read(ProFile *pro, const QString &content);
-    bool read(ProFile *pro, QTextStream *ts);
+    bool read(ProBlock *pro, const QString &content);
+    bool read(ProBlock *pro, QTextStream *ts);
 
     ProBlock *currentBlock();
     void updateItem(ushort *ptr);
@@ -299,22 +288,23 @@ bool ProFileEvaluator::Private::read(ProFile *pro)
     }
 
     QTextStream ts(&file);
+    m_lineNo = 1;
     return read(pro, &ts);
 }
 
-bool ProFileEvaluator::Private::read(ProFile *pro, const QString &content)
+bool ProFileEvaluator::Private::read(ProBlock *pro, const QString &content)
 {
     QString str(content);
     QTextStream ts(&str, QIODevice::ReadOnly | QIODevice::Text);
+    m_lineNo = 1;
     return read(pro, &ts);
 }
 
-bool ProFileEvaluator::Private::read(ProFile *pro, QTextStream *ts)
+bool ProFileEvaluator::Private::read(ProBlock *pro, QTextStream *ts)
 {
     // Parser state
     m_block = 0;
     m_commentItem = 0;
-    m_lineNo = 1;
     m_blockstack.clear();
     m_blockstack.push(pro);
 
@@ -1150,10 +1140,11 @@ ProItem::ProItemReturn ProFileEvaluator::Private::visitBeginProFile(ProFile * pr
                 }
                 if (!qmake_cache.isEmpty()) {
                     qmake_cache = QDir::cleanPath(qmake_cache);
-                    if (evaluateFileInto(qmake_cache, &m_option->cache_valuemap, 0)) {
+                    QHash<QString, QStringList> cache_valuemap;
+                    if (evaluateFileInto(qmake_cache, &cache_valuemap, 0)) {
                         m_option->cachefile = qmake_cache;
                         if (m_option->qmakespec.isEmpty()) {
-                            const QStringList &vals = m_option->cache_valuemap.value(QLatin1String("QMAKESPEC"));
+                            const QStringList &vals = cache_valuemap.value(QLatin1String("QMAKESPEC"));
                             if (!vals.isEmpty())
                                 m_option->qmakespec = vals.first();
                         }
@@ -1207,8 +1198,9 @@ ProItem::ProItemReturn ProFileEvaluator::Private::visitBeginProFile(ProFile * pr
                     if (!evaluateFileInto(spec,
                                           &m_option->base_valuemap, &m_option->base_functions)) {
                         errorMessage(format("Could not read qmake configuration file %1").arg(spec));
-                    } else {
-                        evaluateFileInto(qmake_cache, &m_option->base_valuemap, 0);
+                    } else if (!m_option->cachefile.isEmpty()) {
+                        evaluateFileInto(m_option->cachefile,
+                                         &m_option->base_valuemap, &m_option->base_functions);
                     }
                 }
 
@@ -1744,7 +1736,7 @@ QStringList ProFileEvaluator::Private::evaluateExpandFunction(const QString &fun
         expands.insert(QLatin1String("first"), E_FIRST);
         expands.insert(QLatin1String("last"), E_LAST);
         expands.insert(QLatin1String("cat"), E_CAT);
-        expands.insert(QLatin1String("fromfile"), E_FROMFILE); // implementation disabled (see comment below)
+        expands.insert(QLatin1String("fromfile"), E_FROMFILE);
         expands.insert(QLatin1String("eval"), E_EVAL);
         expands.insert(QLatin1String("list"), E_LIST);
         expands.insert(QLatin1String("sprintf"), E_SPRINTF);
@@ -1932,33 +1924,18 @@ QStringList ProFileEvaluator::Private::evaluateExpandFunction(const QString &fun
                 }
             }
             break;
-#if 0 // Used only by Qt's configure for caching
         case E_FROMFILE:
             if (args.count() != 2) {
                 logMessage(format("fromfile(file, variable) requires two arguments."));
             } else {
-                QString file = args[0], seek_variableName = args[1];
-
-                ProFile pro(fixPathToLocalOS(file));
-
-                ProFileEvaluator visitor;
-                visitor.setVerbose(m_verbose);
-                visitor.setCumulative(m_cumulative);
-
-                if (!visitor.queryProFile(&pro))
-                    break;
-
-                if (!visitor.accept(&pro))
-                    break;
-
-                ret = visitor.values(seek_variableName);
+                QHash<QString, QStringList> vars;
+                if (evaluateFileInto(args.at(0), &vars, 0))
+                    ret = vars.value(args.at(1));
             }
             break;
-#endif
         case E_EVAL:
             if (args.count() != 1) {
                 logMessage(format("eval(variable) requires one argument"));
-
             } else {
                 ret += values(args.at(0));
             }
@@ -2260,11 +2237,34 @@ ProItem::ProItemReturn ProFileEvaluator::Private::evaluateConditionalFunction(
                         m_filevaluemap.value(currentProFile()).value(args[0]);
             }
             return ProItem::ReturnTrue;
-#if 0
         case T_INFILE:
+            if (args.count() < 2 || args.count() > 3) {
+                logMessage(format("infile(file, var, [values]) requires two or three arguments."));
+            } else {
+                QHash<QString, QStringList> vars;
+                if (!evaluateFileInto(args.at(0), &vars, 0))
+                    return ProItem::ReturnFalse;
+                if (args.count() == 2)
+                    return returnBool(vars.contains(args.at(1)));
+                QRegExp regx(args.at(2));
+                foreach (const QString &s, vars.value(args.at(1)))
+                    if (s == regx.pattern() || regx.exactMatch(s))
+                        return ProItem::ReturnTrue;
+            }
+            return ProItem::ReturnFalse;
+#if 0
         case T_REQUIRES:
-        case T_EVAL:
 #endif
+        case T_EVAL: {
+                ProBlock *pro = new ProBlock(0);
+                if (!read(pro, args.join(QLatin1String(" ")))) {
+                    delete pro;
+                    return ProItem::ReturnFalse;
+                }
+                bool ret = pro->Accept(this);
+                pro->deref();
+                return returnBool(ret);
+            }
         case T_FOR: {
             if (m_cumulative) // This is a no-win situation, so just pretend it's no loop
                 return ProItem::ReturnTrue;

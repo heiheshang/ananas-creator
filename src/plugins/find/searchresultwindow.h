@@ -35,22 +35,37 @@
 
 #include <coreplugin/ioutputpane.h>
 
-#include <QtCore/QThread>
-#include <QtCore/QStringList>
-#include <QtGui/QStackedWidget>
-#include <QtGui/QListWidget>
-#include <QtGui/QToolButton>
+
+QT_BEGIN_NAMESPACE
+class QStackedWidget;
+class QListWidget;
+class QToolButton;
+class QLabel;
+QT_END_NAMESPACE
 
 namespace Find {
 
 class SearchResultWindow;
 
-class FIND_EXPORT ResultWindowItem : public QObject
+struct FIND_EXPORT SearchResultItem
+{
+    QString fileName;
+    int lineNumber;
+    QString lineText;
+    int searchTermStart;
+    int searchTermLength;
+    int index;
+    QVariant userData;
+    // whatever information we also need here
+};
+
+class FIND_EXPORT SearchResult : public QObject
 {
     Q_OBJECT
 
 signals:
-    void activated(const QString &fileName, int lineNumber, int column);
+    void activated(const Find::SearchResultItem &item);
+    void replaceButtonClicked(const QString &replaceText, const QList<Find::SearchResultItem> &checkedItems);
 
     friend class SearchResultWindow;
 };
@@ -60,6 +75,11 @@ class FIND_EXPORT SearchResultWindow : public Core::IOutputPane
     Q_OBJECT
 
 public:
+    enum SearchMode {
+        SearchOnly,
+        SearchAndReplace
+    };
+
     SearchResultWindow();
     ~SearchResultWindow();
 
@@ -83,27 +103,42 @@ public:
 
     void setTextEditorFont(const QFont &font);
 
+    void setTextToReplace(const QString &textToReplace);
+    QString textToReplace() const;
+
+    // search result object only lives till next startnewsearch call
+    SearchResult *startNewSearch(SearchMode searchOrSearchAndReplace = SearchOnly);
+
 public slots:
     void clearContents();
-    void showNoMatchesFound();
-    ResultWindowItem *addResult(const QString &fileName, int lineNumber, const QString &lineText,
-                                int searchTermStart, int searchTermLength);
+    void addResult(const QString &fileName, int lineNumber, const QString &lineText,
+                   int searchTermStart, int searchTermLength, const QVariant &userData = QVariant());
+    void finishSearch();
 
 private slots:
     void handleExpandCollapseToolButton(bool checked);
-    void handleJumpToSearchResult(int index, const QString &fileName, int lineNumber,
-                                  int searchTermStart, int searchTermLength);
+    void handleJumpToSearchResult(int index, bool checked);
+    void handleReplaceButton();
+    void showNoMatchesFound();
 
 private:
+    void setShowReplaceUI(bool show);
     void readSettings();
     void writeSettings();
+    QList<SearchResultItem> checkedItems() const;
 
     Internal::SearchResultTreeView *m_searchResultTreeView;
     QListWidget *m_noMatchesFoundDisplay;
     QToolButton *m_expandCollapseToolButton;
+    QLabel *m_replaceLabel;
+    QLineEdit *m_replaceTextEdit;
+    QToolButton *m_replaceButton;
     static const bool m_initiallyExpand = false;
     QStackedWidget *m_widget;
-    QList<ResultWindowItem *> m_items;
+    SearchResult *m_currentSearch;
+    QList<SearchResultItem> m_items;
+    bool m_isShowingReplaceUI;
+    bool m_focusReplaceEdit;
 };
 
 } // namespace Find

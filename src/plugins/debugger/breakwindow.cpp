@@ -30,6 +30,7 @@
 #include "breakwindow.h"
 
 #include "debuggeractions.h"
+#include "debuggermanager.h"
 #include "ui_breakcondition.h"
 #include "ui_breakbyfunction.h"
 
@@ -93,6 +94,13 @@ BreakWindow::BreakWindow(QWidget *parent)
         this, SLOT(rowActivated(QModelIndex)));
     connect(act, SIGNAL(toggled(bool)),
         this, SLOT(setAlternatingRowColorsHelper(bool)));
+    connect(theDebuggerAction(UseAddressInBreakpointsView), SIGNAL(toggled(bool)),
+        this, SLOT(showAddressColumn(bool)));
+}
+
+void BreakWindow::showAddressColumn(bool on)
+{
+    setColumnHidden(6, !on);
 }
 
 static QModelIndexList normalizeIndexes(const QModelIndexList &list)
@@ -172,6 +180,7 @@ void BreakWindow::contextMenuEvent(QContextMenuEvent *ev)
     editConditionAction->setEnabled(si.size() > 0);
 
     QAction *synchronizeAction = new QAction(tr("Synchronize breakpoints"), &menu);
+    synchronizeAction->setEnabled(Debugger::DebuggerManager::instance()->debuggerActionsEnabled());
 
     QModelIndex idx0 = (si.size() ? si.front() : QModelIndex());
     QModelIndex idx2 = idx0.sibling(idx0.row(), 2);
@@ -201,6 +210,8 @@ void BreakWindow::contextMenuEvent(QContextMenuEvent *ev)
     menu.addAction(breakAtFunctionAction);
     menu.addAction(breakAtMainAction);
     menu.addSeparator();
+    menu.addAction(theDebuggerAction(UseToolTipsInBreakpointsView));
+    menu.addAction(theDebuggerAction(UseAddressInBreakpointsView));
     menu.addAction(adjustColumnAction);
     menu.addAction(alwaysAdjustAction);
     menu.addSeparator();
@@ -269,7 +280,7 @@ void BreakWindow::deleteBreakpoints(QList<int> list)
     const int firstRow = list.front();
     qSort(list.begin(), list.end());
     for (int i = list.size(); --i >= 0; )
-        emit breakpointDeleted(i);
+        emit breakpointDeleted(list.at(i));
 
     const int row = qMax(firstRow, model()->rowCount() - list.size() - 1);
     if (row >= 0)
@@ -300,10 +311,8 @@ void BreakWindow::editConditions(const QModelIndexList &list)
 
 void BreakWindow::resizeColumnsToContents()
 {
-    resizeColumnToContents(0);
-    resizeColumnToContents(1);
-    resizeColumnToContents(2);
-    resizeColumnToContents(3);
+    for (int i = model()->columnCount(); --i >= 0; )
+        resizeColumnToContents(i);
 }
 
 void BreakWindow::setAlwaysResizeColumnsToContents(bool on)
@@ -311,10 +320,8 @@ void BreakWindow::setAlwaysResizeColumnsToContents(bool on)
     m_alwaysResizeColumnsToContents = on;
     QHeaderView::ResizeMode mode = on 
         ? QHeaderView::ResizeToContents : QHeaderView::Interactive;
-    header()->setResizeMode(0, mode);
-    header()->setResizeMode(1, mode);
-    header()->setResizeMode(2, mode);
-    header()->setResizeMode(3, mode);
+    for (int i = model()->columnCount(); --i >= 0; )
+        header()->setResizeMode(i, mode);
 }
 
 void BreakWindow::rowActivated(const QModelIndex &idx)

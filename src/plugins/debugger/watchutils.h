@@ -45,10 +45,15 @@ namespace Core {
     class IEditor;
 }
 
+namespace CPlusPlus {
+    class Snapshot;
+}
+
 namespace Debugger {
 namespace Internal {
 
 class WatchData;
+class GdbMi;
 
 QString dotEscape(QString str);
 QString currentTime();
@@ -73,11 +78,11 @@ bool extractTemplate(const QString &type, QString *tmplate, QString *inner);
 QString extractTypeFromPTypeOutput(const QString &str);
 bool isIntOrFloatType(const QString &type);
 bool isIntType(const QString &type);
+bool isSymbianIntType(const QString &type);
 
 enum GuessChildrenResult { HasChildren, HasNoChildren, HasPossiblyChildren };
 GuessChildrenResult guessChildren(const QString &type);
 
-QString sizeofTypeExpression(const QString &type);
 QString quoteUnprintableLatin1(const QByteArray &ba);
 
 // Editor tooltip support
@@ -88,48 +93,14 @@ QString cppExpressionAt(TextEditor::ITextEditor *editor, int pos,
 // Decode string data as returned by the dumper helpers.
 QString decodeData(const QByteArray &baIn, int encoding);
 
-// Result of a dumper call.
-struct QtDumperResult
-{
-    struct Child {
-        Child();
-
-        int keyEncoded;
-        int valueEncoded;
-        int childCount;
-        bool valuedisabled;
-        QString name;
-        QString address;
-        QString exp;
-        QString type;
-        QString displayedType;
-        QByteArray key;
-        bool valueEncountered;
-        QByteArray value;
-    };
-
-    QtDumperResult();
-    void clear();
-    QList<WatchData> toWatchData(int source = 0) const;
-
-    QString iname;
-    QString address;
-    QString addressInfo; // "<synthetic>" or such, in the 2nd adress field.
-    QString type;
-    QString extra;
-    QString displayedType;
-    bool valueEncountered;
-    QByteArray value;
-    int valueEncoded;
-    bool valuedisabled;
-    int childCount;
-    bool internal;
-    QString childType;
-    int childChildCount;
-    QList <Child> children;
-};
-
-QDebug operator<<(QDebug in, const QtDumperResult &d);
+// Get variables that are not initialized at a certain line
+// of a function from the code model. Shadowed variables will
+// be reported using the debugger naming conventions '<shadowed n>'
+bool getUninitializedVariables(const CPlusPlus::Snapshot &snapshot,
+                       const QString &function,
+                       const QString &file,
+                       int line,
+                       QStringList *uninitializedVariables);
 
 /* Attempt to put common code of the dumper handling into a helper
  * class.
@@ -160,7 +131,7 @@ public:
         // Below types require special handling
         QAbstractItemType,
         QObjectType, QWidgetType, QObjectSlotType, QObjectSignalType,
-        QVectorType, QMapType, QMultiMapType, QMapNodeType,
+        QVectorType, QMapType, QMultiMapType, QMapNodeType, QStackType,
         StdVectorType, StdDequeType, StdSetType, StdMapType, StdStackType,
         StdStringType
     };
@@ -180,7 +151,6 @@ public:
     void clear();
 
     double dumperVersion() const { return m_dumperVersion; }
-    void setDumperVersion(double v)  { m_dumperVersion = v; }
 
     int typeCount() const;
     // Look up a simple, non-template  type
@@ -191,17 +161,14 @@ public:
 
     int qtVersion() const;
     QString qtVersionString() const;
-    void setQtVersion(int v);
-    void setQtVersion(const QString &v);
-
     QString qtNamespace() const;
-    void setQtNamespace(const QString &qtNamespace);
 
     // Complete parse of "query" (protocol 1) response from debuggee buffer.
     // 'data' excludes the leading indicator character.
     bool parseQuery(const char *data, Debugger debugger);
-    // Set up from pre-parsed type list
-    void parseQueryTypes(const QStringList &l, Debugger debugger);
+    bool parseQuery(const GdbMi &data, Debugger debugger);
+    // Sizes can be added as the debugger determines them
+    void addSize(const QString &name, int size);
 
     // Determine the parameters required for an "evaluate" (protocol 2) call
     void evaluationParameters(const WatchData &data,
@@ -212,24 +179,9 @@ public:
 
     // Parse the value response (protocol 2) from debuggee buffer.
     // 'data' excludes the leading indicator character.
-    static bool parseValue(const char *data, QtDumperResult *r);
-
-    // What kind of debugger expressions are required to dump that type.
-    // A debugger with restricted expression syntax can handle
-    // 'NeedsNoExpression' and 'NeedsCachedExpression' if it is found in
-    // the cache.
-    enum ExpressionRequirement {
-        NeedsNoExpression,     // None, easy.
-        NeedsCachedExpression, // Common values might be found in expression cache.
-        NeedsComplexExpression // Totally arbitrary, adress-dependent expressions
-    };
-    static ExpressionRequirement expressionRequirements(Type t);
+    static bool parseValue(const char *data, QList<WatchData> *l);
 
     QString toString(bool debug = false) const;
-
-    // Helpers for debuggers that use a different dumper parser.
-    void addSize(const QString &name, int size);
-    void addExpression(const QString &expression, const QString &value);
 
     static QString msgDumperOutdated(double requiredVersion, double currentVersion);
 
@@ -240,6 +192,12 @@ private:
     // Look up a simple (namespace) type
     static Type specialType(QString s);
     QString evaluationSizeofTypeExpression(const QString &typeName, Debugger d) const;
+    void parseQueryTypes(const QStringList &l, Debugger debugger);
+    QString qMapNodeValueOffsetExpression(const QString &type,
+                                          const QString &addressIn,
+                                          Debugger debugger) const;
+
+    inline QString lookupCdbDummyAddressExpression(const QString &expr, const QString &address) const;
 
     NameTypeMap m_nameTypeMap;
     SizeCache m_sizeCache;
@@ -249,7 +207,9 @@ private:
     // They are not complete (std::allocator<X>).
     enum SpecialSizeType { IntSize, PointerSize, StdAllocatorSize,
                            QSharedPointerSize, QSharedDataPointerSize,
-                           QWeakPointerSize, QPointerSize, SpecialSizeCount };
+                           QWeakPointerSize, QPointerSize,
+                           QListSize, QLinkedListSize, QVectorSize, QQueueSize,
+                           SpecialSizeCount };
 
     // Resolve name to enumeration or SpecialSizeCount (invalid)
     SpecialSizeType specialSizeType(const QString &t) const;
@@ -267,6 +227,10 @@ private:
     QString m_qSharedPointerPrefix;
     QString m_qSharedDataPointerPrefix;
     QString m_qWeakPointerPrefix;
+    QString m_qListPrefix;
+    QString m_qLinkedListPrefix;
+    QString m_qVectorPrefix;
+    QString m_qQueuePrefix;
 };
 
 QDebug operator<<(QDebug in, const QtDumperHelper::TypeData &d);

@@ -28,6 +28,7 @@
 **************************************************************************/
 
 #include "projectexplorersettingspage.h"
+#include "projectexplorersettings.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorer.h"
 
@@ -62,7 +63,7 @@ QString ProjectExplorerSettingsPage::category() const
 
 QString ProjectExplorerSettingsPage::trCategory() const
 {
-    return tr("Projectexplorer");
+    return tr("Projects");
 }
 
 QWidget *ProjectExplorerSettingsPage::createPage(QWidget *parent)

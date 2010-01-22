@@ -42,10 +42,10 @@
 #include <QtCore/QMap>
 
 namespace Debugger {
+class DebuggerManager;
+
 namespace Internal {
 
-class DebuggerManager;
-class IDebuggerManagerAccessForEngines;
 class WatchHandler;
 class CdbStackFrameContext;
 class CdbStackTraceContext;
@@ -57,7 +57,7 @@ class DebuggerEngineLibrary
 {
 public:
     DebuggerEngineLibrary();
-    bool init(const QString &path, QString *errorMessage);
+    bool init(const QString &path, QString *dbgEngDLL, QString *errorMessage);
 
     inline HRESULT debugCreate(REFIID interfaceId, PVOID *interfaceHandle) const
         { return m_debugCreate(interfaceId, interfaceHandle); }
@@ -108,14 +108,16 @@ struct CdbDebugEnginePrivate
                                    const QSharedPointer<CdbOptions> &options,
                                    CdbDebugEngine* engine);
     bool init(QString *errorMessage);
-    ~CdbDebugEnginePrivate();
+        ~CdbDebugEnginePrivate();
 
+    void checkVersion();
     void processCreatedAttached(ULONG64 processHandle, ULONG64 initialThreadHandle);
     void setDebuggeeHandles(HANDLE hDebuggeeProcess,  HANDLE hDebuggeeThread);
 
     bool isDebuggeeRunning() const { return m_watchTimer != -1; }
     void handleDebugEvent();
     ULONG updateThreadList();
+    bool setCDBThreadId(unsigned long threadId, QString *errorMessage);
     void updateStackTrace();
     void updateModules();
 
@@ -130,9 +132,13 @@ struct CdbDebugEnginePrivate
 
     bool continueInferiorProcess(QString *errorMessage = 0);
     bool continueInferior(QString *errorMessage);
+    bool executeContinueCommand(const QString &command);
 
     bool attemptBreakpointSynchronization(QString *errorMessage);
-    void notifyCrashed();
+    void notifyException(long code, bool fatal);
+
+    enum EndInferiorAction { DetachInferior, TerminateInferior };
+    bool endInferior(EndInferiorAction a, QString *errorMessage);
 
     enum EndDebuggingMode { EndDebuggingDetach, EndDebuggingTerminate, EndDebuggingAuto };
     void endDebugging(EndDebuggingMode em = EndDebuggingAuto);
@@ -151,7 +157,11 @@ struct CdbDebugEnginePrivate
     const QSharedPointer<CdbOptions>  m_options;
     HANDLE                  m_hDebuggeeProcess;
     HANDLE                  m_hDebuggeeThread;
+    bool                    m_interrupted;    
     int                     m_currentThreadId;
+    int                     m_eventThreadId;
+    int                     m_interruptArticifialThreadId;
+    bool                    m_ignoreInitialBreakPoint;
     HandleBreakEventMode    m_breakEventMode;
 
     int                     m_watchTimer;
@@ -161,16 +171,17 @@ struct CdbDebugEnginePrivate
     QSharedPointer<CdbDumperHelper> m_dumper;
     QString                 m_baseImagePath;
 
-    CdbDebugEngine* m_engine;
-    DebuggerManager *m_debuggerManager;
-    IDebuggerManagerAccessForEngines *m_debuggerManagerAccess;
+    CdbDebugEngine *m_engine;
+    inline DebuggerManager *manager() const;
     CdbStackTraceContext *m_currentStackTrace;
     EditorToolTipCache m_editorToolTipCache;
 
     bool m_firstActivatedFrame;
+    bool m_inferiorStartupComplete;
 
     DebuggerStartMode m_mode;
-    Core::Utils::ConsoleProcess m_consoleStubProc;
+    Utils::ConsoleProcess m_consoleStubProc;
+    QString m_dbengDLL;
 };
 
 // helper functions
@@ -183,7 +194,10 @@ const char *executionStatusString(CIDebugControl *ctl);
 QString msgDebugEngineComResult(HRESULT hr);
 QString msgComFailed(const char *func, HRESULT hr);
 
+enum { messageTimeOut = 5000 };
+
 enum { debugCDB = 0 };
+enum { debugCDBExecution = 0 };
 enum { debugCDBWatchHandling = 0 };
 
 } // namespace Internal

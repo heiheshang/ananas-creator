@@ -55,14 +55,13 @@ class BaseTextMark;
 }
 
 namespace Debugger {
+class DebuggerManager;
+
 namespace Internal {
 
 class BreakpointData;
-class DebuggerManager;
-class DebuggerRunner;
+class DebuggerRunControlFactory;
 class DebugMode;
-class DisassemblerViewAgent;
-struct StackFrame;
 
 class DebuggerPlugin : public ExtensionSystem::IPlugin
 {
@@ -85,7 +84,7 @@ private slots:
     void queryCurrentTextEditor(QString *fileName, int *line, QObject **object);
     void editorOpened(Core::IEditor *);
     void editorAboutToClose(Core::IEditor *);
-    void changeStatus(int status);
+    void handleStateChanged(int state);
     void requestMark(TextEditor::ITextEditor *editor, int lineNumber);
     void showToolTip(TextEditor::ITextEditor *editor, const QPoint &pnt, int pos);
     void querySessionValue(const QString &name, QVariant *value);
@@ -94,10 +93,9 @@ private slots:
     void setConfigValue(const QString &name, const QVariant &value);
     void requestContextMenu(TextEditor::ITextEditor *editor,
         int lineNumber, QMenu *menu);
-    void updateActions(int status);
 
     void resetLocation();
-    void gotoLocation(const StackFrame &frame, bool setMarker);
+    void gotoLocation(const QString &file, int line, bool setMarker);
 
     void breakpointSetRemoveMarginActionTriggered();
     void breakpointEnableDisableMarginActionTriggered();
@@ -108,8 +106,8 @@ private slots:
     void startRemoteApplication();
     void attachExternalApplication();
     void attachCore();
-    void attachRemoteTcf();
     void attachCmdLinePid();
+    void attachCmdLineCore();
 
 private:
     void readSettings();
@@ -119,22 +117,23 @@ private:
                               const QStringList::const_iterator& end,
                               QString *errorMessage);
     void attachExternalApplication(qint64 pid, const QString &crashParameter = QString());
+    void attachCore(const QString &core, const QString &exeFileName);
 
-    friend class DebuggerManager;
+    friend class Debugger::DebuggerManager;
     friend class GdbOptionPage;
     friend class DebuggingHelperOptionPage;
-    friend class DebugMode; // FIXME: Just a hack now so that it can access the views
+    friend class Debugger::Internal::DebugMode; // FIXME: Just a hack now so that it can access the views
 
     DebuggerManager *m_manager;
     DebugMode *m_debugMode;
-    DebuggerRunner *m_debuggerRunner;
+    DebuggerRunControlFactory *m_debuggerRunControlFactory;
 
     QString m_previousMode;
     TextEditor::BaseTextMark *m_locationMark;
-    DisassemblerViewAgent *m_disassemblerViewAgent;
     int m_gdbRunningContext;
     unsigned m_cmdLineEnabledEngines;
     quint64 m_cmdLineAttachPid;
+    QString m_cmdLineAttachCore;
     // Event handle for attaching to crashed Windows processes.
     quint64 m_cmdLineWinCrashEvent;
     QAction *m_toggleLockedAction;
@@ -143,7 +142,6 @@ private:
     QAction *m_startRemoteAction;
     QAction *m_attachExternalAction;
     QAction *m_attachCoreAction;
-    QAction *m_attachTcfAction;
     QAction *m_detachAction;
 };
 

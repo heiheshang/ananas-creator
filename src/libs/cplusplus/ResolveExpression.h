@@ -51,24 +51,15 @@ public:
 
     QList<Result> resolveMemberExpression(const QList<Result> &baseResults,
                                           unsigned accessOp,
-                                          Name *memberName) const;
+                                          Name *memberName,
+                                          bool *replacedDotOperator = 0) const;
 
-    QList<Result> resolveMember(const Result &result,
-                                Name *memberName,
-                                NamedType *namedTy) const;
+    QList<Result> resolveBaseExpression(const QList<Result> &baseResults,
+                                        int accessOp,
+                                        bool *replacedDotOperator = 0) const;
 
-    QList<Result> resolveMember(const Result &result,
-                                Name *memberName,
-                                NamedType *namedTy,
-                                Class *klass) const;
-
-    QList<Result> resolveArrowOperator(const Result &result,
-                                       NamedType *namedTy,
-                                       Class *klass) const;
-
-    QList<Result> resolveArrayOperator(const Result &result,
-                                       NamedType *namedTy,
-                                       Class *klass) const;
+    QList<Result> resolveMember(Name *memberName, Class *klass,
+                                Name *className = 0) const;
 
 protected:
     QList<Result> switchResults(const QList<Result> &symbols);
@@ -76,6 +67,8 @@ protected:
     void addResult(const FullySpecifiedType &ty, Symbol *symbol = 0);
     void addResult(const Result &result);
     void addResults(const QList<Result> &results);
+
+    bool maybeValidPrototype(Function *funTy, unsigned actualArgumentCount) const;
 
     using ASTVisitor::visit;
 
@@ -123,6 +116,7 @@ private:
     LookupContext _context;
     Semantic sem;
     QList<Result> _results;
+    Symbol *_declSymbol;
 };
 
 class CPLUSPLUS_EXPORT ResolveClass
@@ -130,27 +124,17 @@ class CPLUSPLUS_EXPORT ResolveClass
 public:
     ResolveClass();
 
-    bool pointerAccess() const;
-    void setPointerAccess(bool pointerAccess);
-
-    QList<Symbol *> operator()(NamedType *namedTy,
-                               ResolveExpression::Result p,
-                               const LookupContext &context);
-
-    QList<Symbol *> operator()(ResolveExpression::Result p,
+    QList<Symbol *> operator()(Name *name,
+                               const ResolveExpression::Result &p,
                                const LookupContext &context);
 
 private:
-    QList<Symbol *> resolveClass(NamedType *namedTy,
-                                        ResolveExpression::Result p,
-                                        const LookupContext &context);
-
-    QList<Symbol *> resolveClass(ResolveExpression::Result p,
-                                        const LookupContext &context);
+    QList<Symbol *> resolveClass(Name *name,
+                                 const ResolveExpression::Result &p,
+                                 const LookupContext &context);
 
 private:
     QList<ResolveExpression::Result> _blackList;
-    bool _pointerAccess;
 };
 
 

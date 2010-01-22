@@ -33,12 +33,20 @@
 #include "cdbsymbolgroupcontext.h"
 #include "cdbdebugengine_p.h"
 #include "cdbdumperhelper.h"
+#include "debuggeractions.h"
+#include "debuggermanager.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QDebug>
 #include <QtCore/QTextStream>
 
 namespace Debugger {
 namespace Internal {
+
+const char *CdbStackTraceContext::winFuncFastSystemCallRet = "ntdll!KiFastSystemCallRet";
+const char *CdbStackTraceContext::winFuncDebugBreakPoint = "ntdll!DbgBreakPoint";
+const char *CdbStackTraceContext::winFuncWaitForPrefix = "kernel32!WaitFor";
+const char *CdbStackTraceContext::winFuncMsgWaitForPrefix = "kernel32!MsgWaitForMultipleObjects";
 
 CdbStackTraceContext::CdbStackTraceContext(const QSharedPointer<CdbDumperHelper> &dumper) :
         m_dumper(dumper),
@@ -53,19 +61,10 @@ CdbStackTraceContext *CdbStackTraceContext::create(const QSharedPointer<CdbDumpe
 {    
     if (debugCDB)
         qDebug() << Q_FUNC_INFO << threadId;
-    CdbComInterfaces *cif = dumper->comInterfaces();
-    HRESULT hr = cif->debugSystemObjects->SetCurrentThreadId(threadId);
-    if (FAILED(hr)) {
-        *errorMessage = QString::fromLatin1("%1: SetCurrentThreadId %2 failed: %3").
-                        arg(QString::fromLatin1(Q_FUNC_INFO)).
-                        arg(threadId).
-                        arg(msgDebugEngineComResult(hr));
-        return 0;
-    }
     // fill the DEBUG_STACK_FRAME array
     ULONG frameCount;
     CdbStackTraceContext *ctx = new CdbStackTraceContext(dumper);
-    hr = cif->debugControl->GetStackTrace(0, 0, 0, ctx->m_cdbFrames, CdbStackTraceContext::maxFrames, &frameCount);
+    const HRESULT hr = dumper->comInterfaces()->debugControl->GetStackTrace(0, 0, 0, ctx->m_cdbFrames, CdbStackTraceContext::maxFrames, &frameCount);
     if (FAILED(hr)) {
         delete ctx;
          *errorMessage = msgComFailed("GetStackTrace", hr);
@@ -89,20 +88,26 @@ bool CdbStackTraceContext::init(unsigned long frameCount, QString * /*errorMessa
     if (debugCDB)
         qDebug() << Q_FUNC_INFO << frameCount;
 
+    const QChar exclamationMark = QLatin1Char('!');
     m_frameContexts.resize(frameCount);
     qFill(m_frameContexts, static_cast<CdbStackFrameContext*>(0));
 
     // Convert the DEBUG_STACK_FRAMEs to our StackFrame structure and populate the frames
     WCHAR wszBuf[MAX_PATH];
     for (ULONG i=0; i < frameCount; ++i) {
-        StackFrame frame(i);
+        StackFrame frame;
+        frame.level = i;
         const ULONG64 instructionOffset = m_cdbFrames[i].InstructionOffset;
         if (i == 0)
             m_instructionOffset = instructionOffset;
         frame.address = QString::fromLatin1("0x%1").arg(instructionOffset, 0, 16);
 
         m_cif->debugSymbols->GetNameByOffsetWide(instructionOffset, wszBuf, MAX_PATH, 0, 0);
+        // Determine function and module, if available
         frame.function = QString::fromUtf16(reinterpret_cast<const ushort *>(wszBuf));
+        const int moduleSepPos = frame.function.indexOf(exclamationMark);
+        if (moduleSepPos != -1)
+            frame.from = frame.function.mid(0, moduleSepPos);
 
         ULONG ulLine;
         ULONG64 ul64Displacement;
@@ -111,7 +116,7 @@ bool CdbStackTraceContext::init(unsigned long frameCount, QString * /*errorMessa
             frame.line = ulLine;
             // Vitally important  to use canonical file that matches editormanager,
             // else the marker will not show.
-            frame.file = CDBBreakPoint::canonicalSourceFile(QString::fromUtf16(reinterpret_cast<const ushort *>(wszBuf)));
+            frame.file = CDBBreakPoint::normalizeFileName(QString::fromUtf16(reinterpret_cast<const ushort *>(wszBuf)));
         }
         m_frames.push_back(frame);
     }
@@ -163,7 +168,13 @@ CdbStackFrameContext *CdbStackTraceContext::frameContextAt(int index, QString *e
         *errorMessage = msgFrameContextFailed(index, m_frames.at(index), *errorMessage);
         return 0;
     }
-    CdbSymbolGroupContext *sc = CdbSymbolGroupContext::create(QLatin1String("local"), sg, errorMessage);
+    // Exclude unitialized variables if desired    
+    QStringList uninitializedVariables;
+    if (theDebuggerAction(UseCodeModel)->isChecked()) {        
+        const StackFrame &frame = m_frames.at(index);
+        getUninitializedVariables(DebuggerManager::instance()->cppCodeModelSnapshot(), frame.function, frame.file, frame.line, &uninitializedVariables);
+    }
+    CdbSymbolGroupContext *sc = CdbSymbolGroupContext::create(QLatin1String("local"), sg, uninitializedVariables, errorMessage);
     if (!sc) {
         *errorMessage = msgFrameContextFailed(index, m_frames.at(index), *errorMessage);
         return 0;
@@ -226,6 +237,126 @@ void CdbStackTraceContext::format(QTextStream &str) const
         str << '\n';
     }
 }
+
+// Thread state helper
+
+static inline QString msgGetThreadStateFailed(unsigned long threadId, const QString &why)
+{
+    return QString::fromLatin1("Unable to determine the state of thread %1: %2").arg(threadId).arg(why);
+}
+
+// Determine information about thread. This changes the
+// current thread to thread->id.
+static inline bool getStoppedThreadState(const CdbComInterfaces &cif,
+                                         ThreadData *t,
+                                         QString *errorMessage)
+{
+    enum { MaxFrames = 2 };
+    ULONG currentThread;
+    HRESULT hr = cif.debugSystemObjects->GetCurrentThreadId(&currentThread);
+    if (FAILED(hr)) {
+        *errorMessage = msgGetThreadStateFailed(t->id, msgComFailed("GetCurrentThreadId", hr));
+        return false;
+    }
+    if (currentThread != t->id) {
+        hr = cif.debugSystemObjects->SetCurrentThreadId(t->id);
+        if (FAILED(hr)) {
+            *errorMessage = msgGetThreadStateFailed(t->id, msgComFailed("SetCurrentThreadId", hr));
+            return false;
+        }
+    }
+    ULONG frameCount;
+    // Ignore the top frame if it is "ntdll!KiFastSystemCallRet", which is
+    // not interesting for display.    
+    DEBUG_STACK_FRAME frames[MaxFrames];
+    hr = cif.debugControl->GetStackTrace(0, 0, 0, frames, MaxFrames, &frameCount);
+    if (FAILED(hr)) {
+        *errorMessage = msgGetThreadStateFailed(t->id, msgComFailed("GetStackTrace", hr));
+        return false;
+    }
+    // Ignore the top frame if it is "ntdll!KiFastSystemCallRet", which is
+    // not interesting for display.
+    WCHAR wszBuf[MAX_PATH];
+    for (int frame = 0; frame < MaxFrames; frame++) {
+        cif.debugSymbols->GetNameByOffsetWide(frames[frame].InstructionOffset, wszBuf, MAX_PATH, 0, 0);
+        t->function = QString::fromUtf16(reinterpret_cast<const ushort *>(wszBuf));
+        if (frame != 0  || t->function != QLatin1String(CdbStackTraceContext::winFuncFastSystemCallRet)) {
+            t->address = frames[frame].InstructionOffset;
+            cif.debugSymbols->GetNameByOffsetWide(frames[frame].InstructionOffset, wszBuf, MAX_PATH, 0, 0);
+            t->function = QString::fromUtf16(reinterpret_cast<const ushort *>(wszBuf));
+            ULONG ulLine;
+            hr = cif.debugSymbols->GetLineByOffsetWide(frames[frame].InstructionOffset, &ulLine, wszBuf, MAX_PATH, 0, 0);
+            if (SUCCEEDED(hr)) {
+                t->line = ulLine;
+                // Just display base name
+                t->file = QString::fromUtf16(reinterpret_cast<const ushort *>(wszBuf));
+                if (!t->file.isEmpty()) {
+                    const int slashPos = t->file.lastIndexOf(QLatin1Char('\\'));
+                    if (slashPos != -1)
+                        t->file.remove(0, slashPos + 1);
+                }
+            }
+            break;
+        } // was not "ntdll!KiFastSystemCallRet"
+    }
+    return true;
+}
+
+static inline QString msgGetThreadsFailed(const QString &why)
+{
+    return QString::fromLatin1("Unable to determine the thread information: %1").arg(why);
+}
+
+bool CdbStackTraceContext::getThreads(const CdbComInterfaces &cif,
+                                      bool isStopped,
+                                      QList<ThreadData> *threads,
+                                      ULONG *currentThreadId,
+                                      QString *errorMessage)
+{
+    threads->clear();
+    ULONG threadCount;
+    *currentThreadId = 0;
+    HRESULT hr= cif.debugSystemObjects->GetNumberThreads(&threadCount);
+    if (FAILED(hr)) {
+        *errorMessage= msgGetThreadsFailed(msgComFailed("GetNumberThreads", hr));
+        return false;
+    }
+    // Get ids and index of current
+    if (!threadCount)
+        return true;
+    hr = cif.debugSystemObjects->GetCurrentThreadId(currentThreadId);
+    if (FAILED(hr)) {
+        *errorMessage= msgGetThreadsFailed(msgComFailed("GetCurrentThreadId", hr));
+        return false;
+    }
+
+    QVector<ULONG> threadIds(threadCount);
+    hr = cif.debugSystemObjects->GetThreadIdsByIndex(0, threadCount, &(*threadIds.begin()), 0);
+    if (FAILED(hr)) {
+        *errorMessage= msgGetThreadsFailed(msgComFailed("GetThreadIdsByIndex", hr));
+        return false;
+    }
+    for (ULONG i = 0; i < threadCount; i++) {
+        ThreadData threadData(threadIds.at(i));
+        if (isStopped) {
+            if (!getStoppedThreadState(cif, &threadData, errorMessage)) {
+                qWarning("%s\n", qPrintable(*errorMessage));
+                errorMessage->clear();
+            }
+        }
+        threads->push_back(threadData);
+    }
+    // Restore thread id
+    if (isStopped && threads->back().id != *currentThreadId) {
+        hr = cif.debugSystemObjects->SetCurrentThreadId(*currentThreadId);
+        if (FAILED(hr)) {
+            *errorMessage= msgGetThreadsFailed(msgComFailed("SetCurrentThreadId", hr));
+            return false;
+        }
+    }
+    return true;
+}
+
 
 } // namespace Internal
 } // namespace Debugger

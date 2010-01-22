@@ -52,8 +52,8 @@
 #include "CPlusPlusForwardDeclarations.h"
 #include "SemanticCheck.h"
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
+
+namespace CPlusPlus {
 
 class CPLUSPLUS_EXPORT CheckDeclaration: public SemanticCheck
 {
@@ -61,12 +61,12 @@ public:
     CheckDeclaration(Semantic *semantic);
     virtual ~CheckDeclaration();
 
-    void check(DeclarationAST *declaration, Scope *scope, Scope *templateParameters);
+    void check(DeclarationAST *declaration, Scope *scope, TemplateParameters *templateParameters);
 
 protected:
     DeclarationAST *switchDeclaration(DeclarationAST *declaration);
     Scope *switchScope(Scope *scope);
-    Scope *switchTemplateParameters(Scope *templateParameters);
+    TemplateParameters *switchTemplateParameters(TemplateParameters *templateParameters);
 
     void checkFunctionArguments(Function *fun);
 
@@ -90,6 +90,7 @@ protected:
     virtual bool visit(TemplateTypeParameterAST *ast);
     virtual bool visit(UsingAST *ast);
     virtual bool visit(UsingDirectiveAST *ast);
+    virtual bool visit(MemInitializerAST *ast);
 
     virtual bool visit(ObjCProtocolDeclarationAST *ast);
     virtual bool visit(ObjCProtocolForwardDeclarationAST *ast);
@@ -97,15 +98,20 @@ protected:
     virtual bool visit(ObjCClassForwardDeclarationAST *ast);
     virtual bool visit(ObjCMethodDeclarationAST *ast);
     virtual bool visit(ObjCVisibilityDeclarationAST *ast);
+    virtual bool visit(ObjCPropertyDeclarationAST *ast);
 
+private:
+    bool checkPropertyAttribute(ObjCPropertyAttributeAST *attrAst,
+                                int &flags,
+                                int attr);
 private:
     DeclarationAST *_declaration;
     Scope *_scope;
-    Scope *_templateParameters;
+    TemplateParameters *_templateParameters;
     bool _checkAnonymousArguments: 1;
 };
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // CPLUSPLUS_CHECKDECLARATION_H

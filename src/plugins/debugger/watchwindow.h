@@ -33,6 +33,8 @@
 #include <QtGui/QTreeView>
 
 namespace Debugger {
+class DebuggerManager;
+
 namespace Internal {
 
 /////////////////////////////////////////////////////////////////////
@@ -40,8 +42,6 @@ namespace Internal {
 // WatchWindow
 //
 /////////////////////////////////////////////////////////////////////
-
-class DebuggerManager;
 
 class WatchWindow : public QTreeView
 {
@@ -64,6 +64,7 @@ private:
     Q_SLOT void resetHelper();
     Q_SLOT void expandNode(const QModelIndex &idx);
     Q_SLOT void collapseNode(const QModelIndex &idx);
+    Q_SLOT void setUpdatesEnabled(bool enable);
 
     void keyPressEvent(QKeyEvent *ev);
     void contextMenuEvent(QContextMenuEvent *ev);

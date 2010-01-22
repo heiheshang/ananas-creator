@@ -31,6 +31,7 @@
 
 #include <QtCore/QSettings>
 #include <QtCore/QStringList>
+#include <QtCore/QFileInfo>
 #include <QtGui/QApplication>
 #include <QtGui/QWidget>
 #include <QtDebug>
@@ -42,47 +43,40 @@ namespace {
     const char * const USBSER = "Services/usbser/Enum";
 }
 
-//#ifdef Q_OS_WIN
-//GUID WceusbshGUID = { 0x25dbce51, 0x6c8f, 0x4a72,
-//                      0x8a,0x6d,0xb5,0x4c,0x2b,0x4f,0xc8,0x35 };
-//#endif
+const char *SerialDeviceLister::linuxBlueToothDeviceRootC = "/dev/rfcomm";
+
+CommunicationDevice::CommunicationDevice(DeviceCommunicationType t,
+                                         const QString &p,
+                                         const QString &f) :
+    portName(p),
+    friendlyName(f),
+    type(t)
+{
+}
 
 SerialDeviceLister::SerialDeviceLister(QObject *parent)
         : QObject(parent),
         m_initialized(false)
-//        , m_devNotifyHandle(0)
 {
-//#ifdef Q_OS_WIN
-//    // register for events
-//    DEV_BROADCAST_DEVICEINTERFACE NotificationFilter;
-//    ZeroMemory( &NotificationFilter, sizeof(NotificationFilter) );
-//    NotificationFilter.dbcc_size = sizeof(DEV_BROADCAST_DEVICEINTERFACE);
-//    NotificationFilter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
-//    NotificationFilter.dbcc_classguid  = WceusbshGUID;
-//    m_devNotifyHandle = RegisterDeviceNotification(QApplication::topLevelWidgets().at(0)->winId(), &NotificationFilter, DEVICE_NOTIFY_WINDOW_HANDLE);
-//#endif
+
 }
 
 SerialDeviceLister::~SerialDeviceLister()
 {
-//#ifdef Q_OS_WIN
-//    if (m_devNotifyHandle)
-//        UnregisterDeviceNotification(m_devNotifyHandle);
-//#endif
 }
 
-QList<SerialDeviceLister::SerialDevice> SerialDeviceLister::serialDevices() const
+QList<CommunicationDevice> SerialDeviceLister::communicationDevices() const
 {
     if (!m_initialized) {
         updateSilently();
         m_initialized = true;
     }
-    return m_devices;
+    return m_devices2;
 }
 
 QString SerialDeviceLister::friendlyNameForPort(const QString &port) const
 {
-    foreach (const SerialDevice &device, m_devices) {
+    foreach (const CommunicationDevice &device, m_devices2) {
         if (device.portName == port)
             return device.friendlyName;
     }
@@ -97,19 +91,44 @@ void SerialDeviceLister::update()
 
 void SerialDeviceLister::updateSilently() const
 {
-    m_devices.clear();
+    m_devices2 = serialPorts() + blueToothDevices();
+}
+
+QList<CommunicationDevice> SerialDeviceLister::serialPorts() const
+{
+    QList<CommunicationDevice> rc;
 #ifdef Q_OS_WIN32
     QSettings registry(REGKEY_CURRENT_CONTROL_SET, QSettings::NativeFormat);
-    int count = registry.value(QString::fromLatin1("%1/Count").arg(USBSER)).toInt();
+    const int count = registry.value(QString::fromLatin1("%1/Count").arg(USBSER)).toInt();
     for (int i = 0; i < count; ++i) {
         QString driver = registry.value(QString::fromLatin1("%1/%2").arg(USBSER).arg(i)).toString();
         if (driver.contains("JAVACOMM")) {
             driver.replace('\\', '/');
-            SerialDeviceLister::SerialDevice device;
+            CommunicationDevice device(SerialPortCommunication);
             device.friendlyName = registry.value(QString::fromLatin1("Enum/%1/FriendlyName").arg(driver)).toString();
             device.portName = registry.value(QString::fromLatin1("Enum/%1/Device Parameters/PortName").arg(driver)).toString();
-            m_devices.append(device);
+            rc.append(device);
         }
     }
 #endif
+    return rc;
+}
+
+QList<CommunicationDevice> SerialDeviceLister::blueToothDevices() const
+{
+    QList<CommunicationDevice> rc;
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MAC)
+    // Bluetooth devices are created on connection. List the existing ones
+    // or at least the first one.
+    const QString prefix = QLatin1String(linuxBlueToothDeviceRootC);
+    const QString friendlyFormat = QLatin1String("Bluetooth device (%1)");
+    for (int d = 0; d < 4; d++) {
+        CommunicationDevice device(BlueToothCommunication, prefix + QString::number(d));
+        if (d == 0 || QFileInfo(device.portName).exists()) {            
+            device.friendlyName = friendlyFormat.arg(device.portName);
+            rc.push_back(device);
+        }
+    }
+#endif
+    return rc;
 }

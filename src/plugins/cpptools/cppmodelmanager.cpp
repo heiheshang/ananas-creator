@@ -35,6 +35,7 @@
 #include "cppmodelmanager.h"
 #include "cpptoolsconstants.h"
 #include "cpptoolseditorsupport.h"
+#include "cppfindreferences.h"
 
 #include <functional>
 #include <QtConcurrentRun>
@@ -55,6 +56,8 @@
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/progressmanager/progressmanager.h>
 
+#include <extensionsystem/pluginmanager.h>
+
 #include <utils/qtcassert.h>
 
 #include <TranslationUnit.h>
@@ -67,7 +70,6 @@
 #include <NameVisitor.h>
 #include <TypeVisitor.h>
 #include <ASTVisitor.h>
-#include <PrettyPrinter.h>
 #include <Lexer.h>
 #include <Token.h>
 
@@ -132,13 +134,7 @@ static const char pp_configuration_file[] = "<configuration>";
 
 static const char pp_configuration[] =
     "# 1 \"<configuration>\"\n"
-    "#define __GNUC_MINOR__ 0\n"
-    "#define __GNUC__ 4\n"
-    "#define __GNUG__ 4\n"
-    "#define __STDC_HOSTED__ 1\n"
-    "#define __VERSION__ \"4.0.1 (fake)\"\n"
     "#define __cplusplus 1\n"
-
     "#define __extension__\n"
     "#define __context__\n"
     "#define __range__\n"
@@ -156,6 +152,7 @@ static const char pp_configuration[] =
 
     // ### add macros for win32
     "#define __cdecl\n"
+    "#define __stdcall\n"
     "#define QT_WA(x) x\n"
     "#define API\n"
     "#define WINAPI\n"
@@ -201,9 +198,12 @@ protected:
     void mergeEnvironment(CPlusPlus::Document::Ptr doc);
 
     virtual void macroAdded(const Macro &macro);
+    virtual void passedMacroDefinitionCheck(unsigned offset, const Macro &macro);
+    virtual void failedMacroDefinitionCheck(unsigned offset, const QByteArray &name);
     virtual void startExpandingMacro(unsigned offset,
                                      const Macro &macro,
                                      const QByteArray &originalText,
+                                     bool inCondition,
                                      const QVector<MacroArgumentReference> &actuals);
     virtual void stopExpandingMacro(unsigned offset, const Macro &macro);
     virtual void startSkippingBlocks(unsigned offset);
@@ -332,9 +332,8 @@ void CppPreprocessor::resetEnvironment()
 
 bool CppPreprocessor::includeFile(const QString &absoluteFilePath, QString *result)
 {
-    if (absoluteFilePath.isEmpty() || m_included.contains(absoluteFilePath)) {
+    if (absoluteFilePath.isEmpty() || m_included.contains(absoluteFilePath))
         return true;
-    }
 
     if (m_workingCopy.contains(absoluteFilePath)) {
         m_included.insert(absoluteFilePath);
@@ -451,16 +450,34 @@ void CppPreprocessor::macroAdded(const Macro &macro)
     m_currentDoc->appendMacro(macro);
 }
 
+void CppPreprocessor::passedMacroDefinitionCheck(unsigned offset, const Macro &macro)
+{
+    if (! m_currentDoc)
+        return;
+
+    m_currentDoc->addMacroUse(macro, offset, macro.name().length(),
+                              QVector<MacroArgumentReference>(), true);
+}
+
+void CppPreprocessor::failedMacroDefinitionCheck(unsigned offset, const QByteArray &name)
+{
+    if (! m_currentDoc)
+        return;
+
+    m_currentDoc->addUndefinedMacroUse(name, offset);
+}
+
 void CppPreprocessor::startExpandingMacro(unsigned offset,
                                           const Macro &macro,
                                           const QByteArray &originalText,
+                                          bool inCondition,
                                           const QVector<MacroArgumentReference> &actuals)
 {
     if (! m_currentDoc)
         return;
 
-    //qDebug() << "start expanding:" << macro.name << "text:" << originalText;
-    m_currentDoc->addMacroUse(macro, offset, originalText.length(), actuals);
+    //qDebug() << "start expanding:" << macro.name() << "text:" << originalText;
+    m_currentDoc->addMacroUse(macro, offset, originalText.length(), actuals, inCondition);
 }
 
 void CppPreprocessor::stopExpandingMacro(unsigned, const Macro &)
@@ -516,7 +533,7 @@ void CppPreprocessor::sourceNeeded(QString &fileName, IncludeType type,
         return;
 
     QString contents = tryIncludeFile(fileName, type);
-
+    fileName = QDir::cleanPath(fileName);
     if (m_currentDoc) {
         m_currentDoc->addIncludeFile(fileName, line);
 
@@ -546,6 +563,10 @@ void CppPreprocessor::sourceNeeded(QString &fileName, IncludeType type,
     doc = Document::create(fileName);
     doc->setRevision(m_revision);
 
+    QFileInfo info(fileName);
+    if (info.exists())
+        doc->setLastModified(info.lastModified());
+
     Document::Ptr previousDoc = switchDocument(doc);
 
     const QByteArray preprocessedCode = preprocess(fileName, contents);
@@ -573,6 +594,33 @@ Document::Ptr CppPreprocessor::switchDocument(Document::Ptr doc)
 
 
 
+void CppTools::CppModelManagerInterface::updateModifiedSourceFiles()
+{
+    const Snapshot snapshot = this->snapshot();
+    QStringList sourceFiles;
+
+    foreach (const Document::Ptr doc, snapshot) {
+        const QDateTime lastModified = doc->lastModified();
+
+        if (! lastModified.isNull()) {
+            QFileInfo fileInfo(doc->fileName());
+
+            if (fileInfo.exists() && fileInfo.lastModified() != lastModified)
+                sourceFiles.append(doc->fileName());
+        }
+    }
+
+    updateSourceFiles(sourceFiles);
+}
+
+CppTools::CppModelManagerInterface *CppTools::CppModelManagerInterface::instance()
+{
+    ExtensionSystem::PluginManager *pluginManager = ExtensionSystem::PluginManager::instance();
+    return pluginManager->getObject<CppTools::CppModelManagerInterface>();
+
+}
+
+
 /*!
     \class CppTools::CppModelManager
     \brief The CppModelManager keeps track of one CppCodeModel instance
@@ -585,6 +633,8 @@ Document::Ptr CppPreprocessor::switchDocument(Document::Ptr doc)
 CppModelManager::CppModelManager(QObject *parent)
     : CppModelManagerInterface(parent)
 {
+    m_findReferences = new CppFindReferences(this);
+
     m_revision = 0;
     m_synchronizer.setCancelOnWait(true);
 
@@ -701,7 +751,7 @@ QByteArray CppModelManager::internalDefinedMacros() const
     return macros;
 }
 
-void CppModelManager::setIncludesInPaths(const QMap<QString, QStringList> includesInPaths)
+void CppModelManager::setIncludesInPaths(const QMap<QString, QStringList> &includesInPaths)
 {
     QMutexLocker locker(&mutex);
     QMapIterator<QString, QStringList> i(includesInPaths);
@@ -719,6 +769,26 @@ void CppModelManager::addEditorSupport(AbstractEditorSupport *editorSupport)
 void CppModelManager::removeEditorSupport(AbstractEditorSupport *editorSupport)
 {
     m_addtionalEditorSupport.remove(editorSupport);
+}
+
+QList<int> CppModelManager::references(CPlusPlus::Symbol *symbol,
+                                       CPlusPlus::Document::Ptr doc,
+                                       const CPlusPlus::Snapshot &snapshot)
+{
+    NamespaceBindingPtr glo = bind(doc, snapshot);
+    return m_findReferences->references(LookupContext::canonicalSymbol(symbol, glo.data()), doc, snapshot);
+}
+
+void CppModelManager::findUsages(CPlusPlus::Symbol *symbol)
+{
+    if (symbol->identifier())
+        m_findReferences->findUsages(symbol);
+}
+
+void CppModelManager::renameUsages(CPlusPlus::Symbol *symbol)
+{
+    if (symbol->identifier())
+        m_findReferences->renameUsages(symbol);
 }
 
 QMap<QString, QString> CppModelManager::buildWorkingCopyList()
@@ -745,6 +815,11 @@ QMap<QString, QString> CppModelManager::buildWorkingCopyList()
     workingCopy[pp_configuration_file] = conf;
 
     return workingCopy;
+}
+
+QMap<QString, QString> CppModelManager::workingCopy() const
+{
+    return const_cast<CppModelManager *>(this)->buildWorkingCopyList();
 }
 
 void CppModelManager::updateSourceFiles(const QStringList &sourceFiles)
@@ -778,6 +853,7 @@ void CppModelManager::updateProjectInfo(const ProjectInfo &pinfo)
         QFuture<void> result = QtConcurrent::run(&CppModelManager::updateIncludesInPaths,
                                                  this,
                                                  pinfo.includePaths,
+                                                 pinfo.frameworkPaths,
                                                  m_headerSuffixes);
 
         if (pinfo.includePaths.size() > 1) {
@@ -1096,6 +1172,7 @@ void CppModelManager::onAboutToUnloadSession()
 void CppModelManager::updateIncludesInPaths(QFutureInterface<void> &future,
                                             CppModelManager *manager,
                                             QStringList paths,
+                                            QStringList frameworkPaths,
                                             QStringList suffixes)
 {
     QMap<QString, QStringList> entriesInPaths;
@@ -1106,12 +1183,30 @@ void CppModelManager::updateIncludesInPaths(QFutureInterface<void> &future,
 
     future.setProgressRange(0, paths.size());
 
+    // Add framework header directories to path list
+    QStringList frameworkFilter;
+    frameworkFilter << QLatin1String("*.framework");
+    QStringListIterator fwPathIt(frameworkPaths);
+    while (fwPathIt.hasNext()) {
+        const QString &fwPath = fwPathIt.next();
+        QStringList entriesInFrameworkPath;
+        const QStringList &frameworks = QDir(fwPath).entryList(frameworkFilter, QDir::Dirs | QDir::NoDotAndDotDot);
+        QStringListIterator fwIt(frameworks);
+        while (fwIt.hasNext()) {
+            QString framework = fwIt.next();
+            paths.append(fwPath + QLatin1Char('/') + framework + QLatin1String("/Headers"));
+            framework.chop(10); // remove the ".framework"
+            entriesInFrameworkPath.append(framework + QLatin1Char('/'));
+        }
+        entriesInPaths.insert(fwPath, entriesInFrameworkPath);
+    }
+
     while (!paths.isEmpty()) {
         if (future.isPaused())
             future.waitForResume();
 
         if (future.isCanceled())
-            break;
+            return;
 
         const QString path = paths.takeFirst();
 

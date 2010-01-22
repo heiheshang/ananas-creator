@@ -31,15 +31,18 @@
 #include "buildstep.h"
 #include "buildstepspage.h"
 #include "project.h"
+#include "buildconfiguration.h"
 
 #include <coreplugin/coreconstants.h>
 #include <extensionsystem/pluginmanager.h>
+#include <utils/qtcassert.h>
 
 #include <QtCore/QDebug>
 #include <QtCore/QPair>
 #include <QtGui/QInputDialog>
 #include <QtGui/QLabel>
 #include <QtGui/QVBoxLayout>
+#include <QtGui/QMenu>
 
 using namespace ProjectExplorer;
 using namespace ProjectExplorer::Internal;
@@ -70,7 +73,7 @@ BuildSettingsPanel::BuildSettingsPanel(Project *project)
 
 BuildSettingsPanel::~BuildSettingsPanel()
 {
-    delete m_widget;
+
 }
 
 QString BuildSettingsPanel::name() const
@@ -94,6 +97,8 @@ BuildSettingsSubWidgets::~BuildSettingsSubWidgets()
 
 void BuildSettingsSubWidgets::addWidget(const QString &name, QWidget *widget)
 {
+    QSpacerItem *item = new QSpacerItem(1, 10, QSizePolicy::Fixed, QSizePolicy::Fixed);
+
     QLabel *label = new QLabel(this);
     label->setText(name);
     QFont f = label->font();
@@ -101,19 +106,25 @@ void BuildSettingsSubWidgets::addWidget(const QString &name, QWidget *widget)
     f.setPointSizeF(f.pointSizeF() *1.2);
     label->setFont(f);
 
+    layout()->addItem(item);
     layout()->addWidget(label);
     layout()->addWidget(widget);
 
+    m_spacerItems.append(item);
     m_labels.append(label);
     m_widgets.append(widget);
 }
 
 void BuildSettingsSubWidgets::clear()
 {
+    foreach(QSpacerItem *item, m_spacerItems)
+        layout()->removeItem(item);
+    qDeleteAll(m_spacerItems);
     qDeleteAll(m_widgets);
     qDeleteAll(m_labels);
     m_widgets.clear();
     m_labels.clear();
+    m_spacerItems.clear();
 }
 
 QList<QWidget *> BuildSettingsSubWidgets::widgets() const
@@ -122,9 +133,10 @@ QList<QWidget *> BuildSettingsSubWidgets::widgets() const
 }
 
 BuildSettingsSubWidgets::BuildSettingsSubWidgets(QWidget *parent)
-    : QGroupBox(parent)
+    : QWidget(parent)
 {
     new QVBoxLayout(this);
+    layout()->setMargin(0);
 }
 
 ///
@@ -140,58 +152,85 @@ BuildSettingsWidget::BuildSettingsWidget(Project *project)
 {
     QVBoxLayout *vbox = new QVBoxLayout(this);
     vbox->setContentsMargins(0, -1, 0, -1);
-    QHBoxLayout *hbox = new QHBoxLayout();
-    hbox->addWidget(new QLabel(tr("Build Configuration:"), this));
-    m_buildConfigurationComboBox = new QComboBox(this);
-    hbox->addWidget(m_buildConfigurationComboBox);
 
-    m_addButton = new QPushButton(this);
-    m_addButton->setText(tr("Add"));
-    m_addButton->setIcon(QIcon(Core::Constants::ICON_PLUS));
-    m_addButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    hbox->addWidget(m_addButton);
+    { // Edit Build Configuration row
+        QHBoxLayout *hbox = new QHBoxLayout();
+        hbox->addWidget(new QLabel(tr("Edit Build Configuration:"), this));
+        m_buildConfigurationComboBox = new QComboBox(this);
+        m_buildConfigurationComboBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+        hbox->addWidget(m_buildConfigurationComboBox);
 
-    m_removeButton = new QPushButton(this);
-    m_removeButton->setText(tr("Remove"));
-    m_removeButton->setIcon(QIcon(Core::Constants::ICON_MINUS));
-    m_removeButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    hbox->addWidget(m_removeButton);
-    hbox->addSpacerItem(new QSpacerItem(0, 0, QSizePolicy::Expanding, QSizePolicy::Fixed));
-    vbox->addLayout(hbox);
+        m_addButton = new QPushButton(this);
+        m_addButton->setText(tr("Add"));
+        m_addButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        hbox->addWidget(m_addButton);
+
+        m_removeButton = new QPushButton(this);
+        m_removeButton->setText(tr("Remove"));
+        m_removeButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        hbox->addWidget(m_removeButton);
+        hbox->addSpacerItem(new QSpacerItem(0, 0, QSizePolicy::Expanding, QSizePolicy::Fixed));
+        vbox->addLayout(hbox);
+    }
+
+    m_makeActiveLabel = new QLabel(this);
+    m_makeActiveLabel->setVisible(false);
+    vbox->addWidget(m_makeActiveLabel);
 
     m_subWidgets = new BuildSettingsSubWidgets(this);
     vbox->addWidget(m_subWidgets);
 
-    QMenu *addButtonMenu = new QMenu(this);
-    addButtonMenu->addAction(tr("Create &New"),
-                             this, SLOT(createConfiguration()));
-    addButtonMenu->addAction(tr("&Clone Selected"),
-                             this, SLOT(cloneConfiguration()));
-    m_addButton->setMenu(addButtonMenu);
+    m_addButtonMenu = new QMenu(this);
+    m_addButton->setMenu(m_addButtonMenu);
+    updateAddButtonMenu();
+
+    m_buildConfiguration = m_project->activeBuildConfiguration()->name();
+
+    connect(m_makeActiveLabel, SIGNAL(linkActivated(QString)),
+            this, SLOT(makeActive()));
 
     connect(m_buildConfigurationComboBox, SIGNAL(currentIndexChanged(int)),
             this, SLOT(currentIndexChanged(int)));
 
-    // TODO currentIndexChanged
-    // needs to change active configuration
-    // and set widgets
-
     connect(m_removeButton, SIGNAL(clicked()),
             this, SLOT(deleteConfiguration()));
-    connect(m_project, SIGNAL(activeBuildConfigurationChanged()),
-            this, SLOT(activeBuildConfigurationChanged()));
+
     connect(m_project, SIGNAL(buildConfigurationDisplayNameChanged(const QString &)),
             this, SLOT(buildConfigurationDisplayNameChanged(const QString &)));
+
+    connect(m_project, SIGNAL(activeBuildConfigurationChanged()),
+            this, SLOT(checkMakeActiveLabel()));
+
+    if (m_project->buildConfigurationFactory())
+        connect(m_project->buildConfigurationFactory(), SIGNAL(availableCreationTypesChanged()), SLOT(updateAddButtonMenu()));
 
     updateBuildSettings();
 }
 
+void BuildSettingsWidget::makeActive()
+{
+    m_project->setActiveBuildConfiguration(m_project->buildConfiguration(m_buildConfiguration));
+}
+
+void BuildSettingsWidget::updateAddButtonMenu()
+{
+    m_addButtonMenu->clear();
+    m_addButtonMenu->addAction(tr("&Clone Selected"),
+                             this, SLOT(cloneConfiguration()));
+    IBuildConfigurationFactory *factory = m_project->buildConfigurationFactory();
+    if (factory) {
+        foreach (const QString &type, factory->availableCreationTypes()) {
+            QAction *action = m_addButtonMenu->addAction(factory->displayNameForType(type), this, SLOT(createConfiguration()));
+            action->setData(type);
+        }
+    }
+}
+
 void BuildSettingsWidget::buildConfigurationDisplayNameChanged(const QString &buildConfiguration)
 {
-
     for (int i=0; i<m_buildConfigurationComboBox->count(); ++i) {
         if (m_buildConfigurationComboBox->itemData(i).toString() == buildConfiguration) {
-            m_buildConfigurationComboBox->setItemText(i, m_project->displayNameFor(buildConfiguration));
+            m_buildConfigurationComboBox->setItemText(i, m_project->buildConfiguration(buildConfiguration)->displayName());
             break;
         }
     }
@@ -200,11 +239,10 @@ void BuildSettingsWidget::buildConfigurationDisplayNameChanged(const QString &bu
 
 void BuildSettingsWidget::updateBuildSettings()
 {
-
     // TODO save position, entry from combbox
 
     // Delete old tree items
-    m_buildConfigurationComboBox->blockSignals(true); // TODO ...
+    bool blocked = m_buildConfigurationComboBox->blockSignals(true);
     m_buildConfigurationComboBox->clear();
     m_subWidgets->clear();
 
@@ -223,15 +261,13 @@ void BuildSettingsWidget::updateBuildSettings()
         m_subWidgets->addWidget(subConfigWidget->displayName(), subConfigWidget);
 
     // Add tree items
-    QString activeBuildConfiguration = m_project->activeBuildConfiguration();
-    foreach (const QString &buildConfiguration, m_project->buildConfigurations()) {
-        m_buildConfigurationComboBox->addItem(m_project->displayNameFor(buildConfiguration), buildConfiguration);
-        if (buildConfiguration == activeBuildConfiguration)
+    foreach (const BuildConfiguration *bc, m_project->buildConfigurations()) {
+        m_buildConfigurationComboBox->addItem(bc->displayName(), bc->name());
+        if (bc->name() == m_buildConfiguration)
             m_buildConfigurationComboBox->setCurrentIndex(m_buildConfigurationComboBox->count() - 1);
     }
 
-    // TODO ...
-    m_buildConfigurationComboBox->blockSignals(false);
+    m_buildConfigurationComboBox->blockSignals(blocked);
 
     // TODO Restore position, entry from combbox
     // TODO? select entry from combobox ?
@@ -240,61 +276,46 @@ void BuildSettingsWidget::updateBuildSettings()
 
 void BuildSettingsWidget::currentIndexChanged(int index)
 {
-    QString buildConfiguration = m_buildConfigurationComboBox->itemData(index).toString();
-    m_project->setActiveBuildConfiguration(buildConfiguration);
+    m_buildConfiguration = m_buildConfigurationComboBox->itemData(index).toString();
+    activeBuildConfigurationChanged();
 }
 
 void BuildSettingsWidget::activeBuildConfigurationChanged()
 {
-    const QString &activeBuildConfiguration = m_project->activeBuildConfiguration();
     for (int i = 0; i < m_buildConfigurationComboBox->count(); ++i) {
-        if (m_buildConfigurationComboBox->itemData(i).toString() == activeBuildConfiguration) {
+        if (m_buildConfigurationComboBox->itemData(i).toString() == m_buildConfiguration) {
             m_buildConfigurationComboBox->setCurrentIndex(i);
             break;
         }
     }
     foreach (QWidget *widget, m_subWidgets->widgets()) {
         if (BuildConfigWidget *buildStepWidget = qobject_cast<BuildConfigWidget*>(widget)) {
-            buildStepWidget->init(activeBuildConfiguration);
+            buildStepWidget->init(m_buildConfiguration);
         }
+    }
+    checkMakeActiveLabel();
+}
+
+void BuildSettingsWidget::checkMakeActiveLabel()
+{
+    m_makeActiveLabel->setVisible(false);
+    if (!m_project->activeBuildConfiguration() || m_project->activeBuildConfiguration()->name() != m_buildConfiguration) {
+        BuildConfiguration *bc = m_project->buildConfiguration(m_buildConfiguration);
+        QTC_ASSERT(bc, return);
+        m_makeActiveLabel->setText(tr("<a href=\"#\">Make %1 active.</a>").arg(bc->displayName()));
+        m_makeActiveLabel->setVisible(true);
     }
 }
 
 void BuildSettingsWidget::createConfiguration()
 {
-    bool ok;
-    QString newBuildConfiguration = QInputDialog::getText(this, tr("New configuration"), tr("New Configuration Name:"), QLineEdit::Normal, QString(), &ok);
-    if (!ok || newBuildConfiguration.isEmpty())
-        return;
-
-    QString newDisplayName = newBuildConfiguration;
-    // Check that the internal name is not taken and use a different one otherwise
-    const QStringList &buildConfigurations = m_project->buildConfigurations();
-    if (buildConfigurations.contains(newBuildConfiguration)) {
-        int i = 2;
-        while (buildConfigurations.contains(newBuildConfiguration + QString::number(i)))
-            ++i;
-        newBuildConfiguration += QString::number(i);
+    QAction *action = qobject_cast<QAction *>(sender());
+    const QString &type = action->data().toString();
+    if (m_project->buildConfigurationFactory()->create(type)) {
+        // TODO switching to last buildconfiguration in list might not be what we want
+        m_buildConfiguration = m_project->buildConfigurations().last()->name();
+        updateBuildSettings();
     }
-
-    // Check that we don't have a configuration with the same displayName
-    QStringList displayNames;
-    foreach (const QString &bc, buildConfigurations)
-        displayNames << m_project->displayNameFor(bc);
-
-    if (displayNames.contains(newDisplayName)) {
-        int i = 2;
-        while (displayNames.contains(newDisplayName + QString::number(i)))
-            ++i;
-        newDisplayName += QString::number(i);
-    }
-
-    m_project->addBuildConfiguration(newBuildConfiguration);
-    m_project->setDisplayNameFor(newBuildConfiguration, newDisplayName);
-    m_project->newBuildConfiguration(newBuildConfiguration);
-    m_project->setActiveBuildConfiguration(newBuildConfiguration);
-
-    updateBuildSettings();
 }
 
 void BuildSettingsWidget::cloneConfiguration()
@@ -319,33 +340,22 @@ void BuildSettingsWidget::cloneConfiguration(const QString &sourceConfiguration)
         return;
 
     QString newDisplayName = newBuildConfiguration;
-    // Check that the internal name is not taken and use a different one otherwise
-    const QStringList &buildConfigurations = m_project->buildConfigurations();
-    if (buildConfigurations.contains(newBuildConfiguration)) {
-        int i = 2;
-        while (buildConfigurations.contains(newBuildConfiguration + QString::number(i)))
-            ++i;
-        newBuildConfiguration += QString::number(i);
-    }
+    QStringList buildConfigurationDisplayNames;
+    foreach(BuildConfiguration *bc, m_project->buildConfigurations())
+        buildConfigurationDisplayNames << bc->displayName();
+    newDisplayName = Project::makeUnique(newDisplayName, buildConfigurationDisplayNames);
 
-    // Check that we don't have a configuration with the same displayName
-    QStringList displayNames;
-    foreach (const QString &bc, buildConfigurations)
-        displayNames << m_project->displayNameFor(bc);
+    QStringList buildConfigurationNames;
+    foreach(BuildConfiguration *bc, m_project->buildConfigurations())
+        buildConfigurationNames << bc->name();
 
-    if (displayNames.contains(newDisplayName)) {
-        int i = 2;
-        while (displayNames.contains(newDisplayName + QString::number(i)))
-            ++i;
-        newDisplayName += QString::number(i);
-    }
+    newBuildConfiguration = Project::makeUnique(newBuildConfiguration, buildConfigurationNames);
 
     m_project->copyBuildConfiguration(sourceConfiguration, newBuildConfiguration);
-    m_project->setDisplayNameFor(newBuildConfiguration, newDisplayName);
+    m_project->setDisplayNameFor(m_project->buildConfiguration(newBuildConfiguration), newDisplayName);
 
+    m_buildConfiguration = newBuildConfiguration;
     updateBuildSettings();
-
-    m_project->setActiveBuildConfiguration(newBuildConfiguration);
 }
 
 void BuildSettingsWidget::deleteConfiguration(const QString &deleteConfiguration)
@@ -353,16 +363,25 @@ void BuildSettingsWidget::deleteConfiguration(const QString &deleteConfiguration
     if (deleteConfiguration.isEmpty() || m_project->buildConfigurations().size() <= 1)
         return;
 
-    if (m_project->activeBuildConfiguration() == deleteConfiguration) {
-        foreach (const QString &otherConfiguration, m_project->buildConfigurations()) {
-            if (otherConfiguration != deleteConfiguration) {
-                m_project->setActiveBuildConfiguration(otherConfiguration);
+    if (m_project->activeBuildConfiguration()->name() == deleteConfiguration) {
+        foreach (BuildConfiguration *bc, m_project->buildConfigurations()) {
+            if (bc->name() != deleteConfiguration) {
+                m_project->setActiveBuildConfiguration(bc);
                 break;
             }
         }
     }
 
-    m_project->removeBuildConfiguration(deleteConfiguration);
+    if (m_buildConfiguration == deleteConfiguration) {
+        foreach (const BuildConfiguration *bc, m_project->buildConfigurations()) {
+            if (bc->name() != deleteConfiguration) {
+                m_buildConfiguration = bc->name();
+                break;
+            }
+        }
+    }
+
+    m_project->removeBuildConfiguration(m_project->buildConfiguration(deleteConfiguration));
 
     updateBuildSettings();
 }

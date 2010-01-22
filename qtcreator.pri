@@ -12,8 +12,7 @@ defineReplace(cleanPath) {
 }
 
 defineReplace(targetPath) {
-    win32:1 ~= s|/|\|g
-    return($$1)
+    return($$replace(1, /, $$QMAKE_DIR_SEP))
 }
 
 # For use in custom compilers which just copy files
@@ -55,11 +54,12 @@ isEmpty(IDE_BUILD_TREE) {
 }
 IDE_APP_PATH = $$IDE_BUILD_TREE/bin
 macx {
-    IDE_APP_TARGET   = QtCreator
+    IDE_APP_TARGET   = "Qt Creator"
     IDE_LIBRARY_PATH = $$IDE_APP_PATH/$${IDE_APP_TARGET}.app/Contents/PlugIns
     IDE_PLUGIN_PATH  = $$IDE_LIBRARY_PATH
     IDE_LIBEXEC_PATH = $$IDE_APP_PATH/$${IDE_APP_TARGET}.app/Contents/Resources
     IDE_DATA_PATH    = $$IDE_APP_PATH/$${IDE_APP_TARGET}.app/Contents/Resources
+    IDE_DOC_PATH     = $$IDE_DATA_PATH/doc
     contains(QT_CONFIG, ppc):CONFIG += ppc x86
     copydata = 1
 } else {
@@ -74,6 +74,7 @@ macx {
     IDE_PLUGIN_PATH  = $$IDE_LIBRARY_PATH/plugins
     IDE_LIBEXEC_PATH = $$IDE_APP_PATH # FIXME
     IDE_DATA_PATH    = $$IDE_BUILD_TREE/share/qtcreator
+    IDE_DOC_PATH     = $$IDE_BUILD_TREE/share/doc/qtcreator
     !isEqual(IDE_SOURCE_TREE, $$IDE_BUILD_TREE):copydata = 1
 }
 
@@ -93,11 +94,11 @@ DEFINES += QT_NO_CAST_TO_ASCII
 #DEFINES += QT_USE_FAST_CONCATENATION
 
 unix {
-    debug:OBJECTS_DIR = $${OUT_PWD}/.obj/debug-shared
-    release:OBJECTS_DIR = $${OUT_PWD}/.obj/release-shared
+    CONFIG(debug, debug|release):OBJECTS_DIR = $${OUT_PWD}/.obj/debug-shared
+    CONFIG(release, debug|release):OBJECTS_DIR = $${OUT_PWD}/.obj/release-shared
 
-    debug:MOC_DIR = $${OUT_PWD}/.moc/debug-shared
-    release:MOC_DIR = $${OUT_PWD}/.moc/release-shared
+    CONFIG(debug, debug|release):MOC_DIR = $${OUT_PWD}/.moc/debug-shared
+    CONFIG(release, debug|release):MOC_DIR = $${OUT_PWD}/.moc/release-shared
 
     RCC_DIR = $${OUT_PWD}/.rcc
     UI_DIR = $${OUT_PWD}/.uic
@@ -108,3 +109,7 @@ linux-g++-* {
     # to prevent checking in code that does not compile on other platforms.
     QMAKE_LFLAGS += -Wl,--allow-shlib-undefined -Wl,--no-undefined
 }
+
+# Handle S60 support: default on Windows, conditionally built on other platforms.
+win32:SUPPORT_QT_S60=1
+else:SUPPORT_QT_S60 = $$(QTCREATOR_WITH_S60)

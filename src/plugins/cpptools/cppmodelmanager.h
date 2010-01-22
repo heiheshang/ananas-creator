@@ -62,6 +62,7 @@ namespace Internal {
 
 class CppEditorSupport;
 class CppPreprocessor;
+class CppFindReferences;
 
 class CppModelManager : public CppModelManagerInterface
 {
@@ -72,6 +73,7 @@ public:
     virtual ~CppModelManager();
 
     virtual void updateSourceFiles(const QStringList &sourceFiles);
+    virtual QMap<QString, QString> workingCopy() const;
 
     virtual QList<ProjectInfo> projectInfos() const;
     virtual ProjectInfo projectInfo(ProjectExplorer::Project *project) const;
@@ -91,8 +93,6 @@ public:
     CppEditorSupport *editorSupport(TextEditor::ITextEditor *editor) const
     { return m_editorSupport.value(editor); }
 
-    QMap<QString, QString> buildWorkingCopyList();
-
     void emitDocumentUpdated(CPlusPlus::Document::Ptr doc);
 
     void stopEditorSelectionsUpdate()
@@ -100,6 +100,13 @@ public:
 
     virtual void addEditorSupport(AbstractEditorSupport *editorSupport);
     virtual void removeEditorSupport(AbstractEditorSupport *editorSupport);
+
+    virtual QList<int> references(CPlusPlus::Symbol *symbol,
+                                  CPlusPlus::Document::Ptr doc,
+                                  const CPlusPlus::Snapshot &snapshot);
+
+    virtual void findUsages(CPlusPlus::Symbol *symbol);
+    virtual void renameUsages(CPlusPlus::Symbol *symbol);
 
     void setHeaderSuffixes(const QStringList &suffixes)
     { m_headerSuffixes = suffixes; }
@@ -124,6 +131,8 @@ private Q_SLOTS:
     void updateEditorSelections();
 
 private:
+    QMap<QString, QString> buildWorkingCopyList();
+
     QStringList projectFiles()
     {
         ensureUpdated();
@@ -154,11 +163,12 @@ private:
     QStringList internalFrameworkPaths() const;
     QByteArray internalDefinedMacros() const;
 
-    void setIncludesInPaths(const QMap<QString, QStringList> includesInPaths);
+    void setIncludesInPaths(const QMap<QString, QStringList> &includesInPaths);
 
     static void updateIncludesInPaths(QFutureInterface<void> &future,
                                       CppModelManager *manager,
                                       QStringList paths,
+                                      QStringList frameworkPaths,
                                       QStringList suffixes);
 
     static void parse(QFutureInterface<void> &future,
@@ -205,6 +215,8 @@ private:
 
     QFutureSynchronizer<void> m_synchronizer;
     unsigned m_revision;
+
+    CppFindReferences *m_findReferences;
 };
 
 } // namespace Internal

@@ -9,24 +9,26 @@ sourcedirs = $SRCDIR
 imagedirs = $SRCDIR/images
 outputdir = $OUTDIR
 exampledirs = $SRCDIR
+indexes                 = qt.index
 
 extraimages.HTML        = qt-logo \
-                          trolltech-logo
+                          qtcreator-screenshots
 
 sources.fileextensions  = "qtcreator.qdoc addressbook-sdk.qdoc"
 
 
 qhp.projects            = QtCreator
 qhp.QtCreator.file             = qtcreator.qhp
-qhp.QtCreator.namespace        = com.nokia.qtcreator.1290
+qhp.QtCreator.namespace        = com.nokia.qtcreator.131
 qhp.QtCreator.virtualFolder    = doc
 qhp.QtCreator.indexTitle       = Qt Creator
 qhp.QtCreator.indexRoot        =
 qhp.QtCreator.extraFiles       = classic.css \
-                          images/qt-logo.png
-qhp.QtCreator.filterAttributes = qtcreator 1.2.90
-qhp.QtCreator.customFilters.QtCreator.name = Qt Creator 1.2.90
-qhp.QtCreator.customFilters.QtCreator.filterAttributes = qtcreator 1.2.90
+                          images/qt-logo.png \
+                          images/qtcreator-screenshots.png
+qhp.QtCreator.filterAttributes = qtcreator 1.3.1
+qhp.QtCreator.customFilters.QtCreator.name = Qt Creator 1.3.1
+qhp.QtCreator.customFilters.QtCreator.filterAttributes = qtcreator 1.3.1
 
 # macros.qdocconf
 
@@ -85,7 +87,6 @@ macro.i81                       = "\\o{8,1}"
 macro.i91                       = "\\o{9,1}"
 macro.img                       = "\\image"
 macro.endquote                  = "\\endquotation"
-
 spurious			= "Missing comma in .*" \
 				  "Missing pattern .*"
 
@@ -189,18 +190,26 @@ HTML.stylesheets        = classic.css
 HTML.postheader         = "<table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">\n" \
                           "<tr>\n" \
                           "<td align=\"left\" valign=\"top\" width=\"32\">" \
-                          "<img src=\"images/qt-logo.png\" align=\"left\" width=\"32\" height=\"32\" border=\"0\" />" \
+                          "<a href=\"http://qt.nokia.com/\"><img src=\"images/qt-logo.png\" align=\"left\" border=\"0\" /></a>" \
                           "</td>\n" \
                           "<td width=\"1\">&nbsp;&nbsp;</td>" \
                           "<td class=\"postheader\" valign=\"center\">" \
-			  "<a href=\"qtcreator-manual.html\">" \
-                          "<font color=\"#004faf\">Home</font></a>" \
-                          "</td>\n" \
-                          "<td align=\"right\" valign=\"top\" width=\"230\"></td></tr></table><br>"
+                          "<a href=\"index.html\">" \
+                          "<font color=\"#004faf\">Home</font></a>&nbsp;&middot; " \
+                          "<a href=\"creator-code-editor.html\">" \
+                          "<font color=\"#004faf\">Editor</font></a>&nbsp;&middot; " \
+                          "<a href=\"creator-navigation.html\">" \
+                          "<font color=\"#004faf\">Code Navigation</font></a>&nbsp;&middot; " \
+                          "<a href=\"creator-keyboard-shortcuts.html\">" \
+                          "<font color=\"#004faf\">Shortcuts</font></a>&nbsp;&middot; " \
+                          "<a href=\"http://qt.gitorious.org/qt-creator/pages/Home\">" \
+                          "<font color=\"#004faf\">Wiki</font></a>" \
+                          "</td>" \
+                          "</tr></table>"                          
 
 HTML.footer             = "<p /><address><hr /><div align=\"center\">\n" \
-                                  "<table width=\"100%\" cellspacing=\"0\" border=\"0\"><tr class=\"address\">\n" \
-                          "<td width=\"30%\" align=\"left\">Copyright &copy; 2009 Nokia</td>\n" \
-                          "<td width=\"40%\" align=\"center\">&nbsp;</td>\n" \
-                          "<td width=\"30%\" align=\"right\"><div align=\"right\">Qt Creator 1.2.90</div></td>\n" \
+                          "<table width=\"100%\" cellspacing=\"0\" border=\"0\"><tr class=\"address\">\n" \
+                          "<td width=\"40%\" align=\"left\">Copyright &copy; 2009 Nokia Corporation and/or its subsidiary(-ies)</td>\n" \
+                          "<td width=\"20%\" align=\"center\"><a href=\"trademarks.html\">Trademarks</a></td>\n" \
+                          "<td width=\"40%\" align=\"right\"><div align=\"right\">Qt Creator 1.3.1</div></td>\n" \
                           "</tr></table></div></address>"

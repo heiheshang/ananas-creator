@@ -30,6 +30,8 @@
 #ifndef DEBUGGER_IDEBUGGERENGINE_H
 #define DEBUGGER_IDEBUGGERENGINE_H
 
+#include "debuggerconstants.h"
+
 #include <QtCore/QObject>
 #include <QtCore/QList>
 #include <QtCore/QSharedPointer>
@@ -43,10 +45,15 @@ namespace TextEditor {
 class ITextEditor;
 }
 
+namespace Core {
+class IOptionsPage;
+}
+
 namespace Debugger {
+class DebuggerManager;
+class DebuggerStartParameters;
 namespace Internal {
 
-class DebuggerStartParameters;
 class DisassemblerViewAgent;
 class MemoryViewAgent;
 struct StackFrame;
@@ -55,12 +62,18 @@ class WatchData;
 
 class IDebuggerEngine : public QObject
 {
+    Q_OBJECT
+
 public:
-    IDebuggerEngine(QObject *parent = 0) : QObject(parent) {}
+    typedef QSharedPointer<DebuggerStartParameters> DebuggerStartParametersPtr;
+
+    IDebuggerEngine(DebuggerManager *manager, QObject *parent = 0)
+        : QObject(parent), m_manager(manager)
+    {}
 
     virtual void shutdown() = 0;
     virtual void setToolTipExpression(const QPoint &mousePos, TextEditor::ITextEditor *editor, int cursorPos) = 0;
-    virtual bool startDebugger(const QSharedPointer<DebuggerStartParameters> &startParameters) = 0;
+    virtual void startDebugger(const DebuggerStartParametersPtr &startParameters) = 0;
     virtual void exitDebugger() = 0;
     virtual void detachDebugger() {}
     virtual void updateWatchData(const WatchData &data) = 0;
@@ -101,6 +114,22 @@ public:
     virtual void fetchDisassembler(DisassemblerViewAgent *, const StackFrame &) {}
     virtual void setRegisterValue(int regnr, const QString &value)
         { Q_UNUSED(regnr); Q_UNUSED(value); }
+
+    virtual void addOptionPages(QList<Core::IOptionsPage*> *) const {}
+    virtual bool isGdbEngine() const { return false; }
+    virtual bool checkConfiguration(int /* toolChain */, QString * /* errorMessage */, QString * /* settingsPage */ = 0) const { return true; }
+
+    virtual bool isSynchroneous() const { return false; }
+protected:
+    void showStatusMessage(const QString &msg, int timeout = -1);
+    DebuggerState state() const;
+    void setState(DebuggerState state, bool forced = false);
+    DebuggerManager *manager() const { return m_manager; }
+    DebuggerManager *m_manager;
+
+signals:
+    void startSuccessful();
+    void startFailed();
 };
 
 } // namespace Internal

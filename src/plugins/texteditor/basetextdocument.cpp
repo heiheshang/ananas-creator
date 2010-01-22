@@ -31,7 +31,6 @@
 #include "basetexteditor.h"
 #include "storagesettings.h"
 
-
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QTextStream>
@@ -94,7 +93,7 @@ bool BaseTextDocument::save(const QString &fileName)
 
     cursor.beginEditBlock();
     if (m_storageSettings.m_cleanWhitespace)
-        cleanWhitespace(cursor, m_storageSettings.m_inEntireDocument);
+        cleanWhitespace(cursor, m_storageSettings.m_cleanIndentation, m_storageSettings.m_inEntireDocument);
     if (m_storageSettings.m_addFinalNewLine)
         ensureFinalNewLine(cursor);
     cursor.endEditBlock();
@@ -223,15 +222,13 @@ bool BaseTextDocument::open(const QString &fileName)
         }
 
         m_document->setModified(false);
-        m_document->setUndoRedoEnabled(false);
         if (m_isBinaryData)
             m_document->setHtml(tr("<em>Binary data</em>"));
         else
             m_document->setPlainText(text);
-        m_document->setUndoRedoEnabled(true);
         TextEditDocumentLayout *documentLayout = qobject_cast<TextEditDocumentLayout*>(m_document->documentLayout());
         QTC_ASSERT(documentLayout, return true);
-        documentLayout->lastSaveRevision = 0;
+        documentLayout->lastSaveRevision = m_document->revision();
         m_document->setModified(false);
         emit titleChanged(title);
         emit changed();
@@ -276,17 +273,17 @@ void BaseTextDocument::modified(Core::IFile::ReloadBehavior *behavior)
 
 #ifndef TEXTEDITOR_STANDALONE
 
-    switch (Core::Utils::reloadPrompt(m_fileName, isModified(), QApplication::activeWindow())) {
-    case Core::Utils::ReloadCurrent:
+    switch (Utils::reloadPrompt(m_fileName, isModified(), QApplication::activeWindow())) {
+    case Utils::ReloadCurrent:
         reload();
         break;
-    case Core::Utils::ReloadAll:
+    case Utils::ReloadAll:
         reload();
         *behavior = Core::IFile::ReloadAll;
         break;
-    case Core::Utils::ReloadSkipCurrent:
+    case Utils::ReloadSkipCurrent:
         break;
-    case Core::Utils::ReloadNone:
+    case Utils::ReloadNone:
         *behavior = Core::IFile::ReloadNone;
         break;
     }
@@ -304,23 +301,28 @@ void BaseTextDocument::setSyntaxHighlighter(QSyntaxHighlighter *highlighter)
 
 
 
-void BaseTextDocument::cleanWhitespace()
+void BaseTextDocument::cleanWhitespace(const QTextCursor &cursor)
 {
-    QTextCursor cursor(m_document);
-    cursor.beginEditBlock();
-    cleanWhitespace(cursor, true);
-    if (m_storageSettings.m_addFinalNewLine)
-        ensureFinalNewLine(cursor);
-    cursor.endEditBlock();
+    bool hasSelection = cursor.hasSelection();
+    QTextCursor copyCursor = cursor;
+    copyCursor.beginEditBlock();
+    cleanWhitespace(copyCursor, true, true);
+    if (!hasSelection)
+        ensureFinalNewLine(copyCursor);
+    copyCursor.endEditBlock();
 }
 
-void BaseTextDocument::cleanWhitespace(QTextCursor& cursor, bool inEntireDocument)
+void BaseTextDocument::cleanWhitespace(QTextCursor& cursor, bool cleanIndentation, bool inEntireDocument)
 {
 
     TextEditDocumentLayout *documentLayout = qobject_cast<TextEditDocumentLayout*>(m_document->documentLayout());
 
-    QTextBlock block = m_document->firstBlock();
-    while (block.isValid()) {
+    QTextBlock block = m_document->findBlock(cursor.selectionStart());
+    QTextBlock end;
+    if (cursor.hasSelection())
+        end = m_document->findBlock(cursor.selectionEnd()-1).next();
+
+    while (block.isValid() && block != end) {
 
         if (inEntireDocument || block.revision() > documentLayout->lastSaveRevision) {
 
@@ -330,7 +332,7 @@ void BaseTextDocument::cleanWhitespace(QTextCursor& cursor, bool inEntireDocumen
                 cursor.movePosition(QTextCursor::PreviousCharacter, QTextCursor::KeepAnchor, trailing);
                 cursor.removeSelectedText();
             }
-            if (m_storageSettings.m_cleanIndentation && !m_tabSettings.isIndentationClean(blockText)) {
+            if (cleanIndentation && !m_tabSettings.isIndentationClean(blockText)) {
                 cursor.setPosition(block.position());
                 int firstNonSpace = m_tabSettings.firstNonSpace(blockText);
                 if (firstNonSpace == blockText.length()) {

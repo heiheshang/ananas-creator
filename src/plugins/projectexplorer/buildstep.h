@@ -31,7 +31,6 @@
 #define BUILDSTEP_H
 
 #include "buildparserinterface.h"
-#include "project.h"
 #include "projectexplorer_export.h"
 
 #include <QtGui/QWidget>
@@ -39,9 +38,8 @@
 
 namespace ProjectExplorer {
 
-namespace Internal {
+class Project;
 class BuildConfiguration;
-}
 
 /*
 // BuildSteps are the primary way plugin developers can customize
@@ -132,14 +130,14 @@ Q_SIGNALS:
     void addToOutputWindow(const QString &string);
 
 private:
-    QList<Internal::BuildConfiguration *> buildConfigurations();
+    QList<BuildConfiguration *> buildConfigurations();
     void addBuildConfiguration(const QString & name);
     void removeBuildConfiguration(const QString & name);
-    Internal::BuildConfiguration *getBuildConfiguration(const QString & name) const;
+    BuildConfiguration *getBuildConfiguration(const QString & name) const;
     void copyBuildConfiguration(const QString &source, const QString &dest);
 
-    QList<Internal::BuildConfiguration *> m_buildConfigurations;
-    Internal::BuildConfiguration *m_configuration;
+    QList<BuildConfiguration *> m_buildConfigurations;
+    BuildConfiguration *m_configuration;
     Project *m_project;
 };
 
@@ -171,9 +169,6 @@ public:
         :QWidget(0)
         {}
 
-    // This function iterates all parents and relayouts
-    // This is a hack to work around flickering
-    void fixupLayout(QWidget *widget);
     virtual QString displayName() const = 0;
 
     // This is called to set up the config widget before showing it

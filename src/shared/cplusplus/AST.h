@@ -53,8 +53,8 @@
 #include "ASTfwd.h"
 #include "MemoryPool.h"
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
+
+namespace CPlusPlus {
 
 template <typename _Tp>
 class List: public Managed
@@ -64,6 +64,7 @@ class List: public Managed
 
 public:
     List()
+        : value(_Tp()), next(0)
     { }
 
     _Tp value;
@@ -2994,6 +2995,7 @@ public:
     ObjCTypeNameAST *type_name;
     ObjCSelectorAST *selector;
     ObjCMessageArgumentDeclarationListAST *arguments;
+    unsigned dot_dot_dot_token;
     SpecifierAST *attributes;
 
 public: // annotations
@@ -3167,7 +3169,7 @@ protected:
     virtual void accept0(ASTVisitor *visitor);
 };
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // CPLUSPLUS_AST_H

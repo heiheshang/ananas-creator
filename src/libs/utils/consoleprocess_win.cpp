@@ -40,18 +40,18 @@
 
 #include <stdlib.h>
 
-using namespace Core::Utils;
+using namespace Utils;
 
 ConsoleProcess::ConsoleProcess(QObject *parent) :
     QObject(parent),
     m_mode(Run),
     m_appPid(0),
+    m_stubSocket(0),
+    m_tempFile(0),
     m_pid(0),
     m_hInferior(NULL),
-    m_tempFile(0),
-    m_stubSocket(0),
-    processFinishedNotifier(0),
-    inferiorFinishedNotifier(0)
+    inferiorFinishedNotifier(0),
+    processFinishedNotifier(0)
 {
     connect(&m_stubServer, SIGNAL(newConnection()), SLOT(stubConnectionAvailable()));
 }

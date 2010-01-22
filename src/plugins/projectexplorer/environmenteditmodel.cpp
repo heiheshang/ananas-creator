@@ -29,9 +29,18 @@
 
 #include "environmenteditmodel.h"
 
+#include <utils/detailswidget.h>
+
 #include <QtGui/QVBoxLayout>
 #include <QtGui/QHeaderView>
 #include <QtGui/QToolButton>
+#include <QtCore/QDebug>
+#include <QtGui/QWidget>
+#include <QtGui/QCheckBox>
+#include <QtGui/QTreeView>
+#include <QtGui/QPushButton>
+#include <QtGui/QLabel>
+#include <QtGui/QStackedWidget>
 
 using namespace ProjectExplorer;
 
@@ -225,15 +234,21 @@ int EnvironmentModel::findInResultInsertPosition(const QString &name) const
 bool EnvironmentModel::setData(const QModelIndex &index, const QVariant &value, int role)
 {
     if (role == Qt::EditRole && index.isValid()) {
+        // ignore changes to already set values:
+        if (data(index, role) == value)
+            return true;
+
         if (index.column() == 0) {
             //fail if a variable with the same name already exists
 #ifdef Q_OS_WIN
-            if (findInChanges(value.toString().toUpper()) != -1)
-                return false;
+            const QString &newName = value.toString().toUpper();
 #else
-            if (findInChanges(value.toString()) != -1)
-                return false;
+            const QString &newName = value.toString();
 #endif
+
+            if (findInChanges(newName) != -1)
+                return false;
+
             EnvironmentItem old("", "");
             if (m_mergedEnvironments) {
                 int pos = findInChanges(indexToVariable(index));
@@ -247,11 +262,7 @@ bool EnvironmentModel::setData(const QModelIndex &index, const QVariant &value, 
             } else {
                 old = m_items.at(index.row());
             }
-#ifdef Q_OS_WIN
-            const QString &newName = value.toString().toUpper();
-#else
-            const QString &newName = value.toString();
-#endif
+
             if (changes(old.name))
                 removeVariable(old.name);
             old.name = newName;
@@ -433,28 +444,15 @@ EnvironmentWidget::EnvironmentWidget(QWidget *parent, QWidget *additionalDetails
             this, SIGNAL(userChangesUpdated()));
 
     QVBoxLayout *vbox = new QVBoxLayout(this);
-    vbox->setContentsMargins(20, 0, 0, 0);
+    vbox->setContentsMargins(0, 0, 0, 0);
 
-    m_summaryText = new QLabel(this);
-    m_summaryText->setText("");
+    m_detailsContainer = new Utils::DetailsWidget(this);
 
-    QToolButton *detailsButton = new QToolButton(this);
-    detailsButton->setText(tr("Details"));
+    QWidget *details = new QWidget(m_detailsContainer);
+    m_detailsContainer->setWidget(details);
+    details->setVisible(false);
 
-    connect(detailsButton, SIGNAL(clicked()),
-            this, SLOT(toggleDetails()));
-
-    QHBoxLayout *hbox = new QHBoxLayout();
-    hbox->addWidget(m_summaryText);
-    hbox->addWidget(detailsButton);
-    hbox->setMargin(0);
-
-    vbox->addLayout(hbox);
-
-    m_details = new QWidget(this);
-    m_details->setVisible(false);
-
-    QVBoxLayout *vbox2 = new QVBoxLayout(m_details);
+    QVBoxLayout *vbox2 = new QVBoxLayout(details);
     vbox2->setMargin(0);
 
     if (additionalDetailsWidget)
@@ -495,7 +493,7 @@ EnvironmentWidget::EnvironmentWidget(QWidget *parent, QWidget *additionalDetails
     horizontalLayout->addLayout(buttonLayout);
     vbox2->addLayout(horizontalLayout);
 
-    vbox->addWidget(m_details);
+    vbox->addWidget(m_detailsContainer);
     
     connect(m_model, SIGNAL(dataChanged(const QModelIndex&, const QModelIndex&)),
             this, SLOT(updateButtons()));
@@ -518,27 +516,6 @@ EnvironmentWidget::~EnvironmentWidget()
 {
     delete m_model;
     m_model = 0;
-}
-
-bool EnvironmentWidget::detailsVisible() const
-{
-    return m_details->isVisible();
-}
-
-void EnvironmentWidget::setDetailsVisible(bool b)
-{
-    m_details->setVisible(b);
-}
-
-void EnvironmentWidget::toggleDetails()
-{
-    m_details->setVisible(!m_details->isVisible());
-    emit detailsVisibleChanged(m_details->isVisible());
-}
-
-QWidget *EnvironmentWidget::detailsWidget() const
-{
-    return m_details;
 }
 
 void EnvironmentWidget::setBaseEnvironment(const ProjectExplorer::Environment &env)
@@ -583,7 +560,7 @@ void EnvironmentWidget::updateSummaryText()
     }
     if (text.isEmpty())
         text = tr("Summary: No changes to Environment");
-    m_summaryText->setText(text);
+    m_detailsContainer->setSummaryText(text);
 }
 
 void EnvironmentWidget::updateButtons()

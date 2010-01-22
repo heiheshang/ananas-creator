@@ -29,7 +29,10 @@
 
 #include "watchutils.h"
 #include "watchhandler.h"
+#include "gdb/gdbmi.h"
 #include <utils/qtcassert.h>
+
+#include <coreplugin/ifile.h>
 
 #include <texteditor/basetexteditor.h>
 #include <texteditor/basetextmark.h>
@@ -40,6 +43,9 @@
 #include <cpptools/cpptoolsconstants.h>
 
 #include <cplusplus/ExpressionUnderCursor.h>
+#include <cplusplus/Overview.h>
+#include <Symbols.h>
+#include <Scope.h>
 
 #include <extensionsystem/pluginmanager.h>
 
@@ -48,6 +54,7 @@
 #include <QtCore/QStringList>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QTextStream>
+#include <QtCore/QHash>
 
 #include <QtGui/QTextCursor>
 #include <QtGui/QPlainTextEdit>
@@ -56,6 +63,78 @@
 #include <ctype.h>
 
 enum { debug = 0 };
+
+// Debug helpers for code model. @todo: Move to some CppTools library?
+namespace CPlusPlus {
+
+static void debugCppSymbolRecursion(QTextStream &str, const Overview &o,
+                                    const Symbol &s, bool doRecurse = true,
+                                    int recursion = 0)
+{
+    for (int i = 0; i < recursion; i++)
+        str << "  ";
+    str << "Symbol: " << o.prettyName(s.name()) << " at line " << s.line();
+    if (s.isFunction())
+        str << " function";
+    if (s.isClass())
+        str << " class";
+    if (s.isDeclaration())
+        str << " declaration";
+    if (s.isBlock())
+        str << " block";
+    if (doRecurse && s.isScopedSymbol()) {
+        const ScopedSymbol *scoped = s.asScopedSymbol();
+        const int size =  scoped->memberCount();
+        str << " scoped symbol of " << size << '\n';
+        for (int m = 0; m < size; m++)
+            debugCppSymbolRecursion(str, o, *scoped->memberAt(m), true, recursion + 1);
+    } else {
+        str << '\n';
+    }
+}
+
+QDebug operator<<(QDebug d, const Symbol &s)
+{
+    QString output;
+    CPlusPlus::Overview o;
+    QTextStream str(&output);
+    debugCppSymbolRecursion(str, o, s, true, 0);
+    d.nospace() << output;
+    return d;
+}
+
+QDebug operator<<(QDebug d, const Scope &scope)
+{
+    QString output;
+    Overview o;
+    QTextStream str(&output);
+    const int size =  scope.symbolCount();
+    str << "Scope of " << size;
+    if (scope.isNamespaceScope())
+        str << " namespace";
+    if (scope.isClassScope())
+        str << " class";
+    if (scope.isEnumScope())
+        str << " enum";
+    if (scope.isBlockScope())
+        str << " block";
+    if (scope.isFunctionScope())
+        str << " function";
+    if (scope.isPrototypeScope())
+        str << " prototype";
+    if (const Symbol *owner = scope.owner()) {
+        str << " owner: ";
+        debugCppSymbolRecursion(str, o, *owner, false, 0);
+    } else {
+        str << " 0-owner\n";
+    }
+    for (int s = 0; s < size; s++)
+        debugCppSymbolRecursion(str, o, *scope.symbolAt(s), true, 2);
+    d.nospace() << output;
+    return d;
+}
+} // namespace CPlusPlus
+
 namespace Debugger {
 namespace Internal {
 
@@ -214,6 +293,135 @@ QString stripPointerType(QString type)
     return type;
 }
 
+/* getUninitializedVariables(): Get variables that are not initialized
+ * at a certain line of a function from the code model to be able to
+ * indicate them as not in scope in the locals view.
+ * Find document + function in the code model, do a double check and
+ * collect declarative symbols that are in the function past or on
+ * the current line. blockRecursion() recurses up the scopes
+ * and collect symbols declared past or on the current line.
+ * Recursion goes up from the innermost scope, keeping a map
+ * of occurrences seen, to be able to derive the names of
+ * shadowed variables as the debugger sees them:
+\code
+int x;             // Occurrence (1), should be reported as "x <shadowed 1>"
+if (true) {
+   int x = 5; (2)  // Occurrence (2), should be reported as "x"
+}
+\endcode
+ */
+
+typedef QHash<QString, int> SeenHash;
+
+static void blockRecursion(const CPlusPlus::Overview &overview,
+                           const CPlusPlus::Scope *scope,
+                           unsigned line,
+                           QStringList *uninitializedVariables,
+                           SeenHash *seenHash,
+                           int level = 0)
+{
+    const int size = scope->symbolCount();
+    for (int s = 0; s < size; s++){
+        const CPlusPlus::Symbol *symbol = scope->symbolAt(s);
+        if (symbol->isDeclaration()) {
+            // Find out about shadowed symbols by bookkeeping
+            // the already seen occurrences in a hash.
+            const QString name = overview.prettyName(symbol->name());
+            SeenHash::iterator it = seenHash->find(name);
+            if (it == seenHash->end()) {
+                it = seenHash->insert(name, 0);
+            } else {
+                ++(it.value());
+            }            
+            // Is the declaration on or past the current line, that is,
+            // the variable not initialized.
+            if (symbol->line() >= line)
+                uninitializedVariables->push_back(WatchData::shadowedName(name, it.value()));
+        }
+    }
+    // Next block scope.
+    if (const CPlusPlus::Scope *enclosingScope = scope->enclosingBlockScope())
+        blockRecursion(overview, enclosingScope, line, uninitializedVariables, seenHash, level + 1);
+}
+
+// Inline helper with integer error return codes.
+static inline
+int getUninitializedVariablesI(const CPlusPlus::Snapshot &snapshot,
+                               const QString &functionName,
+                               const QString &file,
+                               int line,
+                               QStringList *uninitializedVariables)
+{
+    uninitializedVariables->clear();
+    // Find document
+    if (snapshot.empty() || functionName.isEmpty() || file.isEmpty() || line < 1)
+        return 1;
+    const CPlusPlus::Snapshot::ConstIterator docIt = snapshot.constFind(file);
+    if (docIt == snapshot.constEnd())
+        return 2;
+    const CPlusPlus::Document::Ptr doc = docIt.value();
+    // Look at symbol at line and find its function. Either it is the
+    // function itself or some expression/variable.
+    const CPlusPlus::Symbol *symbolAtLine = doc->findSymbolAt(line, 0);
+    if (!symbolAtLine)
+        return 4;
+    // First figure out the function to do a safety name check
+    // and the innermost scope at cursor position
+    const CPlusPlus::Function *function = 0;
+    const CPlusPlus::Scope *innerMostScope = 0;
+    if (symbolAtLine->isFunction()) {
+        function = symbolAtLine->asFunction();
+        if (function->memberCount() == 1) // Skip over function block
+            if (CPlusPlus::Block *block = function->memberAt(0)->asBlock())
+                innerMostScope = block->members();
+    } else {
+        if (const CPlusPlus::Scope *functionScope = symbolAtLine->enclosingFunctionScope()) {
+            function = functionScope->owner()->asFunction();
+            innerMostScope = symbolAtLine->isBlock() ?
+                             symbolAtLine->asBlock()->members() :
+                             symbolAtLine->enclosingBlockScope();
+        }
+    }
+    if (!function || !innerMostScope)
+        return 7;
+    // Compare function names with a bit off fuzz,
+    // skipping modules from a CDB symbol "lib!foo" or namespaces
+    // that the code model does not show at this point
+    CPlusPlus::Overview overview;
+    const QString name = overview.prettyName(function->name());
+    if (!functionName.endsWith(name))
+        return 11;
+    if (functionName.size() > name.size()) {
+        const char previousChar = functionName.at(functionName.size() - name.size() - 1).toLatin1();
+        if (previousChar != ':' && previousChar != '!' )
+            return 11;
+    }
+    // Starting from the innermost block scope, collect declarations.
+    SeenHash seenHash;
+    blockRecursion(overview, innerMostScope, line, uninitializedVariables, &seenHash);
+    return 0;
+}
+
+bool getUninitializedVariables(const CPlusPlus::Snapshot &snapshot,
+                               const QString &function,
+                               const QString &file,
+                               int line,
+                               QStringList *uninitializedVariables)
+{
+    const int rc = getUninitializedVariablesI(snapshot, function, file, line, uninitializedVariables);
+    if (debug) {
+        QString msg;
+        QTextStream str(&msg);
+        str << "getUninitializedVariables() " << function << ' ' << file << ':' << line
+                << " returns (int) " << rc << " '"
+                << uninitializedVariables->join(QString(QLatin1Char(','))) << '\'';
+        if (rc)
+            str << " of " << snapshot.keys().size() << " documents";
+        qDebug() << msg;
+    }
+    return rc == 0;
+}
+
 QString gdbQuoteTypes(const QString &type)
 {
     // gdb does not understand sizeof(Core::IFile*).
@@ -333,9 +541,20 @@ bool isIntType(const QString &type)
         << QLatin1String("char") << QLatin1String("int") << QLatin1String("short")
         << QLatin1String("long") << QLatin1String("bool")
         << QLatin1String("signed char") << QLatin1String("unsigned")
-        << QLatin1String("unsigned char")
-        << QLatin1String("unsigned int") << QLatin1String("unsigned long")
-        << QLatin1String("long long")  << QLatin1String("unsigned long long");
+        << QLatin1String("unsigned char") << QLatin1String("unsigned long")
+        << QLatin1String("long long")  << QLatin1String("unsigned long long")
+        << QLatin1String("qint16") << QLatin1String("quint16")
+        << QLatin1String("qint32") << QLatin1String("quint32")
+        << QLatin1String("qint64") << QLatin1String("quint64");
+    return type.endsWith(QLatin1String(" int"))
+            || type.endsWith(QLatin1String(" int64"))
+            || types.contains(type);
+}
+
+bool isSymbianIntType(const QString &type)
+{
+    static const QStringList types = QStringList()
+        << QLatin1String("TInt") << QLatin1String("TBool");
     return types.contains(type);
 }
 
@@ -357,11 +576,11 @@ GuessChildrenResult guessChildren(const QString &type)
     return HasPossiblyChildren;
 }
 
-QString sizeofTypeExpression(const QString &type)
+QString sizeofTypeExpression(const QString &type, QtDumperHelper::Debugger debugger)
 {
     if (type.endsWith(QLatin1Char('*')))
         return QLatin1String("sizeof(void*)");
-    if (type.endsWith(QLatin1Char('>')))
+    if (debugger != QtDumperHelper::GdbDebugger || type.endsWith(QLatin1Char('>')))
         return QLatin1String("sizeof(") + type + QLatin1Char(')');
     return QLatin1String("sizeof(") + gdbQuoteTypes(type) + QLatin1Char(')');
 }
@@ -400,7 +619,8 @@ QString decodeData(const QByteArray &ba, int encoding)
             const QChar doubleQuote(QLatin1Char('"'));
             const QByteArray decodedBa = QByteArray::fromBase64(ba);
             QString rc = doubleQuote;
-            rc += QString::fromUtf16(reinterpret_cast<const ushort *>(decodedBa.data()), decodedBa.size() / 2);
+            rc += QString::fromUtf16(reinterpret_cast<const ushort *>
+                (decodedBa.data()), decodedBa.size() / 2);
             rc += doubleQuote;
             return rc;
         }
@@ -408,18 +628,34 @@ QString decodeData(const QByteArray &ba, int encoding)
             const QByteArray decodedBa = QByteArray::fromBase64(ba);
             const QChar doubleQuote(QLatin1Char('"'));
             QString rc = doubleQuote;
-            rc += QString::fromUcs4(reinterpret_cast<const uint *>(decodedBa.data()), decodedBa.size() / 4);
+            rc += QString::fromUcs4(reinterpret_cast<const uint *>
+                (decodedBa.data()), decodedBa.size() / 4);
             rc += doubleQuote;
             return rc;
         }
         case 4: { //  base64 encoded 16 bit data, without quotes (see 2)
             const QByteArray decodedBa = QByteArray::fromBase64(ba);
-            return QString::fromUtf16(reinterpret_cast<const ushort *>(decodedBa.data()), decodedBa.size() / 2);
+            return QString::fromUtf16(reinterpret_cast<const ushort *>
+                (decodedBa.data()), decodedBa.size() / 2);
         }
         case 5: { //  base64 encoded 8 bit data, without quotes (see 1)
             return quoteUnprintableLatin1(QByteArray::fromBase64(ba));
         }
+        case 6: { //  %02x encoded 8 bit data
+            const QChar doubleQuote(QLatin1Char('"'));
+            const QByteArray decodedBa = QByteArray::fromHex(ba);
+            //qDebug() << quoteUnprintableLatin1(decodedBa) << "\n\n";
+            return doubleQuote + QString::fromLatin1(decodedBa) + doubleQuote;
+        }
+        case 7: { //  %04x encoded 16 bit data
+            const QChar doubleQuote(QLatin1Char('"'));
+            const QByteArray decodedBa = QByteArray::fromHex(ba);
+            //qDebug() << quoteUnprintableLatin1(decodedBa) << "\n\n";
+            return doubleQuote + QString::fromUtf16(reinterpret_cast<const ushort *>
+                (decodedBa.data()), decodedBa.size() / 2) + doubleQuote;
+        }
     }
+    qDebug() << "ENCODING ERROR: " << encoding;
     return QCoreApplication::translate("Debugger", "<Encoding error>");
 }
 
@@ -485,170 +721,6 @@ QString cppExpressionAt(TextEditor::ITextEditor *editor, int pos,
     return expr;
 }
 
-// --------------- QtDumperResult
-
-QtDumperResult::Child::Child() :
-   keyEncoded(0),
-   valueEncoded(0),
-   childCount(-1),
-   valuedisabled(false),
-   valueEncountered(false)
-{
-}
-
-QtDumperResult::QtDumperResult() :
-    valueEncountered(false),
-    valueEncoded(0),
-    valuedisabled(false),
-    childCount(-1),
-    internal(false),
-    childChildCount(-1)
-{
-}
-
-void QtDumperResult::clear()
-{
-    iname.clear();
-    value.clear();
-    address.clear();
-    addressInfo.clear();
-    type.clear();
-    extra.clear();
-    displayedType.clear();
-    valueEncoded = 0;
-    valueEncountered = valuedisabled = false;
-    childCount = -1;
-    internal = false;
-    childType.clear();
-    children.clear();
-    childChildCount = -1;
-}
-
-QList<WatchData> QtDumperResult::toWatchData(int source) const
-{
-    QList<WatchData> rc;
-    rc.push_back(WatchData());
-    WatchData &root = rc.front();
-    root.iname = iname;
-    const QChar dot = QLatin1Char('.');
-    const int lastDotIndex = root.iname.lastIndexOf(dot);
-    root.exp = root.name = lastDotIndex == -1 ? iname : iname.mid(lastDotIndex + 1);
-    if (valueEncountered) {
-        root.setValue(decodeData(value, valueEncoded));
-        root.valuedisabled = valuedisabled;
-    }
-    root.setType(type);
-    if (!displayedType.isEmpty())
-        root.displayedType = displayedType;
-    root.setAddress(address);
-    root.source = source;
-    if (childCount >= 0)
-        root.setHasChildren(childCount > 0);
-    // Children. Sanity check after parsing sets childcount to list size
-    // if list is not empty
-    if (children.empty()) {
-        if (childCount > 0)
-            root.setChildrenNeeded();
-    } else {
-        root.setChildrenUnneeded();
-        for (int c = 0; c < childCount; c++) {
-            const Child &dchild = children.at(c);
-            rc.push_back(WatchData());
-            WatchData &wchild = rc.back();
-            wchild.source = source;
-            wchild.iname = iname;
-            // Name can be empty for array-like things
-            const QString iname = dchild.name.isEmpty() ? QString::number(c) : dchild.name;
-            // Use key entry as name (which is used for map nodes)
-            if (dchild.key.isEmpty()) {
-                wchild.name = iname;
-            } else {
-                // Do not use map keys as iname since they might contain quotes.
-                wchild.name = decodeData(dchild.key, dchild.keyEncoded);
-                if (wchild.name.size() > 13) {
-                    wchild.name.truncate(12);
-                    wchild.name += QLatin1String("...");
-                }
-            }
-            // Append iname to total iname.
-            wchild.iname += dot;
-            wchild.iname += iname;
-            wchild.exp = dchild.exp;
-            if (dchild.valueEncountered) {
-                wchild.valuedisabled = dchild.valuedisabled;
-                wchild.setValue(decodeData(dchild.value, dchild.valueEncoded));
-            }
-            wchild.setAddress(dchild.address);
-            // The type setter sets hasChildren for known types.
-            wchild.setType(dchild.type.isEmpty() ? childType : dchild.type);
-            if (!dchild.displayedType.isEmpty())
-                wchild.displayedType = dchild.displayedType;
-            // Child overrides.
-            const int effectiveChildChildCount = dchild.childCount == -1 ?  childChildCount : dchild.childCount;
-            switch (effectiveChildChildCount) {
-            case -1: // In this case, trust WatchData::setType().
-                break;
-            case 0:
-                wchild.setHasChildren(false);
-                break;
-            default:
-                wchild.setHasChildren(true);
-                wchild.setChildrenNeeded();
-                break;
-            }
-        }
-    }
-    if (debug) {
-        QDebug nospace = qDebug().nospace();
-        nospace << "QtDumperResult::toWatchData" << *this << '\n';
-        foreach(const WatchData &wd, rc)
-            nospace << "  " << wd.toString() << '\n';
-    }
-
-    return rc;
-}
-
-QDebug operator<<(QDebug in, const QtDumperResult &d)
-{
-    QDebug nospace = in.nospace();
-    nospace << " iname=" << d.iname << " type=" << d.type << " displayed=" << d.displayedType
-            << " address=" << d.address;
-    if (!d.addressInfo.isEmpty())
-        nospace << " addressInfo=" << d.addressInfo;
-    if (d.valueEncountered) {
-        nospace << " encoded=" << d.valueEncoded
-                << " value="  << d.value
-                << " disabled=" << d.valuedisabled;
-    } else {
-        nospace  << " <no value>";
-    }
-    nospace << " childnumchild=" << d.childChildCount
-            << " internal=" << d.internal
-            << " extra='" << d.extra << "'\n";
-
-    const int realChildCount = d.children.size();
-    if (d.childCount || realChildCount) {
-        nospace << "childCount=" << d.childCount << '/' << realChildCount
-                << " childType=" << d.childType << '\n';
-        for (int i = 0; i < realChildCount; i++) {
-            const QtDumperResult::Child &c = d.children.at(i);
-            nospace << "   #" << i << " addr=" << c.address
-                    << " disabled=" << c.valuedisabled
-                    << " type=" << c.type << " exp=" << c.exp
-                    << " name=" << c.name;
-            if (!c.key.isEmpty())
-                nospace << " keyencoded=" << c.keyEncoded << " key=" << c.key;
-            if (c.valueEncountered) {
-                nospace << " valueencoded=" << c.valueEncoded << " value=" << c.value;
-            } else {
-                nospace  << " <no value>";
-            }
-            nospace  << "childcount=" << c.childCount << '\n';
-        }
-    }
-    return in;
-}
-
 // ----------------- QtDumperHelper::TypeData
 QtDumperHelper::TypeData::TypeData() :
     type(UnknownType),
@@ -688,7 +760,7 @@ void QtDumperHelper::clear()
 QString QtDumperHelper::msgDumperOutdated(double requiredVersion, double currentVersion)
 {
     return QCoreApplication::translate("QtDumperHelper",
-                                       "Found a too-old version of the debugging helper library (%1); version %2 is required.").
+                                       "Found an outdated version of the debugging helper library (%1); version %2 is required.").
                                        arg(currentVersion).arg(requiredVersion);
 }
 
@@ -715,8 +787,12 @@ QString QtDumperHelper::toString(bool debug) const
         str << "\nSize cache: ";
         const SizeCache::const_iterator scend = m_sizeCache.constEnd();
         for (SizeCache::const_iterator it = m_sizeCache.constBegin(); it != scend; ++it) {
-            str << ' ' << it.key() << '=' << it.value();
+            str << ' ' << it.key() << '=' << it.value() << '\n';
         }
+        str << "\nExpression cache: (" << m_expressionCache.size() << ")\n";
+        const QMap<QString, QString>::const_iterator excend = m_expressionCache.constEnd();
+        for (QMap<QString, QString>::const_iterator it = m_expressionCache.constBegin(); it != excend; ++it)
+            str << "    " << it.key() << ' ' << it.value() << '\n';
         return rc;
     }
     const QString nameSpace = m_qtNamespace.isEmpty() ? QCoreApplication::translate("QtDumperHelper", "<none>") : m_qtNamespace;
@@ -739,11 +815,6 @@ int QtDumperHelper::qtVersion() const
 QString QtDumperHelper::qtNamespace() const
 {
     return m_qtNamespace;
-}
-
-void QtDumperHelper::setQtNamespace(const QString &qtNamespace)
-{
-    m_qtNamespace = qtNamespace;
 }
 
 int QtDumperHelper::typeCount() const
@@ -785,43 +856,27 @@ QtDumperHelper::Type QtDumperHelper::specialType(QString s)
     } else {
         s = s.mid(namespaceIndex + 2);
     }
-    if (s == QLatin1String("QObject"))
-        return QObjectType;
-    if (s == QLatin1String("QWidget"))
-        return QWidgetType;
-    if (s == QLatin1String("QObjectSlot"))
-        return QObjectSlotType;
-    if (s == QLatin1String("QObjectSignal"))
-        return QObjectSignalType;
-    if (s == QLatin1String("QVector"))
-        return QVectorType;
     if (s == QLatin1String("QAbstractItem"))
         return QAbstractItemType;
     if (s == QLatin1String("QMap"))
         return QMapType;
-    if (s == QLatin1String("QMultiMap"))
-        return QMultiMapType;
     if (s == QLatin1String("QMapNode"))
         return QMapNodeType;
+    if (s == QLatin1String("QMultiMap"))
+        return QMultiMapType;
+    if (s == QLatin1String("QObject"))
+        return QObjectType;
+    if (s == QLatin1String("QObjectSignal"))
+        return QObjectSignalType;
+    if (s == QLatin1String("QObjectSlot"))
+        return QObjectSlotType;
+    if (s == QLatin1String("QStack"))
+        return QStackType;
+    if (s == QLatin1String("QVector"))
+        return QVectorType;
+    if (s == QLatin1String("QWidget"))
+        return QWidgetType;
     return UnknownType;
-}
-
-QtDumperHelper::ExpressionRequirement QtDumperHelper::expressionRequirements(Type t)
-{
-
-    switch (t) {
-    case QAbstractItemType:
-        return NeedsComplexExpression;
-    case QMapType:
-    case QMultiMapType:
-    case QMapNodeType:
-    case StdMapType:
-        return NeedsCachedExpression;
-    default:
-        // QObjectSlotType, QObjectSignalType need the signal number, which is numeric
-        break;
-    }
-    return NeedsNoExpression;
 }
 
 QString QtDumperHelper::qtVersionString() const
@@ -832,339 +887,15 @@ QString QtDumperHelper::qtVersionString() const
     return rc;
 }
 
-void QtDumperHelper::setQtVersion(int v)
-{
-    m_qtVersion = v;
-}
-
-void QtDumperHelper::setQtVersion(const QString &v)
-{
-    m_qtVersion = 0;
-    const QStringList vl = v.split(QLatin1Char('.'));
-    if (vl.size() == 3) {
-        const int major = vl.at(0).toInt();
-        const int minor = vl.at(1).toInt();
-        const int patch = vl.at(2).toInt();
-        m_qtVersion = (major << 16) | (minor << 8) | patch;
-    }
-}
-
 // Parse a list of types.
-void QtDumperHelper::parseQueryTypes(const QStringList &l, Debugger debugger)
+void QtDumperHelper::parseQueryTypes(const QStringList &l, Debugger  /* debugger */)
 {
     m_nameTypeMap.clear();
     const int count = l.count();
     for (int i = 0; i < count; i++) {
         const Type t = specialType(l.at(i));
-        if (t != UnknownType) {
-            // Exclude types that require expression syntax for CDB
-            if (debugger == GdbDebugger || expressionRequirements(t) != NeedsComplexExpression)
-                m_nameTypeMap.insert(l.at(i), t);
-        } else {
-            m_nameTypeMap.insert(l.at(i), SupportedType);
-        }
+        m_nameTypeMap.insert(l.at(i), t != UnknownType ? t : SupportedType);
     }
-}
-
-/*  A parse for dumper output:
- * "iname="local.sl",addr="0x0012BA84",value="<3 items>",valuedisabled="true",
- * numchild="3",childtype="QString",childnumchild="0",children=[{name="0",value="<binhex>",
- * valueencoded="2"},{name="1",value="dAB3AG8A",valueencoded="2"},{name="2",
- * value="dABoAHIAZQBlAA==",valueencoded="2"}]"
- * Default implementation can be used for debugging purposes. */
-
-class DumperParser
-{
-public:
-    explicit DumperParser(const char *s) : m_s(s) {}
-    bool run();
-    virtual ~DumperParser() {}
-
-protected:
-    // handle 'key="value"'
-    virtual bool handleKeyword(const char *k, int size);
-    virtual bool handleListStart();
-    virtual bool handleListEnd();
-    virtual bool handleHashStart();
-    virtual bool handleHashEnd();
-    virtual bool handleValue(const char *k, int size);
-
-private:
-    bool parseHash(int level, const char *&pos);
-    bool parseValue(int level, const char *&pos);
-    bool parseStringValue(const char *&ptr, int &size, const char *&pos) const;
-
-    const char *m_s;
-};
-
-// get a string value with pos at the opening double quote
-bool DumperParser::parseStringValue(const char *&ptr, int &size, const char *&pos) const
-{
-    pos++;
-    const char *endValuePtr = strchr(pos, '"');
-    if (!endValuePtr)
-        return false;
-    size = endValuePtr - pos;
-    ptr = pos;
-    pos = endValuePtr + 1;
-    return true;
-}
-
-bool DumperParser::run()
-{
-    const char *ptr = m_s;
-    const bool rc = parseHash(0, ptr);
-    if (debug > 1)
-        qDebug() << Q_FUNC_INFO << '\n' << m_s << rc;
-    return rc;
-}
-
-// Parse a non-empty hash with pos at the first keyword.
-// Curly braces are present at level 0 only.
-// '{a="X", b="X"}'
-bool DumperParser::parseHash(int level, const char *&pos)
-{
-    while (true) {
-        switch (*pos) {
-        case '\0': // EOS is acceptable at level 0 only
-            return level == 0;
-        case '}':
-            pos++;
-            return true;
-        default:
-            break;
-        }
-        const char *equalsPtr = strchr(pos, '=');
-        if (!equalsPtr)
-            return false;
-        const int keywordLen = equalsPtr - pos;
-        if (!handleKeyword(pos, keywordLen))
-            return false;
-        pos = equalsPtr + 1;
-        if (!*pos)
-            return false;
-        if (!parseValue(level + 1, pos))
-            return false;
-        if (*pos == ',')
-            pos++;
-    }
-    return false;
-}
-
-bool DumperParser::parseValue(int level, const char *&pos)
-{
-    // Simple string literal
-    switch (*pos) {
-    case '"': {
-            const char *valuePtr;
-            int valueSize;
-            return parseStringValue(valuePtr, valueSize, pos) && handleValue(valuePtr, valueSize);
-        }
-        // A List. Note that it has a trailing comma '["a",]'
-    case '[': {
-            if (!handleListStart())
-                return false;
-            pos++;
-            while (true) {
-                switch (*pos) {
-                case ']':
-                    pos++;
-                    return handleListEnd();
-                case '\0':
-                    return false;
-                default:
-                    break;
-                }
-                if (!parseValue(level + 1, pos))
-                    return false;
-                if (*pos == ',')
-                    pos++;
-            }
-        }
-        return false;
-        // A hash '{a="b",b="c"}'
-    case '{': {
-            if (!handleHashStart())
-                return false;
-            pos++;
-            if (!parseHash(level + 1, pos))
-                return false;
-            return handleHashEnd();
-        }
-        return false;
-    }
-    return false;
-}
-
-bool DumperParser::handleKeyword(const char *k, int size)
-{
-    if (debug > 1)
-        qDebug() << Q_FUNC_INFO << '\n' << QByteArray(k, size);
-    return true;
-}
-
-bool DumperParser::handleListStart()
-{
-    if (debug > 1)
-        qDebug() << Q_FUNC_INFO;
-    return true;
-}
-
-bool DumperParser::handleListEnd()
-{
-    if (debug > 1)
-        qDebug() << Q_FUNC_INFO;
-    return true;
-}
-
-bool DumperParser::handleHashStart()
-{
-    if (debug > 1)
-        qDebug() << Q_FUNC_INFO;
-    return true;
-}
-
-bool DumperParser::handleHashEnd()
-{
-    if (debug > 1)
-        qDebug() << Q_FUNC_INFO;
-
-    return true;
-}
-
-bool DumperParser::handleValue(const char *k, int size)
-{
-    if (debug > 1)
-        qDebug() << Q_FUNC_INFO << '\n' << QByteArray(k, size);
-    return true;
-}
-
-/* Parse 'query' (1) protocol response of the custom dumpers:
- * "'dumpers=["QByteArray","QDateTime",..."std::basic_string",],
- * qtversion=["4","5","1"],namespace="""' */
-
-class QueryDumperParser : public DumperParser {
-public:
-    typedef QPair<QString, int> SizeEntry;
-    explicit QueryDumperParser(const char *s);
-
-    struct Data {
-        QString qtNameSpace;
-        QString qtVersion;
-        QString dumperVersion;
-        QStringList types;
-        QList<SizeEntry> sizes;
-        QMap<QString, QString> expressionCache;
-    };
-
-    inline Data data() const { return m_data; }
-
-protected:
-    virtual bool handleKeyword(const char *k, int size);
-    virtual bool handleListStart();
-    virtual bool handleListEnd();
-    virtual bool handleHashEnd();
-    virtual bool handleValue(const char *k, int size);
-
-private:
-    enum Mode { None, ExpectingDumpers, ExpectingQtVersion, ExpectingDumperVersion,
-                ExpectingNameSpace, ExpectingSizes, ExpectingExpressionCache };
-    Mode m_mode;
-    Data m_data;
-    QString m_lastSizeType;
-    QString m_lastExpression;
-};
-
-QueryDumperParser::QueryDumperParser(const char *s) :
-    DumperParser(s),
-    m_mode(None)
-{
-}
-
-bool QueryDumperParser::handleKeyword(const char *k, int size)
-{
-    switch (m_mode) {
-    case ExpectingSizes:
-        m_lastSizeType = QString::fromLatin1(k, size);
-        return true;
-    case ExpectingExpressionCache:
-        m_lastExpression = QString::fromLatin1(k, size);
-        return true;
-    default:
-       break;
-    }
-    if (!qstrncmp(k, "dumpers", size)) {
-        m_mode = ExpectingDumpers;
-        return true;
-    }
-    if (!qstrncmp(k, "qtversion", size)) {
-        m_mode = ExpectingQtVersion;
-        return true;
-    }
-    if (!qstrncmp(k, "dumperversion", size)) {
-        m_mode = ExpectingDumperVersion;
-        return true;
-    }
-    if (!qstrncmp(k, "namespace", size)) {
-        m_mode = ExpectingNameSpace;
-        return true;
-    }
-    if (!qstrncmp(k, "sizes", size)) {
-        m_mode = ExpectingSizes;
-        return true;
-    }
-    if (!qstrncmp(k, "expressions", size)) {
-        m_mode = ExpectingExpressionCache;
-        return true;
-    }
-    qWarning("%s Unexpected keyword %s.\n", Q_FUNC_INFO, QByteArray(k, size).constData());
-    return false;
-}
-
-bool QueryDumperParser::handleListStart()
-{
-    return m_mode == ExpectingDumpers || m_mode == ExpectingQtVersion;
-}
-
-bool QueryDumperParser::handleListEnd()
-{
-    m_mode = None;
-    return true;
-}
-
-bool QueryDumperParser::handleHashEnd()
-{
-    m_mode = None; // Size hash
-    return true;
-}
-
-bool QueryDumperParser::handleValue(const char *k, int size)
-{
-    switch (m_mode) {
-    case None:
-        return false;
-    case ExpectingDumpers:
-        m_data.types.push_back(QString::fromLatin1(k, size));
-        break;
-    case ExpectingNameSpace:
-        m_data.qtNameSpace = QString::fromLatin1(k, size);
-        break;
-    case ExpectingDumperVersion:
-        m_data.dumperVersion = QString::fromLatin1(k, size);
-        break;
-    case ExpectingQtVersion: // ["4","1","5"]
-        if (!m_data.qtVersion.isEmpty())
-            m_data.qtVersion += QLatin1Char('.');
-        m_data.qtVersion += QString::fromLatin1(k, size);
-        break;
-    case ExpectingSizes:
-        m_data.sizes.push_back(SizeEntry(m_lastSizeType, QString::fromLatin1(k, size).toInt()));
-        break;
-    case ExpectingExpressionCache:
-        m_data.expressionCache.insert(m_lastExpression, QString::fromLatin1(k, size));
-        break;
-    }
-    return true;
 }
 
 static inline QString qClassName(const QString &qtNamespace, const char *className)
@@ -1184,36 +915,74 @@ void QtDumperHelper::setQClassPrefixes(const QString &qNamespace)
     m_qSharedPointerPrefix = qClassName(qNamespace, "QSharedPointer");
     m_qSharedDataPointerPrefix = qClassName(qNamespace, "QSharedDataPointer");
     m_qWeakPointerPrefix = qClassName(qNamespace, "QWeakPointer");
+    m_qListPrefix = qClassName(qNamespace, "QList");
+    m_qLinkedListPrefix = qClassName(qNamespace, "QLinkedList");
+    m_qVectorPrefix = qClassName(qNamespace, "QVector");
+    m_qQueuePrefix = qClassName(qNamespace, "QQueue");
+}
+
+static inline double getDumperVersion(const GdbMi &contents)
+{
+    const GdbMi dumperVersionG = contents.findChild("dumperversion");
+    if (dumperVersionG.type() != GdbMi::Invalid) {
+        bool ok;
+        const double v = QString::fromAscii(dumperVersionG.data()).toDouble(&ok);
+        if (ok)
+            return v;
+    }
+    return 1.0;
+}
+
+bool QtDumperHelper::parseQuery(const GdbMi &contents, Debugger debugger)
+{
+    clear();
+    if (debug > 1)
+        qDebug() << "parseQuery" << contents.toString(true, 2);
+
+    // Common info, dumper version, etc
+    m_qtNamespace = QLatin1String(contents.findChild("namespace").data());
+    int qtv = 0;
+    const GdbMi qtversion = contents.findChild("qtversion");
+    if (qtversion.children().size() == 3) {
+        qtv = (qtversion.childAt(0).data().toInt() << 16)
+                    + (qtversion.childAt(1).data().toInt() << 8)
+                    + qtversion.childAt(2).data().toInt();
+    }
+    m_qtVersion = qtv;
+    // Get list of helpers
+    QStringList availableSimpleDebuggingHelpers;
+    foreach (const GdbMi &item, contents.findChild("dumpers").children())
+        availableSimpleDebuggingHelpers.append(QLatin1String(item.data()));
+    parseQueryTypes(availableSimpleDebuggingHelpers, debugger);
+    m_dumperVersion = getDumperVersion(contents);
+    // Parse sizes
+    foreach (const GdbMi &sizesList, contents.findChild("sizes").children()) {
+        const int childCount = sizesList.childCount();
+        if (childCount > 1) {
+            const int size = sizesList.childAt(0).data().toInt();
+            for (int c = 1; c < childCount; c++)
+                addSize(QLatin1String(sizesList.childAt(c).data()), size);
+        }
+    }
+    // Parse expressions
+    foreach (const GdbMi &exprList, contents.findChild("expressions").children())
+        if (exprList.childCount() == 2)
+            m_expressionCache.insert(QLatin1String(exprList.childAt(0).data()),
+                                     QLatin1String(exprList.childAt(1).data()));
+    return true;
 }
 
 // parse a query
 bool QtDumperHelper::parseQuery(const char *data, Debugger debugger)
 {
-    QueryDumperParser parser(data);
-    if (!parser.run())
+    QByteArray fullData = data;
+    fullData.insert(0, '{');
+    fullData.append(data);
+    fullData.append('}');
+    GdbMi root(fullData);
+    if (!root.isValid())
         return false;
-    clear();
-    m_qtNamespace = parser.data().qtNameSpace;
-    setQtVersion(parser.data().qtVersion);
-    setQClassPrefixes(m_qtNamespace);
-    parseQueryTypes(parser.data().types, debugger);
-    foreach (const QueryDumperParser::SizeEntry &se, parser.data().sizes)
-        addSize(se.first, se.second);
-    m_expressionCache = parser.data().expressionCache;
-    // Version
-    if (!parser.data().dumperVersion.isEmpty()) {
-        double dumperVersion;
-        bool ok;
-        dumperVersion = parser.data().dumperVersion.toDouble(&ok);
-        if (ok)
-            m_dumperVersion = dumperVersion;
-    }
-    return true;
-}
-
-void QtDumperHelper::addExpression(const QString &expression, const QString &value)
-{
-    m_expressionCache.insert(expression, value);
+    return parseQuery(root, debugger);
 }
 
 void QtDumperHelper::addSize(const QString &name, int size)
@@ -1272,7 +1041,7 @@ QtDumperHelper::TypeData QtDumperHelper::typeData(const QString &typeName) const
 // Format an expression to have the debugger query the
 // size. Use size cache if possible
 QString QtDumperHelper::evaluationSizeofTypeExpression(const QString &typeName,
-                                                       Debugger /* debugger */) const
+                                                       Debugger debugger) const
 {
     // Look up special size types
     const SpecialSizeType st = specialSizeType(typeName);
@@ -1285,7 +1054,7 @@ QString QtDumperHelper::evaluationSizeofTypeExpression(const QString &typeName,
     if (sit != m_sizeCache.constEnd())
         return QString::number(sit.value());
     // Finally have the debugger evaluate
-    return sizeofTypeExpression(typeName);
+    return sizeofTypeExpression(typeName, debugger);
 }
 
 QtDumperHelper::SpecialSizeType QtDumperHelper::specialSizeType(const QString &typeName) const
@@ -1306,6 +1075,14 @@ QtDumperHelper::SpecialSizeType QtDumperHelper::specialSizeType(const QString &t
         return QSharedDataPointerSize;
     if (typeName.startsWith(m_qWeakPointerPrefix))
         return QWeakPointerSize;
+    if (typeName.startsWith(m_qListPrefix))
+        return QListSize;
+    if (typeName.startsWith(m_qLinkedListPrefix))
+        return QLinkedListSize;
+    if (typeName.startsWith(m_qVectorPrefix))
+        return QVectorSize;
+    if (typeName.startsWith(m_qQueuePrefix))
+        return QQueueSize;
     return SpecialSizeCount;
 }
 
@@ -1388,24 +1165,17 @@ void QtDumperHelper::evaluationParameters(const WatchData &data,
             //qDebug() << "OUTERTYPE: " << outertype << " NODETYPE: " << nodetype
             //    << "QT VERSION" << m_qtVersion << ((4 << 16) + (5 << 8) + 0);
             extraArgs[2] = evaluationSizeofTypeExpression(nodetype, debugger);
-            extraArgs[3] = QLatin1String("(size_t)&(('");
-            extraArgs[3] += nodetype;
-            extraArgs[3] += QLatin1String("'*)0)->value");
+            extraArgs[3] = qMapNodeValueOffsetExpression(nodetype, data.addr, debugger);
         }
         break;
     case QMapNodeType:
         extraArgs[2] = evaluationSizeofTypeExpression(data.type, debugger);
-        extraArgs[3] = QLatin1String("(size_t)&(('");
-        extraArgs[3] += data.type;
-        extraArgs[3] += QLatin1String("'*)0)->value");
+        extraArgs[3] = qMapNodeValueOffsetExpression(data.type, data.addr, debugger);
         break;
     case StdVectorType:
         //qDebug() << "EXTRACT TEMPLATE: " << outertype << inners;
         if (inners.at(0) == QLatin1String("bool")) {
             outertype = QLatin1String("std::vector::bool");
-        } else {
-            //extraArgs[extraArgCount++] = evaluationSizeofTypeExpression(data.type, debugger);
-            //extraArgs[extraArgCount++] = "(size_t)&(('" + data.type + "'*)0)->value";
         }
         break;
     case StdDequeType:
@@ -1421,27 +1191,40 @@ void QtDumperHelper::evaluationParameters(const WatchData &data,
         extraArgs[2] = zero;
         break;
     case StdMapType: {
-            // We don't want the comparator and the allocator confuse gdb.
-            // But we need the offset of the second item in the value pair.
+            // We need the offset of the second item in the value pair.
             // We read the type of the pair from the allocator argument because
-            // that gets the constness "right" (in the sense that gdb can
+            // that gets the constness "right" (in the sense that gdb/cdb can
             // read it back: "std::allocator<std::pair<Key,Value> >"
             // -> "std::pair<Key,Value>". Different debuggers have varying
             // amounts of terminating blanks...
+            extraArgs[2].clear();
+            extraArgs[3] = zero;
             QString pairType = inners.at(3);
             int bracketPos = pairType.indexOf(QLatin1Char('<'));
             if (bracketPos != -1)
                 pairType.remove(0, bracketPos + 1);
+            // We don't want the comparator and the allocator confuse gdb.
             const QChar closingBracket = QLatin1Char('>');
             bracketPos = pairType.lastIndexOf(closingBracket);
             if (bracketPos != -1)
                 bracketPos = pairType.lastIndexOf(closingBracket, bracketPos - pairType.size() - 1);
             if (bracketPos != -1)
                 pairType.truncate(bracketPos + 1);
-            extraArgs[2] = QLatin1String("(size_t)&(('");
-            extraArgs[2] += pairType;
-            extraArgs[2] += QLatin1String("'*)0)->second");
-            extraArgs[3] = zero;
+            if (debugger == GdbDebugger) {
+                extraArgs[2] = QLatin1String("(size_t)&(('");
+                extraArgs[2] += pairType;
+                extraArgs[2] += QLatin1String("'*)0)->second");
+            } else {
+                // Cdb: The std::pair is usually in scope. Still, this expression
+                // occasionally fails for complex types (std::string).
+                // We need an address as CDB cannot do the 0-trick.
+                // Use data address or try at least cache if missing.
+                const QString address = data.addr.isEmpty() ? QString::fromLatin1("DUMMY_ADDRESS") : data.addr;
+                QString offsetExpr;
+                QTextStream str(&offsetExpr);
+                str << "(size_t)&(((" << pairType << " *)" << address << ")->second)" << '-' << address;
+                extraArgs[2] = lookupCdbDummyAddressExpression(offsetExpr, address);
+            }
         }
         break;
     case StdStringType:
@@ -1458,6 +1241,7 @@ void QtDumperHelper::evaluationParameters(const WatchData &data,
         break;
     case SupportedType:
     case QVectorType:
+    case QStackType:
     case QObjectType:
     case QWidgetType:
         break;
@@ -1493,233 +1277,212 @@ void QtDumperHelper::evaluationParameters(const WatchData &data,
         qDebug() << '\n' << Q_FUNC_INFO << '\n' << data.toString() << "\n-->" << outertype << td.type << extraArgs;
 }
 
-/* Parse value:
- * "iname="local.sl",addr="0x0012BA84",value="<3 items>",valuedisabled="true",
- * numchild="3",childtype="QString",childnumchild="0",
- * children=[{name="0",value="<binhex>",valueencoded="2"},
- * {name="1",value="dAB3AG8A",valueencoded="2"},
- * {name="2",value="dABoAHIAZQBlAA==",valueencoded="2"}]" */
-
-class ValueDumperParser : public DumperParser
+// Return debugger expression to get the offset of a map node.
+QString QtDumperHelper::qMapNodeValueOffsetExpression(const QString &type,
+                                                      const QString &addressIn,
+                                                      Debugger debugger) const
 {
-public:
-    explicit ValueDumperParser(const char *s);
+    switch (debugger) {
+    case GdbDebugger:
+        return QLatin1String("(size_t)&(('") + type + QLatin1String("'*)0)->value");
+    case CdbDebugger: {
+            // Cdb: This will only work if a QMapNode is in scope.
+            // We need an address as CDB cannot do the 0-trick.
+            // Use data address or try at least cache if missing.
+            const QString address = addressIn.isEmpty() ? QString::fromLatin1("DUMMY_ADDRESS") : addressIn;
+            QString offsetExpression;
+            QTextStream(&offsetExpression) << "(size_t)&(((" << type
+                    << " *)" << address << ")->value)-" << address;
+            return lookupCdbDummyAddressExpression(offsetExpression, address);
+        }
+    }
+    return QString();
+}
 
-    inline QtDumperResult result() const { return m_result; }
+/* Cdb cannot do tricks like ( "&(std::pair<int,int>*)(0)->second)",
+ * that is, use a null pointer to determine the offset of a member.
+ * It tries to dereference the address at some point and fails with
+ * "memory access error". As a trick, use the address of the watch item
+ * to do this. However, in the expression cache, 0 is still used, so,
+ * for cache lookups,  use '0' as address. */
+QString QtDumperHelper::lookupCdbDummyAddressExpression(const QString &expr,
+                                                        const QString &address) const
+{
+    QString nullExpr = expr;
+    nullExpr.replace(address, QString(QLatin1Char('0')));
+    const QString rc = m_expressionCache.value(nullExpr, expr);
+    if (debug)
+        qDebug() << "lookupCdbDummyAddressExpression" << expr << rc;
+    return rc;
+}
 
-protected:
-    virtual bool handleKeyword(const char *k, int size);
-    virtual bool handleHashStart();
-    virtual bool handleValue(const char *k, int size);
+// GdbMi parsing helpers for parsing dumper value results
 
-private:
-    enum Mode { None, ExpectingIName, ExpectingAddress, ExpectingValue,
-                ExpectingType, ExpectingDisplayedType, ExpectingInternal,
-                ExpectingValueDisabled,  ExpectingValueEncoded,
-                ExpectingCommonChildType, ExpectingChildCount,
-                ExpectingChildChildOverrideCount,
-                ExpectingExtra,
-                IgnoreNext,
-                ChildModeStart,
-                ExpectingChildren,ExpectingChildName, ExpectingChildAddress,
-                ExpectingChildExpression, ExpectingChildType,
-                ExpectingChildDisplayedType,
-                ExpectingChildKey, ExpectingChildKeyEncoded,
-                ExpectingChildValue, ExpectingChildValueEncoded,
-                ExpectingChildValueDisabled, ExpectingChildChildCount,
-                IgnoreNextChildMode
-              };
+static bool gdbMiGetIntValue(int *target,
+                             const GdbMi &node,
+                             const char *child)
+{
+    *target = -1;
+    const GdbMi childNode = node.findChild(child);
+    if (!childNode.isValid())
+        return false;
+    bool ok;
+    *target = childNode.data().toInt(&ok);
+    return ok;
+}
 
-    static inline Mode nextMode(Mode in, const char *keyword, int size);
+// Find a string child node and assign value if it exists.
+// Optionally decode.
+static bool gdbMiGetStringValue(QString *target,
+                             const GdbMi &node,
+                             const char *child,
+                             const char *encodingChild = 0)
+{
+    target->clear();
+    const GdbMi childNode = node.findChild(child);
+    if (!childNode.isValid())
+        return false;
+    // Encoded data
+    if (encodingChild) {
+        int encoding;
+        if (!gdbMiGetIntValue(&encoding, node, encodingChild))
+            encoding = 0;
+        *target = decodeData(childNode.data(), encoding);
+        return true;
+    }
+    // Plain data
+    *target = QLatin1String(childNode.data());
+    return true;
+}
 
-    Mode m_mode;
-    QtDumperResult m_result;
+static bool gdbMiGetBoolValue(bool *target,
+                             const GdbMi &node,
+                             const char *child)
+{
+    *target = false;
+    const GdbMi childNode = node.findChild(child);
+    if (!childNode.isValid())
+        return false;
+    *target = childNode.data() == "true";
+    return true;
+}
+
+/* Context to store parameters that influence the next level children.
+ *  (next level only, it is not further inherited). For example, the root item
+ * can provide a "childtype" node that specifies the type of the children. */
+
+struct GdbMiRecursionContext {
+    GdbMiRecursionContext(int recursionLevelIn = 0) :
+            recursionLevel(recursionLevelIn), childNumChild(-1), childIndex(0) {}
+
+    int recursionLevel;
+    int childNumChild;
+    int childIndex;
+    QString childType;
+    QString parentIName;
 };
 
-ValueDumperParser::ValueDumperParser(const char *s) :
-   DumperParser(s),
-   m_mode(None)
+static void gbdMiToWatchData(const GdbMi &root,
+                             const GdbMiRecursionContext &ctx,
+                             QList<WatchData> *wl)
 {
-}
-
-// Check key words
-ValueDumperParser::Mode ValueDumperParser::nextMode(Mode in, const char *keyword, int size)
-{
-    // Careful with same prefix
-    switch (size) {
-    case 3:
-        if (!qstrncmp(keyword, "exp", size))
-            return ExpectingChildExpression;
-        if (!qstrncmp(keyword, "key", size))
-            return ExpectingChildKey;
-        break;
-    case 4:
-        if (!qstrncmp(keyword, "addr", size))
-            return in > ChildModeStart ? ExpectingChildAddress : ExpectingAddress;
-        if (!qstrncmp(keyword, "type", size))
-            return in > ChildModeStart ? ExpectingChildType : ExpectingType;
-        if (!qstrncmp(keyword, "name", size))
-            return ExpectingChildName;
-        break;
-    case 5:
-        if (!qstrncmp(keyword, "iname", size))
-            return ExpectingIName;
-        if (!qstrncmp(keyword, "value", size))
-            return in > ChildModeStart ? ExpectingChildValue : ExpectingValue;
-        if (!qstrncmp(keyword, "extra", size))
-            return ExpectingExtra;
-        break;
-    case 8:
-        if (!qstrncmp(keyword, "children", size))
-            return ExpectingChildren;
-        if (!qstrncmp(keyword, "numchild", size))
-            return in > ChildModeStart ?  ExpectingChildChildCount : ExpectingChildCount;
-        if (!qstrncmp(keyword, "internal", size))
-            return ExpectingInternal;
-        break;
-    case 9:
-        if (!qstrncmp(keyword, "childtype", size))
-            return ExpectingCommonChildType;
-        break;
-    case 10:
-        if (!qstrncmp(keyword, "keyencoded", size))
-            return ExpectingChildKeyEncoded;
-        break;
-    case 12:
-        if (!qstrncmp(keyword, "valueencoded", size))
-            return in > ChildModeStart ? ExpectingChildValueEncoded : ExpectingValueEncoded;
-        break;
-    case 13:
-        if (!qstrncmp(keyword, "valuedisabled", size))
-            return in > ChildModeStart ? ExpectingChildValueDisabled : ExpectingValueDisabled;
-        if (!qstrncmp(keyword, "displayedtype", size))
-            return in > ChildModeStart ? ExpectingChildDisplayedType : ExpectingDisplayedType;
-        if (!qstrncmp(keyword, "childnumchild", size))
-            return ExpectingChildChildOverrideCount;
-        break;
-    }
-    return in > ChildModeStart ? IgnoreNextChildMode : IgnoreNext;
-}
-
-bool ValueDumperParser::handleKeyword(const char *k, int size)
-{
-    const Mode newMode = nextMode(m_mode, k, size);
-    if (debug && newMode == IgnoreNext)
-        qWarning("%s Unexpected keyword %s.\n", Q_FUNC_INFO, QByteArray(k, size).constData());
-    m_mode = newMode;
-    return true;
-}
-
-bool ValueDumperParser::handleHashStart()
-{
-    m_result.children.push_back(QtDumperResult::Child());
-    return true;
-}
-
-bool ValueDumperParser::handleValue(const char *k, int size)
-{
-    const QByteArray valueBA(k, size);
-    switch (m_mode) {
-    case None:
-    case ChildModeStart:
-        return false;
-    case ExpectingIName:
-        m_result.iname = QString::fromLatin1(valueBA);
-        break;
-        case ExpectingAddress: {
-                const QString address = QString::fromLatin1(valueBA);
-                if (address.startsWith(QLatin1String("0x"))) {
-                    m_result.address = address;
-                } else {
-                    m_result.addressInfo = address;
-                }
-            }
-            break;
-    case ExpectingValue:
-        m_result.valueEncountered = true;
-        m_result.value = valueBA;
-        break;
-    case ExpectingValueDisabled:
-        m_result.valuedisabled = valueBA == "true";
-        break;
-    case ExpectingValueEncoded:
-        m_result.valueEncoded = QString::fromLatin1(valueBA).toInt();
-        break;
-    case ExpectingType:
-        m_result.type = QString::fromLatin1(valueBA);
-        break;
-    case ExpectingDisplayedType:
-        m_result.displayedType = QString::fromLatin1(valueBA);
-        break;
-    case ExpectingExtra:
-        m_result.extra = valueBA;
-        break;
-    case ExpectingInternal:
-        m_result.internal = valueBA == "true";
-        break;
-    case ExpectingCommonChildType:
-        m_result.childType = QString::fromLatin1(valueBA);
-        break;
-    case ExpectingChildCount:
-        m_result.childCount = QString::fromLatin1(valueBA).toInt();
-        break;
-    case ExpectingChildChildOverrideCount:
-        m_result.childChildCount = QString::fromLatin1(valueBA).toInt();
-        break;
-    case ExpectingChildren:
-    case IgnoreNextChildMode:
-    case IgnoreNext:
-        break;
-    case ExpectingChildName:
-        m_result.children.back().name = QString::fromLatin1(valueBA);
-        break;
-    case ExpectingChildAddress:
-        m_result.children.back().address = QString::fromLatin1(valueBA);
-        break;
-    case ExpectingChildKeyEncoded:
-        m_result.children.back().keyEncoded = QString::fromLatin1(valueBA).toInt();
-        break;
-    case ExpectingChildKey:
-        m_result.children.back().key = valueBA;
-        break;
-    case ExpectingChildValue:
-        m_result.children.back().valueEncountered = true;
-        m_result.children.back().value = valueBA;
-        break;
-    case ExpectingChildExpression:
-        m_result.children.back().exp = QString::fromLatin1(valueBA);
-        break;
-    case ExpectingChildValueEncoded:
-        m_result.children.back().valueEncoded = QString::fromLatin1(valueBA).toInt();
-        break;
-    case ExpectingChildValueDisabled:
-        m_result.children.back().valuedisabled = valueBA == "true";
-        break;
-    case ExpectingChildType:
-        m_result.children.back().type = QString::fromLatin1(valueBA);
-        break;
-    case ExpectingChildDisplayedType:
-        m_result.children.back().displayedType = QString::fromLatin1(valueBA);
-        break;
-    case ExpectingChildChildCount:
-        m_result.children.back().childCount = QString::fromLatin1(valueBA).toInt();
-        break;
-    }
-    return true;
-}
-
-bool QtDumperHelper::parseValue(const char *data, QtDumperResult *r)
-{
-    ValueDumperParser parser(data);
-
-    if (!parser.run())
-        return false;
-    *r = parser.result();
-    // Sanity
-    if (!r->children.empty() && r->childCount != r->children.size())
-        r->childCount = r->children.size();
     if (debug > 1)
-        qDebug() << '\n' << data << '\n' << *r;
+        qDebug() << Q_FUNC_INFO << '\n' << root.toString(false, 0);
+    WatchData w;    
+    QString v;
+    // Check for name/iname and use as expression default
+    if (ctx.recursionLevel == 0) {
+        // parents have only iname, from which name is derived
+        if (!gdbMiGetStringValue(&w.iname, root, "iname"))
+            qWarning("Internal error: iname missing");
+        w.name = w.iname;
+        const int lastDotPos = w.name.lastIndexOf(QLatin1Char('.'));
+        if (lastDotPos != -1)
+            w.name.remove(0, lastDotPos + 1);
+        w.exp = w.name;
+    } else {
+        // Children can have a 'name' attribute. If missing, assume array index
+        // For display purposes, it can be overridden by "key"
+        if (!gdbMiGetStringValue(&w.name, root, "name")) {
+            w.name = QString::number(ctx.childIndex);
+        }
+        // Set iname
+        w.iname = ctx.parentIName;
+        w.iname += QLatin1Char('.');
+        w.iname += w.name;
+        // Key?
+        QString key;
+        if (gdbMiGetStringValue(&key, root, "key", "keyencoded")) {
+            w.name = key.size() > 13 ? key.mid(0, 13) + QLatin1String("...") : key;
+        }
+    }
+    if (w.name.isEmpty()) {
+        const QString msg = QString::fromLatin1("Internal error: Unable to determine name at level %1/%2 for %3").arg(ctx.recursionLevel).arg(w.iname, QLatin1String(root.toString(true, 2)));
+        qWarning("%s\n", qPrintable(msg));
+    }
+    gdbMiGetStringValue(&w.displayedType, root, "displayedtype");
+    if (gdbMiGetStringValue(&v, root, "editvalue"))
+        w.editvalue = v.toLatin1();
+    if (gdbMiGetStringValue(&v, root, "exp"))
+        w.exp = v;
+    gdbMiGetStringValue(&w.addr, root, "addr");
+    gdbMiGetStringValue(&w.saddr, root, "saddr");
+    gdbMiGetBoolValue(&w.valueEnabled, root, "valueenabled");    
+    gdbMiGetBoolValue(&w.valueEditable, root, "valueeditable");
+    if (gdbMiGetStringValue(&v, root, "valuetooltip", "valuetooltipencoded"))
+        w.setValue(v);
+    if (gdbMiGetStringValue(&v, root, "value", "valueencoded"))
+        w.setValue(v);
+    // Type from context or self
+    if (ctx.childType.isEmpty()) {
+        if (gdbMiGetStringValue(&v, root, "type"))
+            w.setType(v);
+    } else {
+        w.setType(ctx.childType);
+    }
+    // child count?
+    int numChild = -1;
+    if (ctx.childNumChild >= 0) {
+        numChild = ctx.childNumChild;
+    } else {
+        gdbMiGetIntValue(&numChild, root, "numchild");
+    }
+    if (numChild >= 0)
+        w.setHasChildren(numChild > 0);
+    wl->push_back(w);
+    // Parse children with a new context
+    if (numChild == 0)
+        return;
+    const GdbMi childrenNode = root.findChild("children");
+    if (!childrenNode.isValid())
+        return;
+    const QList<GdbMi> children =childrenNode.children();
+    if (children.empty())
+        return;
+    wl->back().setChildrenUnneeded();
+    GdbMiRecursionContext nextLevelContext(ctx.recursionLevel + 1);
+    nextLevelContext.parentIName = w.iname;
+    gdbMiGetStringValue(&nextLevelContext.childType, root, "childtype");
+    if (!gdbMiGetIntValue(&nextLevelContext.childNumChild, root, "childnumchild"))
+        nextLevelContext.childNumChild = -1;
+    foreach(const GdbMi &child, children) {
+        gbdMiToWatchData(child, nextLevelContext, wl);
+        nextLevelContext.childIndex++;
+    }
+}
+
+bool QtDumperHelper::parseValue(const char *data,
+                                QList<WatchData> *l)
+{
+    l->clear();
+    QByteArray fullData = data;
+    fullData.insert(0, '{');
+    fullData.append(data);
+    fullData.append('}');
+    GdbMi root(fullData);
+    if (!root.isValid())
+        return false;
+    gbdMiToWatchData(root, GdbMiRecursionContext(), l);
     return true;
 }
 

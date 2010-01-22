@@ -51,7 +51,7 @@
 #include "CoreTypes.h"
 #include "Symbols.h"
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 Type::Type()
 { }
@@ -110,6 +110,12 @@ bool Type::isObjCProtocolType() const
 bool Type::isObjCMethodType() const
 { return asObjCMethodType() != 0; }
 
+bool Type::isObjCForwardClassDeclarationType() const
+{ return asObjCForwardClassDeclarationType() != 0; }
+
+bool Type::isObjCForwardProtocolDeclarationType() const
+{ return asObjCForwardProtocolDeclarationType() != 0; }
+
 void Type::accept(TypeVisitor *visitor)
 {
     if (visitor->preVisit(this))
@@ -125,4 +131,4 @@ void Type::accept(Type *type, TypeVisitor *visitor)
     type->accept(visitor);
 }
 
-CPLUSPLUS_END_NAMESPACE
+

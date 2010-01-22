@@ -38,8 +38,13 @@
 #include <coreplugin/icore.h>
 #include <coreplugin/messagemanager.h>
 #include <utils/qtcassert.h>
+#include <utils/detailswidget.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/project.h>
+#include <projectexplorer/persistentsettings.h>
+
+#include <QtGui/QLabel>
+#include <QtGui/QLineEdit>
 
 using namespace ProjectExplorer;
 using namespace Qt4ProjectManager::Internal;
@@ -51,9 +56,9 @@ S60EmulatorRunConfiguration::S60EmulatorRunConfiguration(Project *project, const
     m_cachedTargetInformationValid(false)
 {
     if (!m_proFilePath.isEmpty())
-        setName(tr("%1 in Emulator").arg(QFileInfo(m_proFilePath).completeBaseName()));
+        setName(tr("%1 in Symbian Emulator").arg(QFileInfo(m_proFilePath).completeBaseName()));
     else
-        setName(tr("QtS60EmulatorRunConfiguration"));
+        setName(tr("QtSymbianEmulatorRunConfiguration"));
 
     connect(project, SIGNAL(activeBuildConfigurationChanged()),
             this, SLOT(invalidateCachedTargetInformation()));
@@ -71,11 +76,11 @@ QString S60EmulatorRunConfiguration::type() const
     return "Qt4ProjectManager.EmulatorRunConfiguration";
 }
 
-bool S60EmulatorRunConfiguration::isEnabled() const
+bool S60EmulatorRunConfiguration::isEnabled(ProjectExplorer::BuildConfiguration *configuration) const
 {
     Qt4Project *pro = qobject_cast<Qt4Project*>(project());
     QTC_ASSERT(pro, return false);
-    ToolChain::ToolChainType type = pro->toolChainType(pro->activeBuildConfiguration());
+    ToolChain::ToolChainType type = pro->toolChainType(configuration);
     return type == ToolChain::WINSCW;
 }
 
@@ -123,7 +128,8 @@ void S60EmulatorRunConfiguration::updateTarget()
 
     // Find out what flags we pass on to qmake, this code is duplicated in the qmake step
     QtVersion::QmakeBuildConfig defaultBuildConfiguration = qtVersion->defaultBuildConfig();
-    QtVersion::QmakeBuildConfig projectBuildConfiguration = QtVersion::QmakeBuildConfig(pro->value(pro->activeBuildConfiguration(), "buildConfiguration").toInt());
+    QtVersion::QmakeBuildConfig projectBuildConfiguration = QtVersion::QmakeBuildConfig(pro->activeBuildConfiguration()
+                                                                                        ->value("buildConfiguration").toInt());
     QStringList addedUserConfigArguments;
     QStringList removedUserConfigArguments;
     if ((defaultBuildConfiguration & QtVersion::BuildAll) && !(projectBuildConfiguration & QtVersion::BuildAll))
@@ -139,7 +145,7 @@ void S60EmulatorRunConfiguration::updateTarget()
 
     if (!reader->readProFile(m_proFilePath)) {
         delete reader;
-        Core::ICore::instance()->messageManager()->printToOutputPane(tr("Could not parse %1. The QtS60 emulator run configuration %2 can not be started.").arg(m_proFilePath).arg(name()));
+        Core::ICore::instance()->messageManager()->printToOutputPane(tr("Could not parse %1. The Qt for Symbian emulator run configuration %2 can not be started.").arg(m_proFilePath).arg(name()));
         return;
     }
 
@@ -173,24 +179,34 @@ void S60EmulatorRunConfiguration::invalidateCachedTargetInformation()
 S60EmulatorRunConfigurationWidget::S60EmulatorRunConfigurationWidget(S60EmulatorRunConfiguration *runConfiguration,
                                                                      QWidget *parent)
     : QWidget(parent),
-    m_runConfiguration(runConfiguration)
+    m_runConfiguration(runConfiguration),
+    m_detailsWidget(new Utils::DetailsWidget),
+    m_nameLineEdit(new QLineEdit(m_runConfiguration->name())),
+    m_executableLabel(new QLabel(m_runConfiguration->executable()))
 {
-    QFormLayout *toplayout = new QFormLayout();
-    toplayout->setMargin(0);
-    setLayout(toplayout);
+    QVBoxLayout *mainBoxLayout = new QVBoxLayout();
+    mainBoxLayout->setMargin(0);
+    setLayout(mainBoxLayout);
+    mainBoxLayout->addWidget(m_detailsWidget);
+    QWidget *detailsContainer = new QWidget;
+    m_detailsWidget->setWidget(detailsContainer);
+
+    QFormLayout *detailsFormLayout = new QFormLayout();
+    detailsFormLayout->setMargin(0);
+    detailsContainer->setLayout(detailsFormLayout);
 
     QLabel *nameLabel = new QLabel(tr("Name:"));
-    m_nameLineEdit = new QLineEdit(m_runConfiguration->name());
-    nameLabel->setBuddy(m_nameLineEdit);
-    toplayout->addRow(nameLabel, m_nameLineEdit);
 
-    m_executableLabel = new QLabel(m_runConfiguration->executable());
-    toplayout->addRow(tr("Executable:"), m_executableLabel);
+    nameLabel->setBuddy(m_nameLineEdit);
+    detailsFormLayout->addRow(nameLabel, m_nameLineEdit);
+
+    detailsFormLayout->addRow(tr("Executable:"), m_executableLabel);
 
     connect(m_nameLineEdit, SIGNAL(textEdited(QString)),
         this, SLOT(nameEdited(QString)));
     connect(m_runConfiguration, SIGNAL(targetInformationChanged()),
             this, SLOT(updateTargetInformation()));
+    updateSummary();
 }
 
 void S60EmulatorRunConfigurationWidget::nameEdited(const QString &text)
@@ -201,6 +217,11 @@ void S60EmulatorRunConfigurationWidget::nameEdited(const QString &text)
 void S60EmulatorRunConfigurationWidget::updateTargetInformation()
 {
     m_executableLabel->setText(m_runConfiguration->executable());
+}
+
+void S60EmulatorRunConfigurationWidget::updateSummary()
+{
+    m_detailsWidget->setSummaryText(tr("Summary: Run %1 in emulator").arg(m_runConfiguration->executable()));
 }
 
 // ======== S60EmulatorRunConfigurationFactory
@@ -226,7 +247,7 @@ QStringList S60EmulatorRunConfigurationFactory::availableCreationTypes(Project *
         QStringList applicationProFiles;
         QList<Qt4ProFileNode *> list = qt4project->applicationProFiles();
         foreach (Qt4ProFileNode * node, list) {
-            applicationProFiles.append("QtS60EmulatorRunConfiguration." + node->path());
+            applicationProFiles.append("QtSymbianEmulatorRunConfiguration." + node->path());
         }
         return applicationProFiles;
     } else {
@@ -236,16 +257,16 @@ QStringList S60EmulatorRunConfigurationFactory::availableCreationTypes(Project *
 
 QString S60EmulatorRunConfigurationFactory::displayNameForType(const QString &type) const
 {
-    QString fileName = type.mid(QString("QtS60EmulatorRunConfiguration.").size());
-    return tr("%1 in Emulator").arg(QFileInfo(fileName).completeBaseName());
+    QString fileName = type.mid(QString("QtSymbianEmulatorRunConfiguration.").size());
+    return tr("%1 in Symbian Emulator").arg(QFileInfo(fileName).completeBaseName());
 }
 
 QSharedPointer<RunConfiguration> S60EmulatorRunConfigurationFactory::create(Project *project, const QString &type)
 {
     Qt4Project *p = qobject_cast<Qt4Project *>(project);
     Q_ASSERT(p);
-    if (type.startsWith("QtS60EmulatorRunConfiguration.")) {
-        QString fileName = type.mid(QString("QtS60EmulatorRunConfiguration.").size());
+    if (type.startsWith("QtSymbianEmulatorRunConfiguration.")) {
+        QString fileName = type.mid(QString("QtSymbianEmulatorRunConfiguration.").size());
         return QSharedPointer<RunConfiguration>(new S60EmulatorRunConfiguration(p, fileName));
     }
     Q_ASSERT(type == "Qt4ProjectManager.EmulatorRunConfiguration");
@@ -254,42 +275,9 @@ QSharedPointer<RunConfiguration> S60EmulatorRunConfigurationFactory::create(Proj
     return rc;
 }
 
-// ======== S60EmulatorRunConfigurationRunner
-
-S60EmulatorRunConfigurationRunner::S60EmulatorRunConfigurationRunner(QObject *parent)
-    : IRunConfigurationRunner(parent)
-{
-}
-
-bool S60EmulatorRunConfigurationRunner::canRun(QSharedPointer<RunConfiguration> runConfiguration, const QString &mode)
-{
-    return (mode == ProjectExplorer::Constants::RUNMODE)
-            && (!runConfiguration.dynamicCast<S60EmulatorRunConfiguration>().isNull());
-}
-
-RunControl* S60EmulatorRunConfigurationRunner::run(QSharedPointer<RunConfiguration> runConfiguration, const QString &mode)
-{
-    QSharedPointer<S60EmulatorRunConfiguration> rc = runConfiguration.dynamicCast<S60EmulatorRunConfiguration>();
-    Q_ASSERT(!rc.isNull());
-    Q_ASSERT(mode == ProjectExplorer::Constants::RUNMODE);
-
-    S60EmulatorRunControl *runControl = new S60EmulatorRunControl(rc);
-    return runControl;
-}
-
-QString S60EmulatorRunConfigurationRunner::displayName() const
-{
-    return tr("Run in Emulator");
-}
-
-QWidget *S60EmulatorRunConfigurationRunner::configurationWidget(QSharedPointer<ProjectExplorer::RunConfiguration> /* runConfiguration */)
-{
-    return 0;
-}
-
 // ======== S60EmulatorRunControl
 
-S60EmulatorRunControl::S60EmulatorRunControl(QSharedPointer<RunConfiguration> runConfiguration)
+S60EmulatorRunControl::S60EmulatorRunControl(const QSharedPointer<RunConfiguration> &runConfiguration)
     : RunControl(runConfiguration)
 {
     connect(&m_applicationLauncher, SIGNAL(applicationError(QString)),
@@ -304,7 +292,7 @@ S60EmulatorRunControl::S60EmulatorRunControl(QSharedPointer<RunConfiguration> ru
 
 void S60EmulatorRunControl::start()
 {
-    QSharedPointer<S60EmulatorRunConfiguration> rc = runConfiguration().dynamicCast<S60EmulatorRunConfiguration>();
+    QSharedPointer<S60EmulatorRunConfiguration> rc = runConfiguration().objectCast<S60EmulatorRunConfiguration>();
     Q_ASSERT(!rc.isNull());
 
     // stuff like the EPOCROOT and EPOCDEVICE env variable

@@ -33,6 +33,8 @@
 #include "debuggeractions.h"
 #include "debuggeragents.h"
 #include "debuggerdialogs.h"
+#include "debuggermanager.h"
+#include "idebuggerengine.h"
 
 #include <utils/qtcassert.h>
 
@@ -50,6 +52,7 @@
 #include <QtGui/QMenu>
 #include <QtGui/QResizeEvent>
 
+using namespace Debugger;
 using namespace Debugger::Internal;
 
 /////////////////////////////////////////////////////////////////////
@@ -89,13 +92,13 @@ public:
         QString exp = model->data(index, ExpressionRole).toString();
         model->setData(index, value, Qt::EditRole);
         if (index.column() == 1) {
-            // the value column
+            // The value column.
             theDebuggerAction(AssignValue)->trigger(QString(exp + '=' + value));
         } else if (index.column() == 2) {
-            // the type column
+            // The type column.
             theDebuggerAction(AssignType)->trigger(QString(exp + '=' + value));
         } else if (index.column() == 0) {
-            // the watcher name column
+            // The watcher name column.
             theDebuggerAction(RemoveWatchExpression)->trigger(exp);
             theDebuggerAction(WatchExpression)->trigger(value);
         }
@@ -133,10 +136,10 @@ WatchWindow::WatchWindow(Type type, DebuggerManager *manager, QWidget *parent)
 
     connect(act, SIGNAL(toggled(bool)),
         this, SLOT(setAlternatingRowColorsHelper(bool)));
-    connect(this, SIGNAL(expanded(QModelIndex)), 
-        this, SLOT(expandNode(QModelIndex))); 
-    connect(this, SIGNAL(collapsed(QModelIndex)), 
-        this, SLOT(collapseNode(QModelIndex))); 
+    connect(this, SIGNAL(expanded(QModelIndex)),
+        this, SLOT(expandNode(QModelIndex)));
+    connect(this, SIGNAL(collapsed(QModelIndex)),
+        this, SLOT(collapseNode(QModelIndex)));
 } 
  
 void WatchWindow::expandNode(const QModelIndex &idx) 
@@ -202,37 +205,45 @@ void WatchWindow::contextMenuEvent(QContextMenuEvent *ev)
     QModelIndex mi0 = idx.sibling(idx.row(), 0);
     QModelIndex mi1 = idx.sibling(idx.row(), 1);
     QModelIndex mi2 = idx.sibling(idx.row(), 2);
-    QString exp = model()->data(mi0).toString();
+    QString exp = model()->data(mi0, ExpressionRole).toString();
     QString type = model()->data(mi2).toString();
 
     QStringList alternativeFormats = 
         model()->data(mi0, TypeFormatListRole).toStringList();
-    int typeFormat = 
-        model()->data(mi0, TypeFormatRole).toInt();
-    int individualFormat = 
-        model()->data(mi0, IndividualFormatRole).toInt();
+    const int typeFormat = qMax(int(DecimalFormat), model()->data(mi0, TypeFormatRole).toInt());
+    const int individualFormat = model()->data(mi0, IndividualFormatRole).toInt();
+    const int effectiveIndividualFormat = individualFormat == -1 ? typeFormat : individualFormat;
 
     QMenu typeFormatMenu;
     QMenu individualFormatMenu;
     QList<QAction *> typeFormatActions;
     QList<QAction *> individualFormatActions;
+    QAction *clearIndividualFormatAction = 0;
     if (idx.isValid()) {
         typeFormatMenu.setTitle(tr("Change format for type '%1'").arg(type));
         individualFormatMenu.setTitle(tr("Change format for expression '%1'").arg(exp));
-        for (int i = 0; i != alternativeFormats.size(); ++i) {
-            const QString format = alternativeFormats.at(i);
-            QAction *act = new QAction(format, &typeFormatMenu);
-            act->setCheckable(true);
-            if (i == typeFormat)
-                act->setChecked(true);
-            typeFormatMenu.addAction(act);
-            typeFormatActions.append(act);
-            act = new QAction(format, &individualFormatMenu);
-            act->setCheckable(true);
-            if (i == individualFormat)
-                act->setChecked(true);
-            individualFormatMenu.addAction(act);
-            individualFormatActions.append(act);
+        if (alternativeFormats.isEmpty()) {
+            typeFormatMenu.setEnabled(false);
+            individualFormatMenu.setEnabled(false);
+        } else {
+            clearIndividualFormatAction = individualFormatMenu.addAction(tr("Clear"));
+            clearIndividualFormatAction->setEnabled(individualFormat != -1);
+            individualFormatMenu.addSeparator();
+            for (int i = 0; i != alternativeFormats.size(); ++i) {
+                const QString format = alternativeFormats.at(i);
+                QAction *act = new QAction(format, &typeFormatMenu);
+                act->setCheckable(true);
+                if (i == typeFormat)
+                    act->setChecked(true);
+                typeFormatMenu.addAction(act);
+                typeFormatActions.append(act);
+                act = new QAction(format, &individualFormatMenu);
+                act->setCheckable(true);
+                if (i == effectiveIndividualFormat)
+                    act->setChecked(true);
+                individualFormatMenu.addAction(act);
+                individualFormatActions.append(act);
+            }
         }
     } else {
         typeFormatMenu.setTitle(tr("Change format for type"));
@@ -242,16 +253,16 @@ void WatchWindow::contextMenuEvent(QContextMenuEvent *ev)
     }
 
     QMenu menu;
-    //QAction *actWatchExpressionInWindow
-    // = theDebuggerAction(WatchExpressionInWindow);
-    //menu.addAction(actWatchExpressionInWindow);
 
     QAction *actInsertNewWatchItem = menu.addAction(tr("Insert new watch item"));
     QAction *actSelectWidgetToWatch = menu.addAction(tr("Select widget to watch"));
 
+    const bool actionsEnabled = m_manager->debuggerActionsEnabled();
     const QString address = model()->data(mi0, AddressRole).toString();
     QAction *actWatchKnownMemory = 0;
-    QAction *actWatchUnknownMemory = new QAction(tr("Open memory editor..."), &menu);;
+    QAction *actWatchUnknownMemory = new QAction(tr("Open memory editor..."), &menu);
+    actWatchUnknownMemory->setEnabled(actionsEnabled);
+
     if (!address.isEmpty())
         actWatchKnownMemory = new QAction(tr("Open memory editor at %1").arg(address), &menu);
     menu.addSeparator();
@@ -267,10 +278,17 @@ void WatchWindow::contextMenuEvent(QContextMenuEvent *ev)
         menu.addAction(actWatchKnownMemory);
     menu.addAction(actWatchUnknownMemory);
     menu.addSeparator();
+
     menu.addAction(theDebuggerAction(RecheckDebuggingHelpers));
     menu.addAction(theDebuggerAction(UseDebuggingHelpers));
-
+    QAction *actClearCodeModelSnapshot = new QAction(tr("Refresh code model snapshot"), &menu);
+    actClearCodeModelSnapshot->setEnabled(actionsEnabled && theDebuggerAction(UseCodeModel)->isChecked());
+    menu.addAction(actClearCodeModelSnapshot);
     menu.addSeparator();
+    menu.addAction(theDebuggerAction(UseToolTipsInLocalsView));
+    
+    menu.addAction(theDebuggerAction(AutoDerefPointers));
+
     QAction *actAdjustColumnWidths =
         menu.addAction(tr("Adjust column widths to contents"));
     QAction *actAlwaysAdjustColumnWidth =
@@ -300,6 +318,10 @@ void WatchWindow::contextMenuEvent(QContextMenuEvent *ev)
     } else if (act == actSelectWidgetToWatch) {
         grabMouse(Qt::CrossCursor);
         m_grabbing = true;
+    } else if (act == actClearCodeModelSnapshot) {
+        m_manager->clearCppCodeModelSnapshot();
+    } else if (clearIndividualFormatAction && act == clearIndividualFormatAction) {
+        model()->setData(mi1, -1, IndividualFormatRole);
     } else { 
         for (int i = 0; i != alternativeFormats.size(); ++i) {
             if (act == typeFormatActions.at(i))
@@ -353,7 +375,16 @@ void WatchWindow::setModel(QAbstractItemModel *model)
     if (m_type != LocalsType)
         header()->hide();
 
-    connect(model, SIGNAL(layoutChanged()), this, SLOT(resetHelper()));
+    connect(model, SIGNAL(layoutChanged()),
+        this, SLOT(resetHelper()));
+    connect(model, SIGNAL(enableUpdates(bool)),
+        this, SLOT(setUpdatesEnabled(bool)));
+}
+
+void WatchWindow::setUpdatesEnabled(bool enable)
+{
+    //qDebug() << "ENABLING UPDATES: " << enable;
+    QTreeView::setUpdatesEnabled(enable);
 }
 
 void WatchWindow::resetHelper()

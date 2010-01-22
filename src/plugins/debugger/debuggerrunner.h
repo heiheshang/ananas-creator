@@ -33,62 +33,61 @@
 #include "debuggermanager.h"
 
 #include <projectexplorer/runconfiguration.h>
+#include <projectexplorer/applicationrunconfiguration.h>
 
 namespace ProjectExplorer {
-class ApplicationRunConfiguration;
+class LocalApplicationRunConfiguration;
 }
 
 namespace Debugger {
-namespace Internal {
-
 class DebuggerManager;
+
+namespace Internal {
 class StartData;
 
 typedef QSharedPointer<ProjectExplorer::RunConfiguration>
     RunConfigurationPtr;
 
-typedef QSharedPointer<ProjectExplorer::ApplicationRunConfiguration>
-    ApplicationRunConfigurationPtr;
+typedef QSharedPointer<ProjectExplorer::LocalApplicationRunConfiguration>
+    LocalApplicationRunConfigurationPtr;
 
-class DebuggerRunner : public ProjectExplorer::IRunConfigurationRunner
+class DebuggerRunControlFactory
+    : public ProjectExplorer::IRunControlFactory
 {
     Q_OBJECT
 
 public:
-    explicit DebuggerRunner(DebuggerManager *manager);
+    explicit DebuggerRunControlFactory(DebuggerManager *manager);
 
-    // ProjectExplorer::IRunConfigurationRunner
-    virtual bool canRun(RunConfigurationPtr runConfiguration, const QString &mode);
-    virtual ProjectExplorer::RunControl *run(RunConfigurationPtr runConfiguration, const QString &mode);
+    // ProjectExplorer::IRunControlFactory
+    bool canRun(const RunConfigurationPtr &runConfiguration, const QString &mode) const;
+    virtual ProjectExplorer::RunControl *create(const RunConfigurationPtr &runConfiguration,
+                                                const QString &mode);
     virtual QString displayName() const;
 
-    virtual QWidget *configurationWidget(RunConfigurationPtr runConfiguration);
+    virtual QWidget *configurationWidget(const RunConfigurationPtr &runConfiguration);
 
-    virtual ProjectExplorer::RunControl
-            *run(RunConfigurationPtr runConfiguration,
-                 const QString &mode,
-                 const QSharedPointer<DebuggerStartParameters> &sp,
-                 DebuggerStartMode startMode);
+    virtual ProjectExplorer::RunControl *create(const RunConfigurationPtr &runConfiguration,
+                                                const QString &mode,
+                                                const DebuggerStartParametersPtr &sp);
 
     static RunConfigurationPtr createDefaultRunConfiguration(const QString &executable = QString());
 
 private:
-    QSharedPointer<DebuggerStartParameters> m_startParameters;
+    DebuggerStartParametersPtr m_startParameters;
     DebuggerManager *m_manager;
 };
 
 // This is a job description
-class DebuggerRunControl : public ProjectExplorer::RunControl
+class DebuggerRunControl
+    : public ProjectExplorer::RunControl
 {
     Q_OBJECT
 
 public:
-    explicit DebuggerRunControl(DebuggerManager *manager,
-                                DebuggerStartMode mode,
-                                const QSharedPointer<DebuggerStartParameters> &sp,
-                                ApplicationRunConfigurationPtr runConfiguration);
-
-    DebuggerStartMode startMode() const { return m_mode; }
+    DebuggerRunControl(DebuggerManager *manager,
+                       const DebuggerStartParametersPtr &startParamters,
+                       LocalApplicationRunConfigurationPtr runConfiguration);
 
     // ProjectExplorer::RunControl
     virtual void start();
@@ -96,6 +95,7 @@ public:
     virtual bool isRunning() const;
 
     Q_SLOT void debuggingFinished();
+    DebuggerStartParametersPtr startParameters() { return m_startParameters; }
 
 signals:
     void stopRequested();
@@ -104,10 +104,34 @@ private slots:
     void slotAddToOutputWindowInline(const QString &output);
 
 private:
-    const DebuggerStartMode m_mode;
-    const QSharedPointer<DebuggerStartParameters> m_startParameters;
+    DebuggerStartParametersPtr m_startParameters;
     DebuggerManager *m_manager;
     bool m_running;
+};
+
+// A default run configuration for external executables or attaching to
+// running processes by id.
+class DefaultLocalApplicationRunConfiguration
+    : public ProjectExplorer::LocalApplicationRunConfiguration
+{
+    Q_OBJECT
+public:
+    explicit DefaultLocalApplicationRunConfiguration(const QString &executable = QString());
+
+    virtual QString executable() const { return m_executable; }
+    virtual RunMode runMode() const { return Gui; }
+    virtual QString workingDirectory() const { return QString(); }
+    virtual QStringList commandLineArguments() const  { return QStringList(); }
+    virtual ProjectExplorer::Environment environment() const
+        { return ProjectExplorer::Environment(); }
+    virtual QString dumperLibrary() const { return QString(); }
+    virtual QStringList dumperLibraryLocations() const { return QStringList(); }
+    virtual ProjectExplorer::ToolChain::ToolChainType toolChainType() const
+        { return ProjectExplorer::ToolChain::UNKNOWN; }
+    virtual QWidget *configurationWidget() { return 0; }
+
+private:
+    const QString m_executable;
 };
 
 } // namespace Internal

@@ -33,6 +33,7 @@
 #include "../core_global.h"
 
 #include <coreplugin/icorelistener.h>
+#include <coreplugin/ifile.h>
 
 #include <QtGui/QWidget>
 #include <QtCore/QList>
@@ -106,7 +107,8 @@ public:
 
     enum OpenEditorFlag {
         NoActivate = 1,
-        IgnoreNavigationHistory = 2
+        IgnoreNavigationHistory = 2,
+        NoModeSwitch = 4
     };
     Q_DECLARE_FLAGS(OpenEditorFlags, OpenEditorFlag)
 
@@ -204,17 +206,17 @@ public slots:
     bool closeAllEditors(bool askAboutModifiedEditors = true);
     void openInExternalEditor();
 
-private slots:
     bool saveFile(Core::IEditor *editor = 0);
     bool saveFileAs(Core::IEditor *editor = 0);
+    void revertToSaved();
     void closeEditor();
     void closeOtherEditors();
 
+private slots:
     void gotoNextDocHistory();
     void gotoPreviousDocHistory();
     void handleContextChange(Core::IContext *context);
     void updateActions();
-    void revertToSaved();
     void makeCurrentEditorWritable();
 
 public slots:

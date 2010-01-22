@@ -33,16 +33,21 @@
 #include <coreplugin/progressmanager/progressmanager.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <find/textfindconstants.h>
+#include <find/searchresultwindow.h>
 #include <texteditor/itexteditor.h>
 #include <texteditor/basetexteditor.h>
 #include <utils/stylehelper.h>
 
 #include <QtCore/QDebug>
 #include <QtCore/QDirIterator>
+#include <QtCore/QSettings>
+#include <QtGui/QLabel>
+#include <QtGui/QComboBox>
+#include <QtGui/QCheckBox>
 #include <QtGui/QPushButton>
 #include <QtGui/QFileDialog>
 
-using namespace Core::Utils;
+using namespace Utils;
 using namespace Find;
 using namespace TextEditor;
 
@@ -86,12 +91,13 @@ void BaseFileFind::findAll(const QString &txt, QTextDocument::FindFlags findFlag
     if (m_filterCombo)
         updateComboEntries(m_filterCombo, false);
     m_watcher.setFuture(QFuture<FileSearchResult>());
-    m_resultWindow->clearContents();
+    SearchResult *result = m_resultWindow->startNewSearch();
+    connect(result, SIGNAL(activated(Find::SearchResultItem)), this, SLOT(openEditor(Find::SearchResultItem)));
     m_resultWindow->popup(true);
     if (m_useRegExp)
-        m_watcher.setFuture(Core::Utils::findInFilesRegExp(txt, files(), findFlags, ITextEditor::openedTextEditorsContents()));
+        m_watcher.setFuture(Utils::findInFilesRegExp(txt, files(), findFlags, ITextEditor::openedTextEditorsContents()));
     else
-        m_watcher.setFuture(Core::Utils::findInFiles(txt, files(), findFlags, ITextEditor::openedTextEditorsContents()));
+        m_watcher.setFuture(Utils::findInFiles(txt, files(), findFlags, ITextEditor::openedTextEditorsContents()));
     Core::FutureProgress *progress = 
         Core::ICore::instance()->progressManager()->addTask(m_watcher.future(),
                                                                         "Search",
@@ -103,21 +109,19 @@ void BaseFileFind::findAll(const QString &txt, QTextDocument::FindFlags findFlag
 }
 
 void BaseFileFind::displayResult(int index) {
-    Core::Utils::FileSearchResult result = m_watcher.future().resultAt(index);
-    ResultWindowItem *item = m_resultWindow->addResult(result.fileName,
+    Utils::FileSearchResult result = m_watcher.future().resultAt(index);
+    m_resultWindow->addResult(result.fileName,
                               result.lineNumber,
                               result.matchingLine,
                               result.matchStart,
                               result.matchLength);
-    if (item)
-        connect(item, SIGNAL(activated(const QString&,int,int)), this, SLOT(openEditor(const QString&,int,int)));
-
     if (m_resultLabel)
         m_resultLabel->setText(tr("%1 found").arg(m_resultWindow->numberOfResults()));
 }
 
 void BaseFileFind::searchFinished()
 {
+    m_resultWindow->finishSearch();
     m_isSearching = false;
     m_resultLabel = 0;
     emit changed();
@@ -231,7 +235,7 @@ void BaseFileFind::syncRegExpSetting(bool useRegExp)
     m_useRegExp = useRegExp;
 }
 
-void BaseFileFind::openEditor(const QString &fileName, int line, int column)
+void BaseFileFind::openEditor(const Find::SearchResultItem &item)
 {
-    TextEditor::BaseTextEditor::openEditorAt(fileName, line, column);
+    TextEditor::BaseTextEditor::openEditorAt(item.fileName, item.lineNumber, item.searchTermStart);
 }

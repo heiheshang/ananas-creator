@@ -58,18 +58,15 @@ MakeStep::~MakeStep()
 bool MakeStep::init(const QString &name)
 {
     m_buildConfiguration = name;
-    Environment environment = project()->environment(name);
+    ProjectExplorer::BuildConfiguration *bc = project()->buildConfiguration(name);
+    Environment environment = project()->environment(bc);
     setEnvironment(name, environment);
 
-    QString workingDirectory;
-    if (project()->value(name, "useShadowBuild").toBool())
-        workingDirectory = project()->value(name, "buildDirectory").toString();
-    if (workingDirectory.isEmpty())
-        workingDirectory = QFileInfo(project()->file()->fileName()).absolutePath();
+    Qt4Project *qt4project = qobject_cast<Qt4Project *>(project());
+    QString workingDirectory = qt4project->buildDirectory(bc);
     setWorkingDirectory(name, workingDirectory);
 
-    Qt4Project *qt4project = qobject_cast<Qt4Project *>(project());
-    QString makeCmd = qt4project->makeCommand(name);
+    QString makeCmd = qt4project->makeCommand(bc);
     if (!value(name, "makeCmd").toString().isEmpty())
         makeCmd = value(name, "makeCmd").toString();
     if (!QFileInfo(makeCmd).isAbsolute()) {
@@ -95,20 +92,20 @@ bool MakeStep::init(const QString &name)
     setIgnoreReturnValue(name, value(name, "cleanConfig").isValid());
     QStringList args = value(name, "makeargs").toStringList();
     if (!value(name, "cleanConfig").isValid()) {
-        if (!qt4project->defaultMakeTarget(name).isEmpty())
-            args << qt4project->defaultMakeTarget(name);
+        if (!qt4project->defaultMakeTarget(bc).isEmpty())
+            args << qt4project->defaultMakeTarget(bc);
     }
     // -w option enables "Enter"/"Leaving directory" messages, which we need for detecting the
     // absolute file path
     // FIXME doing this without the user having a way to override this is rather bad
     // so we only do it for unix and if the user didn't override the make command
     // but for now this is the least invasive change
-    ProjectExplorer::ToolChain *toolchain = qobject_cast<Qt4Project *>(project())->toolChain(name);
+    ProjectExplorer::ToolChain *toolchain = qt4project->toolChain(bc);
 
-    ProjectExplorer::ToolChain::ToolChainType t =  ProjectExplorer::ToolChain::UNKNOWN;
+    ProjectExplorer::ToolChain::ToolChainType type =  ProjectExplorer::ToolChain::UNKNOWN;
     if (toolchain)
-        t = toolchain->type();
-    if (t != ProjectExplorer::ToolChain::MSVC && t != ProjectExplorer::ToolChain::WINCE) {
+        type = toolchain->type();
+    if (type != ProjectExplorer::ToolChain::MSVC && type != ProjectExplorer::ToolChain::WINCE) {
         if (value(name, "makeCmd").toString().isEmpty())
             args << "-w";
     }
@@ -116,8 +113,7 @@ bool MakeStep::init(const QString &name)
     setEnabled(name, true);
     setArguments(name, args);
 
-    ProjectExplorer::ToolChain::ToolChainType type = qobject_cast<Qt4Project *>(project())->toolChain(name)->type();
-    if ( type == ProjectExplorer::ToolChain::MSVC || type == ProjectExplorer::ToolChain::WINCE)
+    if (type == ProjectExplorer::ToolChain::MSVC || type == ProjectExplorer::ToolChain::WINCE)
         setBuildParser(ProjectExplorer::Constants::BUILD_PARSER_MSVC);
     else
         setBuildParser(ProjectExplorer::Constants::BUILD_PARSER_GCC);
@@ -178,6 +174,9 @@ MakeStepConfigWidget::MakeStepConfigWidget(MakeStep *makeStep)
 
     connect(makeStep, SIGNAL(changed()),
             this, SLOT(update()));
+    connect(makeStep->project(), SIGNAL(buildDirectoryChanged()),
+            this, SLOT(updateDetails()));
+
     connect(ProjectExplorer::ProjectExplorerPlugin::instance(), SIGNAL(settingsChanged()),
             this, SLOT(updateMakeOverrideLabel()));
     connect(ProjectExplorer::ProjectExplorerPlugin::instance(), SIGNAL(settingsChanged()),
@@ -186,25 +185,22 @@ MakeStepConfigWidget::MakeStepConfigWidget(MakeStep *makeStep)
 
 void MakeStepConfigWidget::updateMakeOverrideLabel()
 {
-    m_ui.makeLabel->setText(tr("Override %1:").arg(static_cast<Qt4Project *>(m_makeStep->project())->makeCommand(m_buildConfiguration)));
+    Qt4Project *qt4project = qobject_cast<Qt4Project *>(m_makeStep->project());
+    m_ui.makeLabel->setText(tr("Override %1:").arg(qt4project->
+        makeCommand(qt4project->buildConfiguration(m_buildConfiguration))));
 }
 
 void MakeStepConfigWidget::updateDetails()
 {
-    // TODO reduce heavy code duplication
-    QString workingDirectory;
     Qt4Project *pro = static_cast<Qt4Project *>(m_makeStep->project());
-    if (pro->value(m_buildConfiguration, "useShadowBuild").toBool())
-        workingDirectory = pro->value(m_buildConfiguration, "buildDirectory").toString();
-    if (workingDirectory.isEmpty())
-        workingDirectory = QFileInfo(pro->file()->fileName()).absolutePath();
+    ProjectExplorer::BuildConfiguration *bc = pro->buildConfiguration(m_buildConfiguration);
+    QString workingDirectory = pro->buildDirectory(bc);
 
-    Qt4Project *qt4project = qobject_cast<Qt4Project *>(pro);
-    QString makeCmd = qt4project->makeCommand(m_buildConfiguration);
+    QString makeCmd = pro->makeCommand(bc);
     if (!m_makeStep->value(m_buildConfiguration, "makeCmd").toString().isEmpty())
         makeCmd = m_makeStep->value(m_buildConfiguration, "makeCmd").toString();
     if (!QFileInfo(makeCmd).isAbsolute()) {
-        Environment environment = pro->environment(m_buildConfiguration);
+        Environment environment = pro->environment(bc);
         // Try to detect command in environment
         QString tmp = environment.searchInPath(makeCmd);
         if (tmp == QString::null) {
@@ -221,7 +217,7 @@ void MakeStepConfigWidget::updateDetails()
     // but for now this is the least invasive change
     QStringList args = m_makeStep->value(m_buildConfiguration, "makeargs").toStringList();
     ProjectExplorer::ToolChain::ToolChainType t = ProjectExplorer::ToolChain::UNKNOWN;
-    ProjectExplorer::ToolChain *toolChain = qobject_cast<Qt4Project *>(pro)->toolChain(m_buildConfiguration);
+    ProjectExplorer::ToolChain *toolChain = pro->toolChain(bc);
     if (toolChain)
         t = toolChain->type();
     if (t != ProjectExplorer::ToolChain::MSVC && t != ProjectExplorer::ToolChain::WINCE) {

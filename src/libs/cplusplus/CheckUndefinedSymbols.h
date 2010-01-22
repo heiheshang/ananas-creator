@@ -57,8 +57,13 @@ protected:
 
     void addType(Name *name);
     void buildTypeMap(Class *klass);
+    void buildMemberTypeMap(Symbol *member);
     void buildTypeMap(NamespaceBinding *binding, QSet<NamespaceBinding *> *processed);
+    void addProtocol(Name *name);
+    bool isProtocol(const QByteArray &name) const;
+
     FunctionDeclaratorAST *currentFunctionDeclarator() const;
+    CompoundStatementAST *compoundStatement() const;
     bool qobjectCheck() const;
 
     QByteArray templateParameterName(NameAST *ast) const;
@@ -79,6 +84,9 @@ protected:
     virtual bool visit(FunctionDefinitionAST *ast);
     virtual void endVisit(FunctionDefinitionAST *ast);
 
+    virtual bool visit(CompoundStatementAST *ast);
+    virtual void endVisit(CompoundStatementAST *ast);
+
     virtual bool visit(SimpleDeclarationAST *ast);
     virtual bool visit(BaseSpecifierAST *base);
     virtual bool visit(UsingDirectiveAST *ast);
@@ -86,13 +94,18 @@ protected:
     virtual bool visit(CastExpressionAST *ast);
     virtual bool visit(SizeofExpressionAST *ast);
 
+    virtual bool visit(ObjCClassDeclarationAST *ast);
+    virtual bool visit(ObjCProtocolRefsAST *ast);
+
 private:
     Document::Ptr _doc;
     NamespaceBindingPtr _globalNamespaceBinding;
     QList<bool> _qobjectStack;
     QList<FunctionDeclaratorAST *> _functionDeclaratorStack;
     QList<TemplateDeclarationAST *> _templateDeclarationStack;
+    QList<CompoundStatementAST *> _compoundStatementStack;
     QSet<QByteArray> _types;
+    QSet<QByteArray> _protocols;
     QSet<QByteArray> _namespaceNames;
 };
 

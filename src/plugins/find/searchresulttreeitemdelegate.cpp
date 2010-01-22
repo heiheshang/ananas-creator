@@ -35,6 +35,7 @@
 #include <QPainter>
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
+#include <QDebug>
 
 #include <math.h>
 
@@ -67,6 +68,18 @@ void SearchResultTreeItemDelegate::paint(QPainter *painter, const QStyleOptionVi
         QItemDelegate::drawDisplay(painter, opt, resultRowRect, displayString);
         QItemDelegate::drawFocus(painter, opt, opt.rect);
 
+        QVariant value = index.data(Qt::CheckStateRole);
+        if (value.isValid()) {
+            Qt::CheckState checkState = Qt::Unchecked;
+            checkState = static_cast<Qt::CheckState>(value.toInt());
+            QRect checkRect = check(opt, opt.rect, value);
+
+            QRect emptyRect;
+            doLayout(opt, &checkRect, &emptyRect, &emptyRect, false);
+
+            QItemDelegate::drawCheck(painter, opt, checkRect, checkState);
+        }
+
         painter->restore();
     }
 }
@@ -96,7 +109,7 @@ int SearchResultTreeItemDelegate::drawLineNumber(QPainter *painter, const QStyle
     painter->setPen(isSelected ?
         option.palette.color(cg, QPalette::HighlightedText) : Qt::darkGray);
     painter->drawText(lineNumberAreaRect.adjusted(0, 0, -lineNumberAreaHorizontalPadding, 0),
-        Qt::AlignRight, QString::number(lineNumber));
+        Qt::AlignRight | Qt::AlignVCenter, QString::number(lineNumber));
 
     return lineNumberAreaWidth;
 }

@@ -55,7 +55,7 @@
 
 using namespace std;
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 Lexer::Lexer(TranslationUnit *unit)
     : _translationUnit(unit),
@@ -428,7 +428,7 @@ void Lexer::scan_helper(Token *tok)
             if (! f._scanCommentTokens)
                 goto _Lagain;
 
-            tok->f.kind = doxy ? T_DOXY_COMMENT : T_COMMENT;
+            tok->f.kind = doxy ? T_CPP_DOXY_COMMENT : T_CPP_COMMENT;
 
         } else if (_yychar == '*') {
             yyinp();
@@ -603,7 +603,7 @@ void Lexer::scan_helper(Token *tok)
 
                 do {
                     yyinp();
-                    if (! (isalnum(_yychar) || _yychar == '_'))
+                    if (! (isalnum(_yychar) || _yychar == '_' || _yychar == '$'))
                         break;
                 } while (_yychar);
 
@@ -674,9 +674,9 @@ void Lexer::scan_helper(Token *tok)
 
             if (control())
                 tok->string = control()->findOrInsertStringLiteral(yytext, yylen);
-        } else if (std::isalpha(ch) || ch == '_') {
+        } else if (std::isalpha(ch) || ch == '_' || ch == '$') {
             const char *yytext = _currentChar - 1;
-            while (std::isalnum(_yychar) || _yychar == '_')
+            while (std::isalnum(_yychar) || _yychar == '_' || _yychar == '$')
                 yyinp();
             int yylen = _currentChar - yytext;
             if (f._scanKeywords)
@@ -720,4 +720,4 @@ void Lexer::scan_helper(Token *tok)
     } // switch
 }
 
-CPLUSPLUS_END_NAMESPACE
+

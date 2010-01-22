@@ -177,7 +177,7 @@ FontSettingsPagePrivate::FontSettingsPagePrivate(const TextEditor::FormatDescrip
                                                  const QString &category,
                                                  const QString &trCategory) :
     m_name(name),
-    m_settingsGroup(Core::Utils::settingsKey(category)),
+    m_settingsGroup(Utils::settingsKey(category)),
     m_category(category),
     m_trCategory(trCategory),
     m_descriptions(fd),
@@ -251,6 +251,8 @@ QColor FormatDescription::foreground() const
         } else {
             return m_format.foreground();
         }
+    } else if (m_name == QLatin1String(Constants::C_OCCURRENCES_UNUSED)) {
+        return Qt::lightGray;
     } else if (m_name == QLatin1String(Constants::C_PARENTHESES)) {
         return QColor(Qt::red);
     }
@@ -296,6 +298,8 @@ QColor FormatDescription::background() const
         return QColor(220, 220, 220);
     } else if (m_name == QLatin1String(Constants::C_OCCURRENCES_RENAME)) {
         return QColor(255, 200, 200);
+    } else if (m_name == QLatin1String(Constants::C_DISABLED_CODE)) {
+        return QColor(239, 239, 239);
     }
     return QColor(); // invalid color
 }
@@ -549,6 +553,9 @@ void FontSettingsPage::refreshColorSchemeList()
         colorSchemes.append(ColorSchemeEntry(fileName, true));
     }
 
+    if (colorSchemes.isEmpty())
+        qWarning() << "Warning: no color schemes found in path:" << styleDir.path();
+
     styleDir.setPath(customStylesPath());
 
     foreach (const QString &file, styleDir.entryList()) {
@@ -593,11 +600,11 @@ void FontSettingsPage::apply()
 void FontSettingsPage::saveSettings()
 {
     if (d_ptr->m_value != d_ptr->m_lastValue) {
-	d_ptr->m_lastValue = d_ptr->m_value;
-	if (QSettings *settings = Core::ICore::instance()->settings())
-	    d_ptr->m_value.toSettings(d_ptr->m_settingsGroup, settings);
+        d_ptr->m_lastValue = d_ptr->m_value;
+        if (QSettings *settings = Core::ICore::instance()->settings())
+            d_ptr->m_value.toSettings(d_ptr->m_settingsGroup, settings);
 
-	QTimer::singleShot(0, this, SLOT(delayedChange()));
+        QTimer::singleShot(0, this, SLOT(delayedChange()));
     }
 }
 

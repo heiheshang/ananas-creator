@@ -152,6 +152,25 @@ ClassBinding *NamespaceBinding::findClassBinding(Name *name, QSet<Binding *> *pr
     if (processed->contains(this))
         return 0;
 
+    if (const QualifiedNameId *q = name->asQualifiedNameId()) {
+        Binding *current = this;
+
+        for (unsigned i = 0; i < q->nameCount(); ++i) {
+            Identifier *nameId = q->nameAt(i)->identifier();
+            if (! nameId)
+                return 0;
+
+            QSet<Binding *> visited;
+            Binding *binding = current->findClassOrNamespaceBinding(nameId, &visited); // ### TODO: check recursion.
+            if (! binding)
+                return 0;
+
+            current = binding;
+        }
+
+        return current->asClassBinding();
+    }
+
     processed->insert(this);
 
     Identifier *id = name->identifier();
@@ -404,6 +423,11 @@ Binding *ClassBinding::findClassOrNamespaceBinding(Identifier *id, QSet<Binding 
     if (id->isEqualTo(identifier()))
         return this;
 
+    if (processed->contains(this))
+        return 0;
+
+    processed->insert(this);
+
     foreach (ClassBinding *nestedClassBinding, children) {
         if (id->isEqualTo(nestedClassBinding->identifier()))
             return nestedClassBinding;
@@ -412,6 +436,7 @@ Binding *ClassBinding::findClassOrNamespaceBinding(Identifier *id, QSet<Binding 
     foreach (ClassBinding *baseClassBinding, baseClassBindings) {
         if (! baseClassBinding)
             continue;
+
         else if (Binding *b = baseClassBinding->findClassOrNamespaceBinding(id, processed))
             return b;
     }
@@ -676,6 +701,8 @@ ClassBinding *Binder::findClassBinding(Name *name)
     if (classBinding) {
         if (ClassBinding *k = classBinding->findClassBinding(name, &processed))
             return k;
+
+        processed.clear();
     }
 
     if (namespaceBinding)
@@ -718,8 +745,6 @@ bool Binder::visit(UsingNamespaceDirective *u)
 
 bool Binder::visit(Class *classSymbol)
 {
-    Overview oo;
-
     ClassBinding *binding = findOrCreateClassBinding(classSymbol);
     ClassBinding *previousClassBinding = switchClassBinding(binding);
 

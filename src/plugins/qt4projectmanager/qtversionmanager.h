@@ -48,12 +48,14 @@ class QtVersion
 {
     friend class QtVersionManager;
 public:
-    QtVersion(const QString &name, const QString &path,
+    QtVersion(const QString &name, const QString &qmakeCommand,
               bool isAutodetected = false, const QString &autodetectionSource = QString());
-    QtVersion(const QString &name, const QString &path, int id,
+
+    QtVersion(const QString &path, bool isAutodetected = false, const QString &autodetectionSource = QString());
+
+    QtVersion(const QString &name, const QString &qmakeCommand, int id,
               bool isAutodetected = false, const QString &autodetectionSource = QString());
     QtVersion();
-
     ~QtVersion();
 
     bool isValid() const; //TOOD check that the dir exists and the name is non empty
@@ -62,7 +64,6 @@ public:
     QString autodetectionSource() const { return m_autodetectionSource; }
 
     QString name() const;
-    QString path() const;
     QString sourcePath() const;
     QString mkspecPath() const;
     QString qmakeCommand() const;
@@ -76,16 +77,19 @@ public:
     ProjectExplorer::ToolChain *createToolChain(ProjectExplorer::ToolChain::ToolChainType type) const;
 
     void setName(const QString &name);
-    void setPath(const QString &path);
+    void setQMakeCommand(const QString &path);
 
     QString qtVersionString() const;
     // Returns the PREFIX, BINPREFIX, DOCPREFIX and similar information
     QHash<QString,QString> versionInfo() const;
 
-#ifdef QTCREATOR_WITH_S60
     QString mwcDirectory() const;
     void setMwcDirectory(const QString &directory);
-#endif
+    QString s60SDKDirectory() const;
+    void setS60SDKDirectory(const QString &directory);
+    QString gcceDirectory() const;
+    void setGcceDirectory(const QString &directory);
+
     QString mingwDirectory() const;
     void setMingwDirectory(const QString &directory);
     QString msvcVersion() const;
@@ -121,6 +125,9 @@ public:
     };
 
     QmakeBuildConfig defaultBuildConfig() const;
+
+    QString toHtml() const;
+
 private:
     static int getUniqueId();
     // Also used by QtOptionsPageWidget
@@ -131,7 +138,6 @@ private:
     QString qmakeCXX() const;
     QString findQtBinary(const QStringList &possibleName) const;
     QString m_name;
-    QString m_path;
     QString m_sourcePath;
     QString m_mingwDirectory;
     QString m_msvcVersion;
@@ -139,9 +145,10 @@ private:
     bool m_isAutodetected;
     QString m_autodetectionSource;
     bool m_hasDebuggingHelper;
-#ifdef QTCREATOR_WITH_S60
+
     QString m_mwcDirectory;
-#endif
+    QString m_s60SDKDirectory;
+    QString m_gcceDirectory;
 
     mutable bool m_mkspecUpToDate;
     mutable QString m_mkspec; // updated lazily
@@ -189,14 +196,14 @@ public:
     QtVersion *version(int id) const;
     QtVersion *defaultVersion() const;
 
-    QtVersion *qtVersionForDirectory(const QString &directory);
+    QtVersion *qtVersionForQMakeBinary(const QString &qmakePath);
     // Used by the projectloadwizard
     void addVersion(QtVersion *version);
     void removeVersion(QtVersion *version);
 
     // Static Methods
     static QPair<QtVersion::QmakeBuildConfig, QStringList> scanMakeFile(const QString &directory, QtVersion::QmakeBuildConfig defaultBuildConfig);
-    static QString findQtVersionFromMakefile(const QString &directory);
+    static QString findQMakeBinaryFromMakefile(const QString &directory);
 signals:
     void defaultQtVersionChanged();
     void qtVersionsChanged();

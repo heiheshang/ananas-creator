@@ -1,7 +1,7 @@
 TEMPLATE = lib
 TARGET = CppTools
 include(../../qtcreatorplugin.pri)
-include(../../plugins/quickopen/quickopen.pri)
+include(../../plugins/locator/locator.pri)
 include(cpptools_dependencies.pri)
 
 # DEFINES += QT_NO_CAST_FROM_ASCII
@@ -15,7 +15,7 @@ HEADERS += completionsettingspage.h \
     cppfunctionsfilter.h \
     cppmodelmanager.h \
     cppmodelmanagerinterface.h \
-    cppquickopenfilter.h \
+    cpplocatorfilter.h \
     cpptools_global.h \
     cpptoolsconstants.h \
     cpptoolseditorsupport.h \
@@ -23,7 +23,7 @@ HEADERS += completionsettingspage.h \
     searchsymbols.h \
     cppdoxygen.h \
     cppfilesettingspage.h \
-    cppsemanticsearch.h
+    cppfindreferences.h
 
 SOURCES += completionsettingspage.cpp \
     cppclassesfilter.cpp \
@@ -31,14 +31,14 @@ SOURCES += completionsettingspage.cpp \
     cppcurrentdocumentfilter.cpp \
     cppfunctionsfilter.cpp \
     cppmodelmanager.cpp \
-    cppquickopenfilter.cpp \
+    cpplocatorfilter.cpp \
     cpptoolseditorsupport.cpp \
     cpptoolsplugin.cpp \
     searchsymbols.cpp \
     cppdoxygen.cpp \
     cppfilesettingspage.cpp \
     abstracteditorsupport.cpp \
-    cppsemanticsearch.cpp
+    cppfindreferences.cpp
 
 FORMS += completionsettingspage.ui \
     cppfilesettingspage.ui

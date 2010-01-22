@@ -53,9 +53,9 @@
 #include "ASTfwd.h"
 #include "Token.h"
 #include "TranslationUnit.h"
+#include <map>
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
+namespace CPlusPlus {
 
 class CPLUSPLUS_EXPORT Parser
 {
@@ -264,8 +264,9 @@ public:
 
     void match(int kind, unsigned *token);
 
-    bool maybeFunctionCall(SimpleDeclarationAST *simpleDecl) const;
-    bool maybeSimpleExpression(SimpleDeclarationAST *simpleDecl) const;
+    bool maybeAmbiguousStatement(DeclarationStatementAST *ast) const;
+    bool maybeForwardOrClassDeclaration(SpecifierAST *decl_specifier_seq) const;
+    bool isPointerDeclaration(DeclarationStatementAST *ast) const;
 
 private:
     bool switchTemplateArguments(bool templateArguments);
@@ -286,6 +287,17 @@ private:
     inline void rewind(unsigned cursor)
     { _tokenIndex = cursor; }
 
+    struct TemplateArgumentListEntry {
+        unsigned index;
+        unsigned cursor;
+        TemplateArgumentListAST *ast;
+
+        TemplateArgumentListEntry(unsigned index = 0, unsigned cursor = 0, TemplateArgumentListAST *ast = 0)
+            : index(index), cursor(cursor), ast(ast) {}
+    };
+
+    TemplateArgumentListEntry *templateArgumentListEntry(unsigned tokenIndex);
+
 private:
     TranslationUnit *_translationUnit;
     Control *_control;
@@ -297,12 +309,17 @@ private:
     bool _inFunctionBody: 1;
     bool _inObjCImplementationContext: 1;
 
+    std::map<unsigned, TemplateArgumentListEntry> _templateArgumentList;
+
+    class Rewind;
+    friend class Rewind;
+
 private:
     Parser(const Parser& source);
     void operator =(const Parser& source);
 };
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // CPLUSPLUS_PARSER_H

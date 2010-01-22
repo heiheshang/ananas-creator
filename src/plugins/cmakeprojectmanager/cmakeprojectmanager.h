@@ -39,12 +39,12 @@
 #include <QtCore/QDir>
 
 QT_FORWARD_DECLARE_CLASS(QProcess)
+QT_FORWARD_DECLARE_CLASS(QLabel)
 
 namespace CMakeProjectManager {
 namespace Internal {
 
 class CMakeSettingsPage;
-class CMakeRunner;
 
 class CMakeManager : public ProjectExplorer::IProjectManager
 {
@@ -57,13 +57,18 @@ public:
 
     virtual ProjectExplorer::Project *openProject(const QString &fileName);
     virtual QString mimeType() const;
-    QString cmakeExecutable() const;
 
-    QProcess* createXmlFile(const QStringList &arguments,
-                            const QString &sourceDirectory,
-                            const QDir &buildDirectory,
-                            const ProjectExplorer::Environment &env,
-                            const QString &generator);
+    QString cmakeExecutable() const;
+    bool isCMakeExecutableValid() const;
+
+    void setCMakeExecutable(const QString &executable);
+
+    void createXmlFile(QProcess *process,
+                       const QStringList &arguments,
+                       const QString &sourceDirectory,
+                       const QDir &buildDirectory,
+                       const ProjectExplorer::Environment &env,
+                       const QString &generator);
     bool hasCodeBlocksMsvcGenerator() const;
     static QString findCbpFile(const QDir &);
 
@@ -74,28 +79,6 @@ private:
     int m_projectContext;
     int m_projectLanguage;
     CMakeSettingsPage *m_settingsPage;
-};
-
-class CMakeRunner
-{
-public:
-    CMakeRunner();
-    void setExecutable(const QString &executable);
-    QString executable() const;
-    QString version() const;
-    bool supportsQtCreator() const;
-    bool hasCodeBlocksMsvcGenerator() const;
-
-private:
-    void run(QFutureInterface<void> &fi);
-    void waitForUpToDate() const;
-    QString m_executable;
-    QString m_version;
-    bool m_supportsQtCreator;
-    bool m_hasCodeBlocksMsvcGenerator;
-    bool m_cacheUpToDate;
-    mutable QFuture<void> m_future;
-    mutable QMutex m_mutex;
 };
 
 class CMakeSettingsPage : public Core::IOptionsPage
@@ -114,15 +97,23 @@ public:
     virtual void finish();
 
     QString cmakeExecutable() const;
-    void askUserForCMakeExecutable();
+    void setCMakeExecutable(const QString &executable);
+    bool isCMakeExecutableValid();
     bool hasCodeBlocksMsvcGenerator() const;
+private slots:
+    void cmakeFinished();
 private:
-    void updateCachedInformation() const;
     void saveSettings() const;
+    void startProcess();
     QString findCmakeExecutable() const;
+    void updateInfo();
 
-    mutable CMakeRunner m_cmakeRunner;
-    Core::Utils::PathChooser *m_pathchooser;
+    Utils::PathChooser *m_pathchooser;
+    QString m_cmakeExecutable;
+    enum STATE { VALID, INVALID, RUNNING } m_state;
+    QProcess *m_process;
+    QString m_version;
+    bool m_hasCodeBlocksMsvcGenerator;
 };
 
 } // namespace Internal

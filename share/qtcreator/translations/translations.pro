@@ -1,6 +1,6 @@
 include(../../../qtcreator.pri)
 
-LANGUAGES = de es fr it ja ru
+LANGUAGES = de es fr it ja pl ru sl
 
 # var, prepend, append
 defineReplace(prependAll) {
@@ -9,7 +9,7 @@ defineReplace(prependAll) {
 }
 
 XMLPATTERNS = $$targetPath($$[QT_INSTALL_BINS]/xmlpatterns)
-LUPDATE = $$targetPath($$[QT_INSTALL_BINS]/lupdate) -locations relative -no-ui-lines
+LUPDATE = $$targetPath($$[QT_INSTALL_BINS]/lupdate) -locations relative -no-ui-lines -no-sort
 LRELEASE = $$targetPath($$[QT_INSTALL_BINS]/lrelease)
 
 TRANSLATIONS = $$prependAll(LANGUAGES, $$PWD/qtcreator_,.ts)
@@ -61,4 +61,5 @@ isEmpty(vcproj) {
 
 qmfiles.files = $$prependAll(LANGUAGES, $$OUT_PWD/qtcreator_,.qm)
 qmfiles.path = /share/qtcreator/translations
+qmfiles.CONFIG += no_check_exist
 INSTALLS += qmfiles

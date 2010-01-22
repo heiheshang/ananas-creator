@@ -46,10 +46,6 @@
 #include <QtGui/QApplication>
 #include <QtGui/QMainWindow>
 
-#ifdef Q_OS_MAC
-#  include <sys/resource.h>
-#endif
-
 enum { OptionIndent = 4, DescriptionIndent = 24 };
 
 static const char *appNameC = "Qt Creator";
@@ -216,7 +212,7 @@ int main(int argc, char **argv)
 
     QTranslator translator;
     QTranslator qtTranslator;
-    const QString &locale = QLocale::system().name();
+    QString locale = QLocale::system().name();
     const QString &creatorTrPath = QCoreApplication::applicationDirPath()
                         + QLatin1String(SHARE_PATH "/translations");
     if (translator.load(QLatin1String("qtcreator_") + locale, creatorTrPath)) {
@@ -270,7 +266,7 @@ int main(int argc, char **argv)
     }
     if (!coreplugin) {
         QString nativePaths = QDir::toNativeSeparators(pluginPaths.join(QLatin1String(",")));
-        const QString reason = QCoreApplication::translate("Application", "Couldn't find 'Core.pluginspec' in %1").arg(nativePaths);
+        const QString reason = QCoreApplication::translate("Application", "Could not find 'Core.pluginspec' in %1").arg(nativePaths);
         displayError(msgCoreLoadFailure(reason));
         return 1;
     }
@@ -299,6 +295,17 @@ int main(int argc, char **argv)
         displayError(msgCoreLoadFailure(coreplugin->errorString()));
         return 1;
     }
+    {
+        QStringList errors;
+        foreach (ExtensionSystem::PluginSpec *p, pluginManager.plugins())
+            if (p->hasError())
+                errors.append(p->errorString());
+        if (!errors.isEmpty())
+            QMessageBox::warning(0,
+                QCoreApplication::translate("Application", "Qt Creator - Plugin loader messages"),
+                errors.join(QString::fromLatin1("\n\n")));
+    }
+
     if (isFirstInstance) {
         // Set up lock and remote arguments for the first instance only.
         // Silently fallback to unconnected instances for any subsequent

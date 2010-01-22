@@ -29,6 +29,8 @@
 
 #include "winscwtoolchain.h"
 
+#include <QtCore/QByteArray>
+#include <QtCore/QString>
 #include <QtDebug>
 
 using namespace ProjectExplorer;
@@ -50,8 +52,7 @@ ToolChain::ToolChainType WINSCWToolChain::type() const
 
 QByteArray WINSCWToolChain::predefinedMacros()
 {
-    // TODO
-    return m_predefinedMacros;
+    return QByteArray("#define __SYMBIAN32__\n");
 }
 
 QList<HeaderPath> WINSCWToolChain::systemHeaderPaths()
@@ -67,10 +68,8 @@ QList<HeaderPath> WINSCWToolChain::systemHeaderPaths()
 QStringList WINSCWToolChain::systemIncludes() const
 {
     if (m_carbidePath.isEmpty()) {
-        qDebug() << "no carbide path set";
         ProjectExplorer::Environment env = ProjectExplorer::Environment::systemEnvironment();
         QString symIncludesValue = env.value("MWCSYM2INCLUDES");
-        qDebug() << "includes:" << symIncludesValue.split(";");
         if (!symIncludesValue.isEmpty())
             return symIncludesValue.split(";");
     } else {
@@ -113,14 +112,12 @@ QString WINSCWToolChain::makeCommand() const
     return "make";
 }
 
-QString WINSCWToolChain::defaultMakeTarget() const
-{
-    return "debug-winscw";
-}
-
 bool WINSCWToolChain::equals(ToolChain *other) const
 {
+    WINSCWToolChain *otherWINSCW = static_cast<WINSCWToolChain *>(other);
     return (other->type() == type()
-            && m_deviceId == static_cast<WINSCWToolChain *>(other)->m_deviceId
-            && m_deviceName == static_cast<WINSCWToolChain *>(other)->m_deviceName);
+            && m_deviceId == otherWINSCW->m_deviceId
+            && m_deviceName == otherWINSCW->m_deviceName
+            && m_deviceRoot == otherWINSCW->m_deviceRoot
+            && m_carbidePath == otherWINSCW->m_carbidePath);
 }

@@ -34,7 +34,12 @@
 #include "ifindsupport.h"
 
 #include <QtCore/QPointer>
-#include <QtGui/QPlainTextEdit>
+#include <QtGui/QTextCursor>
+
+QT_BEGIN_NAMESPACE
+class QPlainTextEdit;
+class QTextEdit;
+QT_END_NAMESPACE
 
 namespace Find {
 
@@ -53,8 +58,8 @@ public:
     QString currentFindString() const;
     QString completedFindString() const;
 
-    bool findIncremental(const QString &txt, IFindSupport::FindFlags findFlags);
-    bool findStep(const QString &txt, IFindSupport::FindFlags findFlags);
+    Result findIncremental(const QString &txt, IFindSupport::FindFlags findFlags);
+    Result findStep(const QString &txt, IFindSupport::FindFlags findFlags);
     bool replaceStep(const QString &before, const QString &after,
         IFindSupport::FindFlags findFlags);
     int replaceAll(const QString &before, const QString &after,

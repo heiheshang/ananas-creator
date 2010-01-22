@@ -163,6 +163,7 @@ public:
 
     QString m_displayName;
     bool m_parenthesesMatchingEnabled;
+    bool m_autoParenthesesEnabled;
     QTimer *m_updateTimer;
 
     // parentheses matcher
@@ -194,12 +195,17 @@ public:
     uint m_marksVisible : 1;
     uint m_codeFoldingVisible : 1;
     uint m_codeFoldingSupported : 1;
+    uint m_mouseNavigationEnabled : 1;
     uint m_revisionsVisible : 1;
     uint m_lineNumbersVisible : 1;
     uint m_highlightCurrentLine : 1;
     uint m_requestMarkEnabled : 1;
     uint m_lineSeparatorsAllowed : 1;
     int m_visibleWrapColumn;
+
+    QTextCharFormat m_linkFormat;
+    BaseTextEditor::Link m_currentLink;
+    bool m_linkPressed;
 
     QTextCharFormat m_ifdefedOutFormat;
 
@@ -226,7 +232,7 @@ public:
     QString copyBlockSelection();
     void removeBlockSelection(const QString &text = QString());
     bool m_moveLineUndoHack;
-    
+
     QTextCursor m_findScope;
     QTextCursor m_selectBlockAnchor;
 
@@ -237,6 +243,7 @@ public:
     QTimer *m_highlightBlocksTimer;
 
     QPointer<BaseTextEditorAnimator> m_animator;
+    int m_cursorBlockNumber;
 
 };
 

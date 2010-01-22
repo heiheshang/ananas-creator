@@ -46,8 +46,10 @@
 
 #include <cplusplus/ResolveExpression.h>
 #include <cplusplus/LookupContext.h>
+#include <cplusplus/MatchingText.h>
 #include <cplusplus/Overview.h>
 #include <cplusplus/ExpressionUnderCursor.h>
+#include <cplusplus/BackwardsScanner.h>
 #include <cplusplus/TokenUnderCursor.h>
 
 #include <coreplugin/icore.h>
@@ -85,6 +87,14 @@ public:
     {
         setFocusPolicy(Qt::NoFocus);
         setAttribute(Qt::WA_DeleteOnClose);
+
+        // Set the window and button text to the tooltip text color, since this
+        // widget draws the background as a tooltip.
+        QPalette p = palette();
+        const QColor toolTipTextColor = p.color(QPalette::Inactive, QPalette::ToolTipText);
+        p.setColor(QPalette::Inactive, QPalette::WindowText, toolTipTextColor);
+        p.setColor(QPalette::Inactive, QPalette::ButtonText, toolTipTextColor);
+        setPalette(p);
     }
 
 protected:
@@ -160,7 +170,7 @@ public:
         Symbol *previousSymbol = switchSymbol(symbol);
         accept(symbol->identity());
         if (_item)
-            _item.m_data = QVariant::fromValue(symbol);
+            _item.data = QVariant::fromValue(symbol);
         (void) switchSymbol(previousSymbol);
         return switchCompletionItem(previousItem);
     }
@@ -183,8 +193,8 @@ protected:
     TextEditor::CompletionItem newCompletionItem(Name *name)
     {
         TextEditor::CompletionItem item(_collector);
-        item.m_text = overview.prettyName(name);
-        item.m_icon = _collector->iconForSymbol(_symbol);
+        item.text = overview.prettyName(name);
+        item.icon = _collector->iconForSymbol(_symbol);
         return item;
     }
 
@@ -194,7 +204,7 @@ protected:
     virtual void visit(TemplateNameId *name)
     {
         _item = newCompletionItem(name);
-        _item.m_text = QLatin1String(name->identifier()->chars());
+        _item.text = QLatin1String(name->identifier()->chars());
     }
 
     virtual void visit(DestructorNameId *name)
@@ -210,12 +220,21 @@ protected:
     { _item = newCompletionItem(name->unqualifiedNameId()); }
 };
 
+struct CompleteFunctionDeclaration
+{
+    explicit CompleteFunctionDeclaration(Function *f = 0)
+        : function(f)
+    {}
+
+    Function *function;
+};
 
 } // namespace Internal
 } // namespace CppTools
 
 using namespace CppTools::Internal;
 
+Q_DECLARE_METATYPE(CompleteFunctionDeclaration)
 
 void FakeToolTipFrame::paintEvent(QPaintEvent *)
 {
@@ -473,8 +492,8 @@ int CppQuickFixCollector::startCompletion(TextEditor::ITextEditable *editor)
             int i = 0;
             foreach (QuickFixOperationPtr op, quickFixes) {
                 TextEditor::CompletionItem item(this);
-                item.m_text = op->description();
-                item.m_data = QVariant::fromValue(i);
+                item.text = op->description();
+                item.data = QVariant::fromValue(i);
                 _completions.append(item);
                 ++i;
             }
@@ -493,7 +512,7 @@ void CppQuickFixCollector::complete(const TextEditor::CompletionItem &item)
 {
     CppEditorSupport *extra = _modelManager->editorSupport(_editor);
     const QList<QuickFixOperationPtr> quickFixes = extra->quickFixes();
-    QuickFixOperationPtr quickFix = quickFixes.at(item.m_data.toInt());
+    QuickFixOperationPtr quickFix = quickFixes.at(item.data.toInt());
     TextEditor::BaseTextEditor *ed = qobject_cast<TextEditor::BaseTextEditor *>(_editor->widget());
     quickFix->apply(ed->textCursor());
 }
@@ -506,8 +525,11 @@ void CppQuickFixCollector::cleanup()
 CppCodeCompletion::CppCodeCompletion(CppModelManager *manager)
     : ICompletionCollector(manager),
       m_manager(manager),
+      m_editor(0),
+      m_startPosition(-1),
       m_caseSensitivity(Qt::CaseSensitive),
       m_autoInsertBrackets(true),
+      m_partialCompletionEnabled(true),
       m_forcedCompletion(false),
       m_completionOperator(T_EOF_SYMBOL)
 {
@@ -549,7 +571,7 @@ void CppCodeCompletion::setPartialCompletionEnabled(bool partialCompletionEnable
 }
 
 /*
-  Searches beckward for an access operator.
+  Searches backwards for an access operator.
 */
 static int startOfOperator(TextEditor::ITextEditable *editor,
                            int pos, unsigned *kind,
@@ -560,41 +582,65 @@ static int startOfOperator(TextEditor::ITextEditable *editor,
     const QChar ch3 = pos >  1 ? editor->characterAt(pos - 3) : QChar();
 
     int start = pos;
-    int k = T_EOF_SYMBOL;
+    int completionKind = T_EOF_SYMBOL;
 
-    if        (ch2 != QLatin1Char('.') && ch == QLatin1Char('.')) {
-        k = T_DOT;
+    switch (ch.toLatin1()) {
+    case '.':
+        if (ch2 != QLatin1Char('.')) {
+            completionKind = T_DOT;
+            --start;
+        }
+        break;
+    case ',':
+        completionKind = T_COMMA;
         --start;
-    } else if (ch == QLatin1Char(',')) {
-        k = T_COMMA;
+        break;
+    case '(':
+        if (wantFunctionCall) {
+            completionKind = T_LPAREN;
+            --start;
+        }
+        break;
+    case ':':
+        if (ch3 != QLatin1Char(':') && ch2 == QLatin1Char(':')) {
+            completionKind = T_COLON_COLON;
+            start -= 2;
+        }
+        break;
+    case '>':
+        if (ch2 == QLatin1Char('-')) {
+            completionKind = T_ARROW;
+            start -= 2;
+        }
+        break;
+    case '*':
+        if (ch2 == QLatin1Char('.')) {
+            completionKind = T_DOT_STAR;
+            start -= 2;
+        } else if (ch3 == QLatin1Char('-') && ch2 == QLatin1Char('>')) {
+            completionKind = T_ARROW_STAR;
+            start -= 3;
+        }
+        break;
+    case '\\':
+    case '@':
+        if (ch2.isNull() || ch2.isSpace()) {
+            completionKind = T_DOXY_COMMENT;
+            --start;
+        }
+        break;
+    case '<':
+        completionKind = T_ANGLE_STRING_LITERAL;
         --start;
-    } else if (wantFunctionCall        && ch == QLatin1Char('(')) {
-        k = T_LPAREN;
+        break;
+    case '"':
+        completionKind = T_STRING_LITERAL;
         --start;
-    } else if (ch3 != QLatin1Char(':') && ch2 == QLatin1Char(':') && ch == QLatin1Char(':')) {
-        k = T_COLON_COLON;
-        start -= 2;
-    } else if (ch2 == QLatin1Char('-') && ch == QLatin1Char('>')) {
-        k = T_ARROW;
-        start -= 2;
-    } else if (ch2 == QLatin1Char('.') && ch == QLatin1Char('*')) {
-        k = T_DOT_STAR;
-        start -= 2;
-    } else if (ch3 == QLatin1Char('-') && ch2 == QLatin1Char('>') && ch == QLatin1Char('*')) {
-        k = T_ARROW_STAR;
-        start -= 3;
-    } else if ((ch2.isNull() || ch2.isSpace()) && (ch == QLatin1Char('@') || ch == QLatin1Char('\\'))) {
-        k = T_DOXY_COMMENT;
+        break;
+    case '/':
+        completionKind = T_SLASH;
         --start;
-    } else if (ch == QLatin1Char('<')) {
-        k = T_ANGLE_STRING_LITERAL;
-        --start;
-    } else if (ch == QLatin1Char('"')) {
-        k = T_STRING_LITERAL;
-        --start;
-    } else if (ch == QLatin1Char('/')) {
-        k = T_SLASH;
-        --start;
+        break;
     }
 
     if (start == pos)
@@ -605,12 +651,20 @@ static int startOfOperator(TextEditor::ITextEditable *editor,
     tc.setPosition(pos);
 
     // Include completion: make sure the quote character is the first one on the line
-    if (k == T_STRING_LITERAL) {
+    if (completionKind == T_STRING_LITERAL) {
         QTextCursor s = tc;
         s.movePosition(QTextCursor::StartOfLine, QTextCursor::KeepAnchor);
         QString sel = s.selectedText();
         if (sel.indexOf(QLatin1Char('"')) < sel.length() - 1) {
-            k = T_EOF_SYMBOL;
+            completionKind = T_EOF_SYMBOL;
+            start = pos;
+        }
+    }
+
+    if (completionKind == T_COMMA) {
+        ExpressionUnderCursor expressionUnderCursor;
+        if (expressionUnderCursor.startOfFunctionCall(tc) == -1) {
+            completionKind = T_EOF_SYMBOL;
             start = pos;
         }
     }
@@ -618,25 +672,24 @@ static int startOfOperator(TextEditor::ITextEditable *editor,
     static CPlusPlus::TokenUnderCursor tokenUnderCursor;
     const SimpleToken tk = tokenUnderCursor(tc);
 
-    if (k == T_DOXY_COMMENT && tk.isNot(T_DOXY_COMMENT)) {
-        k = T_EOF_SYMBOL;
+    if (completionKind == T_DOXY_COMMENT && !(tk.is(T_DOXY_COMMENT) || tk.is(T_CPP_DOXY_COMMENT))) {
+        completionKind = T_EOF_SYMBOL;
         start = pos;
     }
     // Don't complete in comments or strings, but still check for include completion
-    else if (tk.is(T_COMMENT) || (tk.isLiteral() &&
-                                  (k != T_STRING_LITERAL
-                                   && k != T_ANGLE_STRING_LITERAL
-                                   && k != T_SLASH))) {
-        k = T_EOF_SYMBOL;
+    else if (tk.is(T_COMMENT) || tk.is(T_CPP_COMMENT) ||
+             (tk.isLiteral() && (completionKind != T_STRING_LITERAL
+                                 && completionKind != T_ANGLE_STRING_LITERAL
+                                 && completionKind != T_SLASH))) {
+        completionKind = T_EOF_SYMBOL;
         start = pos;
     }
     // Include completion: can be triggered by slash, but only in a string
-    else if (k == T_SLASH && (tk.isNot(T_STRING_LITERAL) && tk.isNot(T_ANGLE_STRING_LITERAL))) {
-        k = T_EOF_SYMBOL;
+    else if (completionKind == T_SLASH && (tk.isNot(T_STRING_LITERAL) && tk.isNot(T_ANGLE_STRING_LITERAL))) {
+        completionKind = T_EOF_SYMBOL;
         start = pos;
     }
-
-    if (k == T_LPAREN) {
+    else if (completionKind == T_LPAREN) {
         const QList<SimpleToken> &tokens = tokenUnderCursor.tokens();
         int i = 0;
         for (; i < tokens.size(); ++i) {
@@ -652,40 +705,34 @@ static int startOfOperator(TextEditor::ITextEditable *editor,
         }
 
         if (i == tokens.size()) {
-            k = T_EOF_SYMBOL;
+            completionKind = T_EOF_SYMBOL;
             start = pos;
         }
     }
-
     // Check for include preprocessor directive
-    if (k == T_STRING_LITERAL || k == T_ANGLE_STRING_LITERAL || k == T_SLASH) {
-        const QList<SimpleToken> &tokens = tokenUnderCursor.tokens();
-        int i = 0;
+    else if (completionKind == T_STRING_LITERAL || completionKind == T_ANGLE_STRING_LITERAL || completionKind == T_SLASH) {
         bool include = false;
-        for (; i < tokens.size(); ++i) {
-            const SimpleToken &token = tokens.at(i);
-            if (token.position() == tk.position()) {
-                if (i == 0) // no token on the left, but might be on a previous line
-                    break;
-                const SimpleToken &previousToken = tokens.at(i - 1);
-                if (previousToken.is(T_IDENTIFIER)) {
-                    if (previousToken.text() == QLatin1String("include") ||
-                        previousToken.text() == QLatin1String("import")) {
-                        include = true;
-                        break;
-                    }
+        const QList<SimpleToken> &tokens = tokenUnderCursor.tokens();
+        if (tokens.size() >= 3) {
+            if (tokens.at(0).is(T_POUND) && tokens.at(1).is(T_IDENTIFIER) && (tokens.at(2).is(T_STRING_LITERAL) ||
+                                                                              tokens.at(2).is(T_ANGLE_STRING_LITERAL))) {
+                QStringRef directive = tokens.at(1).text();
+                if (directive == QLatin1String("include") ||
+                    directive == QLatin1String("include_next") ||
+                    directive == QLatin1String("import")) {
+                    include = true;
                 }
             }
         }
 
         if (!include) {
-            k = T_EOF_SYMBOL;
+            completionKind = T_EOF_SYMBOL;
             start = pos;
         }
     }
 
     if (kind)
-        *kind = k;
+        *kind = completionKind;
 
     return start;
 }
@@ -734,8 +781,8 @@ int CppCodeCompletion::startCompletion(TextEditor::ITextEditable *editor)
     if (m_completionOperator == T_DOXY_COMMENT) {
         for (int i = 1; i < T_DOXY_LAST_TAG; ++i) {
             TextEditor::CompletionItem item(this);
-            item.m_text.append(QString::fromLatin1(doxygenTagSpell(i)));
-            item.m_icon = m_icons.keywordIcon();
+            item.text.append(QString::fromLatin1(doxygenTagSpell(i)));
+            item.icon = m_icons.keywordIcon();
             m_completions.append(item);
         }
 
@@ -760,11 +807,14 @@ int CppCodeCompletion::startCompletion(TextEditor::ITextEditable *editor)
     if (m_completionOperator == T_COMMA) {
         tc.setPosition(endOfExpression);
         const int start = expressionUnderCursor.startOfFunctionCall(tc);
-        if (start != -1) {
-            endOfExpression = start;
-            m_startPosition = start + 1;
-            m_completionOperator = T_LPAREN;
+        if (start == -1) {
+            m_completionOperator = T_EOF_SYMBOL;
+            return -1;
         }
+
+        endOfExpression = start;
+        m_startPosition = start + 1;
+        m_completionOperator = T_LPAREN;
     }
 
     QString expression;
@@ -794,11 +844,10 @@ int CppCodeCompletion::startCompletion(TextEditor::ITextEditable *editor)
     const Snapshot snapshot = m_manager->snapshot();
 
     if (Document::Ptr thisDocument = snapshot.value(fileName)) {
-        Symbol *symbol = thisDocument->findSymbolAt(line, column);
-
+        Symbol *lastVisibleSymbol = thisDocument->findSymbolAt(line, column);
         typeOfExpression.setSnapshot(m_manager->snapshot());
 
-        QList<TypeOfExpression::Result> resolvedTypes = typeOfExpression(expression, thisDocument, symbol,
+        QList<TypeOfExpression::Result> resolvedTypes = typeOfExpression(expression, thisDocument, lastVisibleSymbol,
                                                                          TypeOfExpression::Preprocess);
         LookupContext context = typeOfExpression.lookupContext();
 
@@ -824,12 +873,13 @@ int CppCodeCompletion::startCompletion(TextEditor::ITextEditable *editor)
                                         m_completionOperator == T_SLOT)) {
             // Apply signal/slot completion on 'this'
             expression = QLatin1String("this");
-            resolvedTypes = typeOfExpression(expression, thisDocument, symbol);
+            resolvedTypes = typeOfExpression(expression, thisDocument, lastVisibleSymbol);
             context = typeOfExpression.lookupContext();
         }
 
         if (! resolvedTypes.isEmpty()) {
-            if (m_completionOperator == T_LPAREN && completeConstructorOrFunction(resolvedTypes)) {
+            if (m_completionOperator == T_LPAREN &&
+                completeConstructorOrFunction(resolvedTypes, context, endOfExpression, false)) {
                 return m_startPosition;
 
             } else if ((m_completionOperator == T_DOT || m_completionOperator == T_ARROW) &&
@@ -856,16 +906,19 @@ int CppCodeCompletion::startCompletion(TextEditor::ITextEditable *editor)
 
             QTextCursor tc(edit->document());
             tc.setPosition(index);
-            QString baseExpression = expressionUnderCursor(tc);
+
+            const QString baseExpression = expressionUnderCursor(tc);
 
             // Resolve the type of this expression
-            QList<TypeOfExpression::Result> results =
-                    typeOfExpression(baseExpression, thisDocument, symbol, TypeOfExpression::Preprocess);
+            const QList<TypeOfExpression::Result> results =
+                    typeOfExpression(baseExpression, thisDocument,
+                                     lastVisibleSymbol,
+                                     TypeOfExpression::Preprocess);
 
             // If it's a class, add completions for the constructors
             foreach (const TypeOfExpression::Result &result, results) {
                 if (result.first->isClassType()) {
-                    if (completeConstructorOrFunction(results))
+                    if (completeConstructorOrFunction(results, context, endOfExpression, true))
                         return m_startPosition;
                     break;
                 }
@@ -877,12 +930,14 @@ int CppCodeCompletion::startCompletion(TextEditor::ITextEditable *editor)
     return -1;
 }
 
-bool CppCodeCompletion::completeConstructorOrFunction(const QList<TypeOfExpression::Result> &results)
+bool CppCodeCompletion::completeConstructorOrFunction(const QList<TypeOfExpression::Result> &results,
+                                                      const LookupContext &context,
+                                                      int endOfExpression, bool toolTipOnly)
 {
     QList<Function *> functions;
 
     foreach (const TypeOfExpression::Result &result, results) {
-        FullySpecifiedType exprTy = result.first;
+        FullySpecifiedType exprTy = result.first.simplified();
 
         if (Class *klass = exprTy->asClassType()) {
             Name *className = klass->name();
@@ -912,8 +967,8 @@ bool CppCodeCompletion::completeConstructorOrFunction(const QList<TypeOfExpressi
     }
 
     if (functions.isEmpty()) {
-        foreach (const TypeOfExpression::Result &p, results) {
-            FullySpecifiedType ty = p.first;
+        foreach (const TypeOfExpression::Result &result, results) {
+            FullySpecifiedType ty = result.first.simplified();
 
             if (Function *fun = ty->asFunctionType()) {
 
@@ -921,10 +976,6 @@ bool CppCodeCompletion::completeConstructorOrFunction(const QList<TypeOfExpressi
                     continue;
                 else if (! functions.isEmpty() && functions.first()->scope() != fun->scope())
                     continue; // skip fun, it's an hidden declaration.
-
-                Name *name = fun->name();
-                if (QualifiedNameId *q = fun->name()->asQualifiedNameId())
-                    name = q->unqualifiedNameId();
 
                 bool newOverload = true;
 
@@ -939,10 +990,122 @@ bool CppCodeCompletion::completeConstructorOrFunction(const QList<TypeOfExpressi
                     functions.append(fun);
             }
         }
-
     }
 
-    if (! functions.isEmpty()) {
+    if (functions.isEmpty()) {
+        ResolveExpression resolveExpression(context);
+        ResolveClass resolveClass;
+        Name *functionCallOp = context.control()->operatorNameId(OperatorNameId::FunctionCallOp);
+
+        foreach (const TypeOfExpression::Result &result, results) {
+            FullySpecifiedType ty = result.first.simplified();
+
+            if (NamedType *namedTy = ty->asNamedType()) {
+                const QList<Symbol *> classObjectCandidates = resolveClass(namedTy->name(), result, context);
+
+                foreach (Symbol *classObjectCandidate, classObjectCandidates) {
+                    if (Class *klass = classObjectCandidate->asClass()) {
+                        const QList<TypeOfExpression::Result> overloads =
+                                resolveExpression.resolveMember(functionCallOp, klass,
+                                                                namedTy->name());
+
+                        foreach (const TypeOfExpression::Result &overloadResult, overloads) {
+                            FullySpecifiedType overloadTy = overloadResult.first.simplified();
+
+                            if (Function *funTy = overloadTy->asFunctionType())
+                                functions.append(funTy);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // There are two different kinds of completion we want to provide:
+    // 1. If this is a function call, we want to pop up a tooltip that shows the user
+    // the possible overloads with their argument types and names.
+    // 2. If this is a function definition, we want to offer autocompletion of
+    // the function signature.
+
+    // check if function signature autocompletion is appropriate
+    if (! functions.isEmpty() && ! toolTipOnly) {
+
+        // function definitions will only happen in class or namespace scope,
+        // so get the current location's enclosing scope.
+
+        // get current line and column
+        TextEditor::BaseTextEditor *edit = qobject_cast<TextEditor::BaseTextEditor *>(m_editor->widget());
+        int lineSigned = 0, columnSigned = 0;
+        edit->convertPosition(m_editor->position(), &lineSigned, &columnSigned);
+        unsigned line = lineSigned, column = columnSigned;
+
+        // find a scope that encloses the current location, starting from the lastVisibileSymbol
+        // and moving outwards
+        Scope *sc = 0;
+        if (context.symbol())
+            sc = context.symbol()->scope();
+        else if (context.thisDocument())
+            sc = context.thisDocument()->globalSymbols();
+
+        while (sc && sc->enclosingScope()) {
+            unsigned startLine, startColumn;
+            context.thisDocument()->translationUnit()->getPosition(sc->owner()->startOffset(), &startLine, &startColumn);
+            unsigned endLine, endColumn;
+            context.thisDocument()->translationUnit()->getPosition(sc->owner()->endOffset(), &endLine, &endColumn);
+
+            if (startLine <= line && line <= endLine) {
+                if ((startLine != line || startColumn <= column)
+                    && (endLine != line || column <= endColumn))
+                    break;
+            }
+
+            sc = sc->enclosingScope();
+        }
+
+        if (sc && (sc->isClassScope() || sc->isNamespaceScope())) {
+            // It may still be a function call. If the whole line parses as a function
+            // declaration, we should be certain that it isn't.
+            bool autocompleteSignature = false;
+
+            QTextCursor tc(edit->document());
+            tc.setPosition(endOfExpression);
+            BackwardsScanner bs(tc);
+            QString possibleDecl = bs.mid(bs.startOfLine(bs.startToken())).trimmed().append("();");
+
+            Document::Ptr doc = Document::create(QLatin1String("<completion>"));
+            doc->setSource(possibleDecl.toLatin1());
+            if (doc->parse(Document::ParseDeclaration)) {
+                doc->check();
+                if (SimpleDeclarationAST *sd = doc->translationUnit()->ast()->asSimpleDeclaration()) {
+                    if (sd->declarators &&
+                        sd->declarators->declarator->postfix_declarators
+                        && sd->declarators->declarator->postfix_declarators->asFunctionDeclarator()) {
+                        autocompleteSignature = true;
+                    }
+                }
+            }
+
+            if (autocompleteSignature) {
+                // set up signature autocompletion
+                foreach (Function *f, functions) {
+                    Overview overview;
+                    overview.setShowArgumentNames(true);
+
+                    // gets: "parameter list) cv-spec",
+                    QString completion = overview(f->type()).mid(1);
+
+                    TextEditor::CompletionItem item(this);
+                    item.text = completion;
+                    item.data = QVariant::fromValue(CompleteFunctionDeclaration(f));
+                    m_completions.append(item);
+                }
+                return true;
+            }
+        }
+    }
+
+    if (! functions.empty()) {
+        // set up function call tooltip
 
         // Recreate if necessary
         if (!m_functionArgumentWidget)
@@ -956,148 +1119,45 @@ bool CppCodeCompletion::completeConstructorOrFunction(const QList<TypeOfExpressi
     return false;
 }
 
-bool CppCodeCompletion::completeMember(const QList<TypeOfExpression::Result> &results,
+bool CppCodeCompletion::completeMember(const QList<TypeOfExpression::Result> &baseResults,
                                        const LookupContext &context)
 {
-    if (results.isEmpty())
+    if (baseResults.isEmpty())
         return false;
 
-    TypeOfExpression::Result result = results.first();
+    ResolveExpression resolveExpression(context);
+    ResolveClass resolveClass;
+
+    bool replacedDotOperator = false;
+    const QList<TypeOfExpression::Result> classObjectResults =
+            resolveExpression.resolveBaseExpression(baseResults,
+                                                    m_completionOperator,
+                                                    &replacedDotOperator);
+
     QList<Symbol *> classObjectCandidates;
+    foreach (const TypeOfExpression::Result &r, classObjectResults) {
+        FullySpecifiedType ty = r.first.simplified();
 
-    if (m_completionOperator == T_ARROW)  {
-        FullySpecifiedType ty = result.first;
+        if (Class *klass = ty->asClassType())
+            classObjectCandidates.append(klass);
 
-        if (ReferenceType *refTy = ty->asReferenceType())
-            ty = refTy->elementType();
+        else if (NamedType *namedTy = ty->asNamedType()) {
+            Name *className = namedTy->name();
+            const QList<Symbol *> classes = resolveClass(className, r, context);
 
-        if (Class *classTy = ty->asClassType()) {
-            Symbol *symbol = result.second;
-            if (symbol && ! symbol->isClass())
-                classObjectCandidates.append(classTy);
-        } else if (NamedType *namedTy = ty->asNamedType()) {
-            // ### This code is pretty slow.
-            const QList<Symbol *> candidates = context.resolve(namedTy->name());
-            foreach (Symbol *candidate, candidates) {
-                if (candidate->isTypedef()) {
-                    ty = candidate->type();
-                    const ResolveExpression::Result r(ty, candidate);
-                    result = r;
-                    break;
-                }
-            }
-        }
-
-        if (NamedType *namedTy = ty->asNamedType()) {
-            ResolveExpression resolveExpression(context);
-            ResolveClass resolveClass;
-
-            const QList<Symbol *> candidates = resolveClass(result, context);
-            foreach (Symbol *classObject, candidates) {
-                const QList<TypeOfExpression::Result> overloads =
-                        resolveExpression.resolveArrowOperator(result, namedTy,
-                                                               classObject->asClass());
-
-                foreach (TypeOfExpression::Result r, overloads) {
-                    FullySpecifiedType ty = r.first;
-                    Function *funTy = ty->asFunctionType();
-                    if (! funTy)
-                        continue;
-
-                    ty = funTy->returnType();
-
-                    if (ReferenceType *refTy = ty->asReferenceType())
-                        ty = refTy->elementType();
-
-                    if (PointerType *ptrTy = ty->asPointerType()) {
-                        if (NamedType *namedTy = ptrTy->elementType()->asNamedType()) {
-                            const QList<Symbol *> classes =
-                                    resolveClass(namedTy, result, context);
-
-                            foreach (Symbol *c, classes) {
-                                if (! classObjectCandidates.contains(c))
-                                    classObjectCandidates.append(c);
-                            }
-                        }
-                    }
-                }
-            }
-        } else if (PointerType *ptrTy = ty->asPointerType()) {
-            if (NamedType *namedTy = ptrTy->elementType()->asNamedType()) {
-                ResolveClass resolveClass;
-
-                const QList<Symbol *> classes = resolveClass(namedTy, result,
-                                                             context);
-
-                foreach (Symbol *c, classes) {
-                    if (! classObjectCandidates.contains(c))
-                        classObjectCandidates.append(c);
-                }
-            } else if (Class *classTy = ptrTy->elementType()->asClassType()) {
-                // typedef struct { int x } *Ptr;
-                // Ptr p;
-                // p->
-                classObjectCandidates.append(classTy);
-            }
-        }
-    } else if (m_completionOperator == T_DOT) {
-        FullySpecifiedType ty = result.first;
-
-        if (ReferenceType *refTy = ty->asReferenceType())
-            ty = refTy->elementType();
-
-        NamedType *namedTy = 0;
-
-        if (ArrayType *arrayTy = ty->asArrayType()) {
-            // Replace . with [0]. when `ty' is an array type.
-            FullySpecifiedType elementTy = arrayTy->elementType();
-
-            if (ReferenceType *refTy = elementTy->asReferenceType())
-                elementTy = refTy->elementType();
-
-            if (elementTy->isNamedType() || elementTy->isPointerType()) {
-                ty = elementTy;
-
-                const int length = m_editor->position() - m_startPosition + 1;
-                m_editor->setCurPos(m_startPosition - 1);
-                m_editor->replace(length, QLatin1String("[0]."));
-                m_startPosition += 3;
-            }
-        }
-
-        if (PointerType *ptrTy = ty->asPointerType()) {
-            if (ptrTy->elementType()->isNamedType()) {
-                // Replace . with ->
-                int length = m_editor->position() - m_startPosition + 1;
-                m_editor->setCurPos(m_startPosition - 1);
-                m_editor->replace(length, QLatin1String("->"));
-                ++m_startPosition;
-                namedTy = ptrTy->elementType()->asNamedType();
-            }
-        } else if (Class *classTy = ty->asClassType()) {
-            Symbol *symbol = result.second;
-            if (symbol && ! symbol->isClass())
-                classObjectCandidates.append(classTy);
-        } else {
-            namedTy = ty->asNamedType();
-            if (! namedTy) {
-                Function *fun = ty->asFunctionType();
-                if (fun && fun->scope() && (fun->scope()->isBlockScope() || fun->scope()->isNamespaceScope()))
-                    namedTy = fun->returnType()->asNamedType();
-            }
-        }
-
-        if (namedTy) {
-            ResolveClass resolveClass;
-            const QList<Symbol *> symbols = resolveClass(namedTy, result,
-                                                         context);
-            foreach (Symbol *symbol, symbols) {
-                if (classObjectCandidates.contains(symbol))
-                    continue;
-                if (Class *klass = symbol->asClass())
+            foreach (Symbol *c, classes) {
+                if (Class *klass = c->asClass())
                     classObjectCandidates.append(klass);
             }
         }
+    }
+
+    if (replacedDotOperator && ! classObjectCandidates.isEmpty()) {
+        // Replace . with ->
+        int length = m_editor->position() - m_startPosition + 1;
+        m_editor->setCurPos(m_startPosition - 1);
+        m_editor->replace(length, QLatin1String("->"));
+        ++m_startPosition;
     }
 
     completeClass(classObjectCandidates, context, /*static lookup = */ false);
@@ -1136,8 +1196,8 @@ void CppCodeCompletion::addKeywords()
     // keyword completion items.
     for (int i = T_FIRST_KEYWORD; i < T_FIRST_OBJC_AT_KEYWORD; ++i) {
         TextEditor::CompletionItem item(this);
-        item.m_text = QLatin1String(Token::name(i));
-        item.m_icon = m_icons.keywordIcon();
+        item.text = QLatin1String(Token::name(i));
+        item.icon = m_icons.keywordIcon();
         m_completions.append(item);
     }
 }
@@ -1152,8 +1212,8 @@ void CppCodeCompletion::addMacros(const LookupContext &context)
 
     foreach (const QString &macroName, definedMacros) {
         TextEditor::CompletionItem item(this);
-        item.m_text = macroName;
-        item.m_icon = m_icons.macroIcon();
+        item.text = macroName;
+        item.icon = m_icons.macroIcon();
         m_completions.append(item);
     }
 }
@@ -1223,9 +1283,26 @@ bool CppCodeCompletion::completeInclude(const QTextCursor &cursor)
             }
             foreach (const QString &itemText, m_manager->includesInPath(realPath)) {
                 TextEditor::CompletionItem item(this);
-                item.m_text += itemText;
+                item.text += itemText;
                 // TODO: Icon for include files
-                item.m_icon = m_icons.keywordIcon();
+                item.icon = m_icons.keywordIcon();
+                m_completions.append(item);
+            }
+        }
+
+        QStringList frameworkPaths = m_manager->projectInfo(project).frameworkPaths;
+        foreach (const QString &frameworkPath, frameworkPaths) {
+            QString realPath = frameworkPath;
+            if (!directoryPrefix.isEmpty()) {
+                realPath += QLatin1Char('/');
+                realPath += directoryPrefix;
+                realPath += QLatin1String(".framework/Headers");
+            }
+            foreach (const QString &itemText, m_manager->includesInPath(realPath)) {
+                TextEditor::CompletionItem item(this);
+                item.text += itemText;
+                // TODO: Icon for include files
+                item.icon = m_icons.keywordIcon();
                 m_completions.append(item);
             }
         }
@@ -1300,11 +1377,10 @@ bool CppCodeCompletion::completeQtMethod(const QList<TypeOfExpression::Result> &
 
     QSet<QString> signatures;
     foreach (const TypeOfExpression::Result &p, results) {
-        FullySpecifiedType ty = p.first;
-        if (ReferenceType *refTy = ty->asReferenceType())
-            ty = refTy->elementType();
+        FullySpecifiedType ty = p.first.simplified();
+
         if (PointerType *ptrTy = ty->asPointerType())
-            ty = ptrTy->elementType();
+            ty = ptrTy->elementType().simplified();
         else
             continue; // not a pointer or a reference to a pointer.
 
@@ -1313,7 +1389,7 @@ bool CppCodeCompletion::completeQtMethod(const QList<TypeOfExpression::Result> &
             continue;
 
         const QList<Symbol *> classObjects =
-                resolveClass(namedTy, p, context);
+                resolveClass(namedTy->name(), p, context);
 
         if (classObjects.isEmpty())
             continue;
@@ -1361,7 +1437,7 @@ bool CppCodeCompletion::completeQtMethod(const QList<TypeOfExpression::Result> &
                         if (! signatures.contains(signature)) {
                             signatures.insert(signature);
 
-                            ci.m_text = signature; // fix the completion item.
+                            ci.text = signature; // fix the completion item.
                             m_completions.append(ci);
                         }
 
@@ -1417,10 +1493,17 @@ void CppCodeCompletion::completions(QList<TextEditor::CompletionItem> *completio
             }
             const QRegExp regExp(keyRegExp, m_caseSensitivity);
 
+            const bool hasKey = !key.isEmpty();
             foreach (TextEditor::CompletionItem item, m_completions) {
-                if (regExp.indexIn(item.m_text) == 0) {
-                    item.m_relevance = (key.length() > 0 &&
-                                         item.m_text.startsWith(key, Qt::CaseInsensitive)) ? 1 : 0;
+                if (regExp.indexIn(item.text) == 0) {
+                    if (hasKey) {
+                        if (item.text.startsWith(key, Qt::CaseSensitive)) {
+                            item.relevance = 2;
+                        } else if (m_caseSensitivity == Qt::CaseInsensitive
+                                   && item.text.startsWith(key, Qt::CaseInsensitive)) {
+                            item.relevance = 1;
+                        }
+                    }
                     (*completions) << item;
                 }
             }
@@ -1428,7 +1511,7 @@ void CppCodeCompletion::completions(QList<TextEditor::CompletionItem> *completio
                    m_completionOperator == T_SIGNAL ||
                    m_completionOperator == T_SLOT) {
             foreach (TextEditor::CompletionItem item, m_completions) {
-                if (item.m_text.startsWith(key, Qt::CaseInsensitive)) {
+                if (item.text.startsWith(key, Qt::CaseInsensitive)) {
                     (*completions) << item;
                 }
             }
@@ -1440,22 +1523,25 @@ void CppCodeCompletion::complete(const TextEditor::CompletionItem &item)
 {
     Symbol *symbol = 0;
 
-    if (item.m_data.isValid())
-        symbol = item.m_data.value<Symbol *>();
+    if (item.data.isValid())
+        symbol = item.data.value<Symbol *>();
 
     QString toInsert;
     QString extraChars;
     int extraLength = 0;
+    int cursorOffset = 0;
+
+    bool autoParenthesesEnabled = true;
 
     if (m_completionOperator == T_SIGNAL || m_completionOperator == T_SLOT) {
-        toInsert = item.m_text;
+        toInsert = item.text;
         extraChars += QLatin1Char(')');
     } else if (m_completionOperator == T_STRING_LITERAL || m_completionOperator == T_ANGLE_STRING_LITERAL) {
-        toInsert = item.m_text;
+        toInsert = item.text;
         if (!toInsert.endsWith(QLatin1Char('/')))
             extraChars += QLatin1Char((m_completionOperator == T_ANGLE_STRING_LITERAL) ? '>' : '"');
     } else {
-        toInsert = item.m_text;
+        toInsert = item.text;
 
         //qDebug() << "current symbol:" << overview.prettyName(symbol->name())
         //<< overview.prettyType(symbol->type());
@@ -1475,18 +1561,36 @@ void CppCodeCompletion::complete(const TextEditor::CompletionItem &item)
                 } else if (! function->isAmbiguous()) {
                     extraChars += QLatin1Char('(');
 
-                    // If the function takes no arguments, automatically place the closing parenthesis
-                    if (item.m_duplicateCount == 0 && ! function->hasArguments()) {
-                        extraChars += QLatin1Char(')');
+                    // If the function doesn't return anything, automatically place the semicolon,
+                    // unless we're doing a scope completion (then it might be function definition).
+                    bool endWithSemicolon = function->returnType()->isVoidType() && m_completionOperator != T_COLON_COLON;
 
-                        // If the function doesn't return anything, automatically place the semicolon,
-                        // unless we're doing a scope completion (then it might be function definition).
-                        if (function->returnType()->isVoidType() && m_completionOperator != T_COLON_COLON) {
+                    // If the function takes no arguments, automatically place the closing parenthesis
+                    if (item.duplicateCount == 0 && ! function->hasArguments()) {
+                        extraChars += QLatin1Char(')');
+                        if (endWithSemicolon)
                             extraChars += QLatin1Char(';');
+                    } else if (autoParenthesesEnabled) {
+                        const QChar lookAhead = m_editor->characterAt(m_editor->position() + 1);
+                        if (MatchingText::shouldInsertMatchingText(lookAhead)) {
+                            extraChars += QLatin1Char(')');
+                            --cursorOffset;
+                            if (endWithSemicolon) {
+                                extraChars += QLatin1Char(';');
+                                --cursorOffset;
+                            }
                         }
                     }
                 }
             }
+        }
+
+        if (m_autoInsertBrackets && item.data.canConvert<CompleteFunctionDeclaration>()) {
+            // everything from the closing parenthesis on are extra chars, to
+            // make sure an auto-inserted ")" gets replaced by ") const" if necessary
+            int closingParen = toInsert.lastIndexOf(QLatin1Char(')'));
+            extraChars = toInsert.mid(closingParen);
+            toInsert.truncate(closingParen);
         }
     }
 
@@ -1506,6 +1610,8 @@ void CppCodeCompletion::complete(const TextEditor::CompletionItem &item)
     int length = m_editor->position() - m_startPosition + extraLength;
     m_editor->setCurPos(m_startPosition);
     m_editor->replace(length, toInsert);
+    if (cursorOffset)
+        m_editor->setCurPos(m_editor->position() + cursorOffset);
 }
 
 bool CppCodeCompletion::partiallyComplete(const QList<TextEditor::CompletionItem> &completionItems)
@@ -1517,8 +1623,8 @@ bool CppCodeCompletion::partiallyComplete(const QList<TextEditor::CompletionItem
         return true;
     } else if (m_partialCompletionEnabled && m_completionOperator != T_LPAREN) {
         // Compute common prefix
-        QString firstKey = completionItems.first().m_text;
-        QString lastKey = completionItems.last().m_text;
+        QString firstKey = completionItems.first().text;
+        QString lastKey = completionItems.last().text;
         const int length = qMin(firstKey.length(), lastKey.length());
         firstKey.truncate(length);
         lastKey.truncate(length);

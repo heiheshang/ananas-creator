@@ -78,6 +78,7 @@ TextEditorSettings::TextEditorSettings(QObject *parent)
     formatDescriptions.append(currentLineNumber);
 
     formatDescriptions.append(FormatDescription(QLatin1String(C_OCCURRENCES), tr("Occurrences")));
+    formatDescriptions.append(FormatDescription(QLatin1String(C_OCCURRENCES_UNUSED), tr("Unused Occurrence")));
     formatDescriptions.append(FormatDescription(QLatin1String(C_OCCURRENCES_RENAME), tr("Renaming Occurrence")));
 
     // Standard categories
@@ -91,7 +92,8 @@ TextEditorSettings::TextEditorSettings(QObject *parent)
     formatDescriptions.append(FormatDescription(QLatin1String(C_COMMENT), tr("Comment"), Qt::darkGreen));
     formatDescriptions.append(FormatDescription(QLatin1String(C_DOXYGEN_COMMENT), tr("Doxygen Comment"), Qt::darkBlue));
     formatDescriptions.append(FormatDescription(QLatin1String(C_DOXYGEN_TAG), tr("Doxygen Tag"), Qt::blue));
-    formatDescriptions.append(FormatDescription(QLatin1String(C_DISABLED_CODE), tr("Disabled Code"), Qt::gray));
+    formatDescriptions.append(FormatDescription(QLatin1String(C_VISUAL_WHITESPACE), tr("Visual Whitespace"), Qt::lightGray));
+    formatDescriptions.append(FormatDescription(QLatin1String(C_DISABLED_CODE), tr("Disabled Code")));
 
     // Diff categories
     formatDescriptions.append(FormatDescription(QLatin1String(C_ADDED_LINE), tr("Added Line"), QColor(0, 170, 0)));
@@ -155,7 +157,7 @@ void TextEditorSettings::initializeEditor(BaseTextEditor *editor)
 {
     // Connect to settings change signals
     connect(this, SIGNAL(fontSettingsChanged(TextEditor::FontSettings)),
-	    editor, SLOT(setFontSettingsIfVisible(TextEditor::FontSettings)));
+            editor, SLOT(setFontSettingsIfVisible(TextEditor::FontSettings)));
     connect(this, SIGNAL(tabSettingsChanged(TextEditor::TabSettings)),
             editor, SLOT(setTabSettings(TextEditor::TabSettings)));
     connect(this, SIGNAL(storageSettingsChanged(TextEditor::StorageSettings)),
@@ -164,7 +166,7 @@ void TextEditorSettings::initializeEditor(BaseTextEditor *editor)
             editor, SLOT(setDisplaySettings(TextEditor::DisplaySettings)));
 
     connect(editor, SIGNAL(requestFontSize(int)),
-	    this, SLOT(fontSizeRequested(int)));
+            this, SLOT(fontSizeRequested(int)));
 
     // Apply current settings (tab settings depend on font settings)
     editor->setFontSettings(fontSettings());

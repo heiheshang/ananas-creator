@@ -19,3 +19,29 @@ To do:
 - setting breakpoints by filename:line
 - signaling of stopped/single step end. SIGTRAP? SIGSTOP?
 - run it against the red brick
+
+
+Setting up TRK on Linux with Bluetooth 
+
+Enter the following commands in a terminal (all as root, adjust device
+permissions as required to work as user):
+
+
+sdptool add SP  # announce Serial Port Profile via Service Discovery Protocol
+sudo mknod --mode=666 /dev/rfcomm0 c 216 0  # Creates a Bluetooth Serial Device
+
+rfcomm listen /dev/rfcomm0 1 $PWD/trklauncher -v -f {}
+
+#This should print the Trk/CPU versions. The option -f tells the command to
+#disable the serial frames message encapsulation for BlueTooth.
+
+#The same with the debug adapter:
+
+rfcomm listen /dev/rfcomm0 1 $PWD/run.pl -af -av -w {}
+rfcomm listen /dev/rfcomm0 1 $PWD/runner -af -av -w {}
+
+#Important options: -w wait for adapter, -af omit serial frame.
+
+cp /data5/dev/debugger/symbian-codesourcery-welsh/cs-gdb/build/gdb/gdb cs-gdb
+cp /data5/dev/trk/filebrowseapp* .
+cp /home/f*/dev/creator/tests/manual/trk/*.bin .

@@ -30,21 +30,18 @@
 #ifndef FORMWINDOWEDITOR_H
 #define FORMWINDOWEDITOR_H
 
-#include "editorwidget.h"
+#include "designer_export.h"
 
 #include <coreplugin/editormanager/ieditor.h>
 
-#include <QtCore/QByteArray>
 #include <QtCore/QStringList>
-#include <QtGui/QDockWidget>
-
-#include "designer_export.h"
 
 QT_BEGIN_NAMESPACE
 class QDesignerFormWindowInterface;
 class QDesignerFormWindowManagerInterface;
 class QFile;
 class QToolBar;
+class QDockWidget;
 QT_END_NAMESPACE
 
 namespace ProjectExplorer {
@@ -54,9 +51,10 @@ class NodesWatcher;
 
 namespace Designer {
 namespace Internal {
-
 class FormWindowFile;
 class FormWindowHost;
+class EditorWidget;
+}
 
 // Master class maintaining a form window editor,
 // containing file and widget host
@@ -93,9 +91,9 @@ public:
     QWidget *integrationContainer();
     void updateFormWindowSelectionHandles(bool state);
     void setSuggestedFileName(const QString &fileName);
-    QDockWidget* const* dockWidgets() const { return m_editorWidget->dockWidgets(); }
-    bool isLocked() const { return m_editorWidget->isLocked(); }
-    void setLocked(bool locked) { m_editorWidget->setLocked(locked); }
+    QDockWidget* const* dockWidgets() const;
+    bool isLocked() const;
+    void setLocked(bool locked);
 
     QString contents() const;
 
@@ -116,9 +114,9 @@ private:
     QString m_displayName;
     const QList<int> m_context;
     QDesignerFormWindowInterface *m_formWindow;
-    FormWindowFile *m_file;
-    FormWindowHost *m_host;
-    EditorWidget *m_editorWidget;
+    Internal::FormWindowFile *m_file;
+    Internal::FormWindowHost *m_host;
+    Internal::EditorWidget *m_editorWidget;
     QToolBar *m_toolBar;
     QStringList m_originalUiQrcPaths;
     ProjectExplorer::SessionNode *m_sessionNode;
@@ -126,6 +124,5 @@ private:
 };
 
 } // namespace Internal
-} // namespace Designer
 
 #endif // FORMWINDOWEDITOR_H

@@ -61,7 +61,7 @@
 
 using namespace std;
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 TranslationUnit::TranslationUnit(Control *control, StringLiteral *fileId)
     : _control(control),
@@ -254,6 +254,8 @@ bool TranslationUnit::parse(ParseMode mode)
 
     if (! isTokenized())
         tokenize();
+
+    f._parsed = true;
 
     Parser parser(this);
     parser.setQtMocRunEnabled(f._qtMocRunEnabled);
@@ -515,4 +517,4 @@ void TranslationUnit::release()
     _tokens = 0;
 }
 
-CPLUSPLUS_END_NAMESPACE
+

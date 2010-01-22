@@ -47,6 +47,8 @@
 #include <extensionsystem/pluginmanager.h>
 #include <texteditor/basetexteditor.h>
 #include <texteditor/itexteditable.h>
+#include <projectexplorer/projectexplorer.h>
+#include <projectexplorer/session.h>
 
 #include <QtDesigner/QDesignerFormWindowInterface>
 
@@ -342,6 +344,19 @@ static Document::Ptr findDefinition(const Function *functionDeclaration, int *li
 
 }
 
+static bool isEndingQuote(const QString &contents, int quoteIndex)
+{
+    bool endingQuote = true;
+    if (quoteIndex > 0) {
+        int previous = 1;
+        while (contents.at(quoteIndex - previous) == QLatin1Char('\\')) {
+            previous++;
+            endingQuote = !endingQuote;
+        }
+    }
+    return endingQuote;
+}
+
 // TODO: Wait for robust Roberto's code using AST or whatever for that. Current implementation is hackish.
 static int findClassEndPosition(const QString &headerContents, int classStartPosition)
 {
@@ -355,13 +370,13 @@ static int findClassEndPosition(const QString &headerContents, int classStartPos
         if (contents.mid(idx, 2) == QLatin1String("//")) {
             idx = contents.indexOf(QLatin1Char('\n'), idx + 2) + 1; // drop everything up to the end of line
         } else if (contents.mid(idx, 2) == QLatin1String("/*")) {
-            idx = contents.indexOf(QLatin1String("*/"), idx + 2) + 1; // drop everything up to the nearest */
+            idx = contents.indexOf(QLatin1String("*/"), idx + 2) + 2; // drop everything up to the nearest */
         } else if (contents.mid(idx, 4) == QLatin1String("'\\\"'")) {
             idx += 4; // drop it
         } else if (contents.at(idx) == QLatin1Char('\"')) {
             do {
                 idx = contents.indexOf(QLatin1Char('\"'), idx + 1); // drop everything up to the nearest "
-            } while (idx > 0 && contents.at(idx - 1) == QLatin1Char('\\')); // if the nearest " is preceeded by \ we find next one
+            } while (idx > 0 && !isEndingQuote(contents, idx)); // if the nearest " is preceded by \ (or by \\\ or by \\\\\, but not by \\ nor \\\\) we find next one
             if (idx < 0)
                 break;
             idx++;
@@ -564,9 +579,22 @@ bool QtCreatorIntegration::navigateToSlot(const QString &objectName,
     const QFileInfo fi(currentUiFile);
     const QString uicedName = QLatin1String("ui_") + fi.completeBaseName() + QLatin1String(".h");
 
+    // Retrieve code model snapshot restricted to project of ui file.
+    const ProjectExplorer::Project *uiProject = ProjectExplorer::ProjectExplorerPlugin::instance()->session()->projectForFile(currentUiFile);
+    if (!uiProject) {
+        *errorMessage = tr("Internal error: No project could be found for %1.").arg(currentUiFile);
+        return false;
+    }
+    CPlusPlus::Snapshot docTable = cppModelManagerInstance()->snapshot();
+    for  (CPlusPlus::Snapshot::iterator it = docTable.begin(); it != docTable.end(); ) {
+        const ProjectExplorer::Project *project = ProjectExplorer::ProjectExplorerPlugin::instance()->session()->projectForFile(it.key());
+        if (project == uiProject) {
+            ++it;
+        } else {
+            it = docTable.erase(it);
+        }
+    }
     // take all docs, find the ones that include the ui_xx.h.
-
-    const CPlusPlus::Snapshot docTable = cppModelManagerInstance()->snapshot();
     QList<Document::Ptr> docList = findDocumentsIncluding(docTable, uicedName, true); // change to false when we know the absolute path to generated ui_<>.h file
 
     if (Designer::Constants::Internal::debug)

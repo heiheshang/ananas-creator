@@ -48,17 +48,18 @@ using namespace Qt4ProjectManager::Internal;
 ProjectLoadWizard::ProjectLoadWizard(Qt4Project *project, QWidget *parent, Qt::WindowFlags flags)
     : QWizard(parent, flags), m_project(project), m_importVersion(0), m_temporaryVersion(false)
 {
+    setWindowTitle(tr("Import existing build settings"));
     QtVersionManager * vm = QtVersionManager::instance();
     QString directory = QFileInfo(project->file()->fileName()).absolutePath();
-    QString importVersion =  QtVersionManager::findQtVersionFromMakefile(directory);
+    QString importVersion =  QtVersionManager::findQMakeBinaryFromMakefile(directory);
 
     if (!importVersion.isNull()) {
         // This also means we have a build in there
         // First get the qt version
-        m_importVersion = vm->qtVersionForDirectory(importVersion);
+        m_importVersion = vm->qtVersionForQMakeBinary(importVersion);
         // Okay does not yet exist, create
         if (!m_importVersion) {
-            m_importVersion = new QtVersion(QFileInfo(importVersion).baseName(), importVersion);
+            m_importVersion = new QtVersion(importVersion);
             m_temporaryVersion = true;
         }
 
@@ -112,38 +113,6 @@ ProjectLoadWizard::~ProjectLoadWizard()
 
 }
 
-void ProjectLoadWizard::addBuildConfiguration(QString buildConfigurationName, QtVersion *qtversion, QtVersion::QmakeBuildConfig qmakeBuildConfiguration, QStringList additionalArguments)
-{
-    QMakeStep *qmakeStep = m_project->qmakeStep();
-    MakeStep *makeStep = m_project->makeStep();
-
-    bool debug = qmakeBuildConfiguration & QtVersion::DebugBuild;
-    // Check that bc.name is not already in use
-    if (m_project->buildConfigurations().contains(buildConfigurationName)) {
-        int i =1;
-        do {
-            ++i;
-        } while (m_project->buildConfigurations().contains(buildConfigurationName + " " + QString::number(i)));
-        buildConfigurationName.append(" " + QString::number(i));
-    }
-
-    // Add the buildconfiguration
-    m_project->addBuildConfiguration(buildConfigurationName);
-    qmakeStep->setValue(buildConfigurationName, "qmakeArgs", additionalArguments);
-    // set some options for qmake and make
-    if (qmakeBuildConfiguration & QtVersion::BuildAll) // debug_and_release => explicit targets
-        makeStep->setValue(buildConfigurationName, "makeargs", QStringList() << (debug ? "debug" : "release"));
-
-    m_project->setValue(buildConfigurationName, "buildConfiguration", int(qmakeBuildConfiguration));
-
-    // Finally set the qt version
-    bool defaultQtVersion = (qtversion == 0);
-    if (defaultQtVersion)
-        m_project->setQtVersion(buildConfigurationName, 0);
-    else
-        m_project->setQtVersion(buildConfigurationName, qtversion->uniqueId());
-}
-
 void ProjectLoadWizard::done(int result)
 {
     QtVersionManager *vm = QtVersionManager::instance();
@@ -151,7 +120,6 @@ void ProjectLoadWizard::done(int result)
     // This normally happens on showing the final page, but since we
     // don't show it anymore, do it here
 
-    QString directory = QFileInfo(m_project->file()->fileName()).absolutePath();
     if (m_importVersion && importCheckbox->isChecked()) {
         // Importing
         if (m_temporaryVersion)
@@ -160,7 +128,7 @@ void ProjectLoadWizard::done(int result)
         // qDebug()<<"Creating m_buildconfiguration entry from imported stuff";
         // qDebug()<<((m_importBuildConfig& QtVersion::BuildAll)? "debug_and_release" : "")<<((m_importBuildConfig & QtVersion::DebugBuild)? "debug" : "release");
         bool debug = m_importBuildConfig & QtVersion::DebugBuild;
-        addBuildConfiguration(debug ? "Debug" : "Release", m_importVersion, m_importBuildConfig, m_additionalArguments);
+        m_project->addQt4BuildConfiguration(debug ? "Debug" : "Release", m_importVersion, m_importBuildConfig, m_additionalArguments);
 
         if (m_importBuildConfig & QtVersion::BuildAll) {
             // Also create the other configuration
@@ -170,23 +138,23 @@ void ProjectLoadWizard::done(int result)
             else
                 otherBuildConfiguration = QtVersion::QmakeBuildConfig(otherBuildConfiguration | QtVersion::DebugBuild);
 
-            addBuildConfiguration(debug ? "Release" : "Debug", m_importVersion, otherBuildConfiguration, m_additionalArguments);
+            m_project->addQt4BuildConfiguration(debug ? "Release" : "Debug", m_importVersion, otherBuildConfiguration, m_additionalArguments);
         }
     } else {
         // Not importing
         if (m_temporaryVersion)
             delete m_importVersion;
-        // Create default   
+        // Create default
         bool buildAll = false;
         QtVersion *defaultVersion = vm->version(0);
         if (defaultVersion && defaultVersion->isValid() && (defaultVersion->defaultBuildConfig() & QtVersion::BuildAll))
             buildAll = true;
         if (buildAll) {
-            addBuildConfiguration("Debug", 0, QtVersion::QmakeBuildConfig(QtVersion::BuildAll | QtVersion::DebugBuild), m_additionalArguments);
-            addBuildConfiguration("Release", 0, QtVersion::BuildAll, m_additionalArguments);
+            m_project->addQt4BuildConfiguration("Debug", 0, QtVersion::QmakeBuildConfig(QtVersion::BuildAll | QtVersion::DebugBuild), m_additionalArguments);
+            m_project->addQt4BuildConfiguration("Release", 0, QtVersion::BuildAll, m_additionalArguments);
         } else {
-            addBuildConfiguration("Debug", 0, QtVersion::DebugBuild, m_additionalArguments);
-            addBuildConfiguration("Release", 0, QtVersion::QmakeBuildConfig(0), m_additionalArguments);
+            m_project->addQt4BuildConfiguration("Debug", 0, QtVersion::DebugBuild, m_additionalArguments);
+            m_project->addQt4BuildConfiguration("Release", 0, QtVersion::QmakeBuildConfig(0), m_additionalArguments);
         }
     }
 
@@ -205,11 +173,11 @@ void ProjectLoadWizard::setupImportPage(QtVersion *version, QtVersion::QmakeBuil
     resize(605, 490);
     // Import Page
     importPage = new QWizardPage(this);
-    importPage->setTitle(tr("Import existing settings"));
+    importPage->setTitle(tr("Import existing build settings"));
     QVBoxLayout *importLayout = new QVBoxLayout(importPage);
     importLabel = new QLabel(importPage);
 
-    QString versionString = version->name() + " (" + QDir::toNativeSeparators(version->path()) + ")";
+    QString versionString = version->name() + " (" + QDir::toNativeSeparators(version->qmakeCommand()) + ")";
     QString buildConfigString = (buildConfig & QtVersion::BuildAll) ? QLatin1String("debug_and_release ") : QLatin1String("");
     buildConfigString.append((buildConfig & QtVersion::DebugBuild) ? QLatin1String("debug") : QLatin1String("release"));
     importLabel->setTextFormat(Qt::RichText);
@@ -231,8 +199,8 @@ void ProjectLoadWizard::setupImportPage(QtVersion *version, QtVersion::QmakeBuil
     import2Label = new QLabel(importPage);
     import2Label->setTextFormat(Qt::RichText);
     if (m_temporaryVersion)
-        import2Label->setText(tr("<b>Note:</b> Importing the settings will automatically add the Qt Version from:<br><b>%1</b> to the list of Qt versions.")
-                              .arg(QDir::toNativeSeparators(m_importVersion->path())));
+        import2Label->setText(tr("<b>Note:</b> Importing the settings will automatically add the Qt Version identified by <br><b>%1</b> to the list of Qt versions.")
+                              .arg(QDir::toNativeSeparators(m_importVersion->qmakeCommand())));
     importLayout->addWidget(import2Label);
     addPage(importPage);
 }

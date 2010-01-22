@@ -49,6 +49,7 @@ class PersistentSettingsReader;
 class PersistentSettingsWriter;
 
 class RunControl;
+class BuildConfiguration;
 
 /* Base class for a run configuration. A run configuration specifies how a
  * project should be run, while the runner (see below) does the actual running.
@@ -65,17 +66,18 @@ class PROJECTEXPLORER_EXPORT RunConfiguration : public QObject
 {
     Q_OBJECT
 public:
-    RunConfiguration(Project *project);
+    explicit RunConfiguration(Project *project);
     virtual ~RunConfiguration();
     Project *project() const;
 
-    // The type of this RunConfiguration, e.g. "ProjectExplorer.ApplicationRunConfiguration"
+    // The type of this RunConfiguration, e.g. "ProjectExplorer.LocalApplicationRunConfiguration"
     virtual QString type() const = 0;
     // Name shown to the user
     QString name() const;
     void setName(const QString &name);
 
-    virtual bool isEnabled() const { return true; }
+    virtual bool isEnabled(BuildConfiguration *) const { return true; }
+    bool isEnabled() const;
 
     // Returns the widget used to configure this run configuration. Ownership is transferred to the caller
     // rename to createConfigurationWidget
@@ -102,7 +104,7 @@ class PROJECTEXPLORER_EXPORT IRunConfigurationFactory : public QObject
 {
     Q_OBJECT
 public:
-    IRunConfigurationFactory(QObject *parent = 0);
+    explicit IRunConfigurationFactory(QObject *parent = 0);
     virtual ~IRunConfigurationFactory();
     // used to recreate the runConfigurations when restoring settings
     virtual bool canRestore(const QString &type) const = 0;
@@ -114,19 +116,20 @@ public:
     virtual QSharedPointer<RunConfiguration> create(Project *project, const QString &type) = 0;
 };
 
-class PROJECTEXPLORER_EXPORT IRunConfigurationRunner : public QObject
+class PROJECTEXPLORER_EXPORT IRunControlFactory : public QObject
 {
     Q_OBJECT
 public:
-    IRunConfigurationRunner(QObject *parent = 0);
-    virtual ~IRunConfigurationRunner();
-    virtual bool canRun(QSharedPointer<RunConfiguration> runConfiguration, const QString &mode) = 0;
-    virtual RunControl* run(QSharedPointer<RunConfiguration> runConfiguration, const QString &mode) = 0;
+    explicit IRunControlFactory(QObject *parent = 0);
+    virtual ~IRunControlFactory();
+
+    virtual bool canRun(const QSharedPointer<RunConfiguration> &runConfiguration, const QString &mode) const = 0;
+    virtual RunControl* create(const QSharedPointer<RunConfiguration> &runConfiguration, const QString &mode) = 0;
 
     virtual QString displayName() const = 0;
 
     // Returns the widget used to configure this runner. Ownership is transferred to the caller
-    virtual QWidget *configurationWidget(QSharedPointer<RunConfiguration> runConfiguration) = 0;
+    virtual QWidget *configurationWidget(const QSharedPointer<RunConfiguration> &runConfiguration) = 0;
 };
 
 /* Each instance of this class represents one item that is run.
@@ -134,12 +137,12 @@ public:
 class PROJECTEXPLORER_EXPORT RunControl : public QObject {
     Q_OBJECT
 public:
-    RunControl(QSharedPointer<RunConfiguration> runConfiguration);
+    explicit RunControl(const QSharedPointer<RunConfiguration> &runConfiguration);
     virtual ~RunControl();
     virtual void start() = 0;
     virtual void stop() = 0;
     virtual bool isRunning() const = 0;
-    QSharedPointer<RunConfiguration> runConfiguration();
+    QSharedPointer<RunConfiguration> runConfiguration() const;
 signals:
     void addToOutputWindow(RunControl *, const QString &line);
     void addToOutputWindowInline(RunControl *, const QString &line);
@@ -152,7 +155,7 @@ private slots:
     void bringApplicationToForegroundInternal();
 
 private:
-    QSharedPointer<RunConfiguration> m_runConfiguration;
+    const QSharedPointer<RunConfiguration> m_runConfiguration;
 
 #ifdef Q_OS_MAC
     //these two are used to bring apps in the foreground on Mac

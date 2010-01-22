@@ -39,16 +39,16 @@
 QT_BEGIN_NAMESPACE
 class QDir;
 class QAction;
-class QTemporaryFile;
 class QTextCodec;
 QT_END_NAMESPACE
 
 namespace Core {
     class IEditorFactory;
     class IVersionControl;
-    namespace Utils {
-        class ParameterAction;
-    }
+}
+
+namespace Utils {
+    class ParameterAction;
 }
 
 namespace ProjectExplorer {
@@ -59,6 +59,7 @@ namespace CVS {
 namespace Internal {
 
 class CVSSubmitEditor;
+class CVSControl;
 
 struct CVSResponse
 {
@@ -124,6 +125,7 @@ private slots:
     void diffFiles(const QStringList &);
 
 private:
+    bool isCommitEditorOpen() const;
     QString currentFileName() const;
     Core::IEditor * showOutputInEditor(const QString& title, const QString &output,
                                        int editorType, const QString &source,
@@ -149,23 +151,23 @@ private:
     QStringList currentProjectsTopLevels(QString *name = 0) const;
     void startCommit(const QString &file);
     bool commit(const QString &messageFile, const QStringList &subVersionFileList);
-    void cleanChangeTmpFile();
+    void cleanCommitMessageFile();
 
     CVSSettings m_settings;
-    Core::IVersionControl *m_versionControl;
-    QTemporaryFile *m_changeTmpFile;
+    CVSControl *m_versionControl;
+    QString m_commitMessageFileName;
 
     ProjectExplorer::ProjectExplorerPlugin *m_projectExplorer;
 
-    Core::Utils::ParameterAction *m_addAction;
-    Core::Utils::ParameterAction *m_deleteAction;
-    Core::Utils::ParameterAction *m_revertAction;
+    Utils::ParameterAction *m_addAction;
+    Utils::ParameterAction *m_deleteAction;
+    Utils::ParameterAction *m_revertAction;
     QAction *m_diffProjectAction;
-    Core::Utils::ParameterAction *m_diffCurrentAction;
+    Utils::ParameterAction *m_diffCurrentAction;
     QAction *m_commitAllAction;
-    Core::Utils::ParameterAction *m_commitCurrentAction;
-    Core::Utils::ParameterAction *m_filelogCurrentAction;
-    Core::Utils::ParameterAction *m_annotateCurrentAction;
+    Utils::ParameterAction *m_commitCurrentAction;
+    Utils::ParameterAction *m_filelogCurrentAction;
+    Utils::ParameterAction *m_annotateCurrentAction;
     QAction *m_statusAction;
     QAction *m_updateProjectAction;
 

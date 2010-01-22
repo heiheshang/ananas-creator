@@ -31,11 +31,13 @@
 #define BUILDSTEPSPAGE_H
 
 #include "buildstep.h"
+#include <utils/detailswidget.h>
 
 QT_BEGIN_NAMESPACE
 class QTreeWidgetItem;
 class QHBoxLayout;
 class QPushButton;
+class QAbstractButton;
 class QToolButton;
 class QLabel;
 class QVBoxLayout;
@@ -54,8 +56,7 @@ namespace Ui {
 struct BuildStepsWidgetStruct
 {
     BuildStepConfigWidget *widget;
-    QLabel *detailsLabel;
-    QToolButton *detailsButton;
+    Utils::DetailsWidget *detailsWidget;
     QToolButton *upButton;
     QToolButton *downButton;
     QHBoxLayout *hbox;
@@ -79,7 +80,6 @@ private slots:
     void removeBuildStep();
     void upBuildStep();
     void downBuildStep();
-    void toggleDetails();
     void updateSummary();
 
 private:

@@ -1,20 +1,53 @@
+/**************************************************************************
+**
+** This file is part of Qt Creator
+**
+** Copyright (c) 2009 Nokia Corporation and/or its subsidiary(-ies).
+**
+** Contact: Nokia Corporation (qt-info@nokia.com)
+**
+** Commercial Usage
+**
+** Licensees holding valid Qt Commercial licenses may use this file in
+** accordance with the Qt Commercial License Agreement provided with the
+** Software or, alternatively, in accordance with the terms contained in
+** a written agreement between you and Nokia.
+**
+** GNU Lesser General Public License Usage
+**
+** Alternatively, this file may be used under the terms of the GNU Lesser
+** General Public License version 2.1 as published by the Free Software
+** Foundation and appearing in the file LICENSE.LGPL included in the
+** packaging of this file.  Please review the following information to
+** ensure the GNU Lesser General Public License version 2.1 requirements
+** will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
+**
+** If you are unsure which license is appropriate for your use, please
+** contact the sales department at http://qt.nokia.com/contact.
+**
+**************************************************************************/
+
 #include "qtoptionspage.h"
 #include "ui_showbuildlog.h"
 #include "ui_qtversionmanager.h"
 #include "qt4projectmanagerconstants.h"
 #include "qtversionmanager.h"
 
+#include <projectexplorer/debugginghelper.h>
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/progressmanager/progressmanager.h>
 #include <utils/treewidgetcolumnstretcher.h>
 #include <utils/qtcassert.h>
+#include <qtconcurrent/runextensions.h>
 
 #include <QtCore/QFuture>
 #include <QtCore/QtConcurrentRun>
 #include <QtCore/QDebug>
 #include <QtCore/QDir>
 #include <QtCore/QDateTime>
+#include <QtGui/QHelpEvent>
+#include <QtGui/QToolTip>
 
 using namespace Qt4ProjectManager;
 using namespace Qt4ProjectManager::Internal;
@@ -32,9 +65,12 @@ DebuggingHelperBuildTask::~DebuggingHelperBuildTask()
 {
 }
 
-void DebuggingHelperBuildTask::run()
+void DebuggingHelperBuildTask::run(QFutureInterface<void> &future)
 {
+    future.setProgressRange(0, 4);
+    future.setProgressValue(1);
     const QString output = m_version->buildDebuggingHelperLibrary();
+    future.setProgressValue(1);
     emit finished(m_version->name(), output);
     deleteLater();
 }
@@ -102,7 +138,7 @@ QtOptionsPageWidget::QtOptionsPageWidget(QWidget *parent, QList<QtVersion *> ver
     , m_debuggingHelperOkIcon(m_debuggingHelperOkPixmap)
     , m_debuggingHelperErrorIcon(m_debuggingHelperErrorPixmap)
     , m_specifyNameString(tr("<specify a name>"))
-    , m_specifyPathString(tr("<specify a path>"))
+    , m_specifyPathString(tr("<specify a qmake location>"))
     , m_ui(new Internal::Ui::QtVersionManager())
     , m_defaultVersion(versions.indexOf(defaultVersion))
 {
@@ -111,21 +147,26 @@ QtOptionsPageWidget::QtOptionsPageWidget(QWidget *parent, QList<QtVersion *> ver
         m_versions.push_back(QSharedPointerQtVersion(new QtVersion(*version)));
 
     m_ui->setupUi(this);
-    m_ui->qtPath->setExpectedKind(Core::Utils::PathChooser::Directory);
-    m_ui->qtPath->setPromptDialogTitle(tr("Select QTDIR"));
-    m_ui->mingwPath->setExpectedKind(Core::Utils::PathChooser::Directory);
-    m_ui->qtPath->setPromptDialogTitle(tr("Select the Qt Directory"));
-    m_ui->mwcPath->setExpectedKind(Core::Utils::PathChooser::Directory);
-    m_ui->mwcPath->setPromptDialogTitle(tr("Select \"x86build\" Directory from Carbide Install"));
+    m_ui->qmakePath->setExpectedKind(Utils::PathChooser::File);
+    m_ui->qmakePath->setPromptDialogTitle(tr("Select QMake Executable"));
+    m_ui->mingwPath->setExpectedKind(Utils::PathChooser::Directory);
+    m_ui->mingwPath->setPromptDialogTitle(tr("Select the MinGW Directory"));
+    m_ui->mwcPath->setExpectedKind(Utils::PathChooser::Directory);
+    m_ui->mwcPath->setPromptDialogTitle(tr("Select Carbide Install Directory"));
+    m_ui->s60SDKPath->setExpectedKind(Utils::PathChooser::Directory);
+    m_ui->s60SDKPath->setPromptDialogTitle(tr("Select S60 SDK Root"));
+    m_ui->gccePath->setExpectedKind(Utils::PathChooser::Directory);
+    m_ui->gccePath->setPromptDialogTitle(tr("Select the CSL ARM Toolchain (GCCE) Directory"));
 
     m_ui->addButton->setIcon(QIcon(Core::Constants::ICON_PLUS));
     m_ui->delButton->setIcon(QIcon(Core::Constants::ICON_MINUS));
 
-    new Core::Utils::TreeWidgetColumnStretcher(m_ui->qtdirList, 1);
+    new Utils::TreeWidgetColumnStretcher(m_ui->qtdirList, 1);
 
     // setup parent items for auto-detected and manual versions
     m_ui->qtdirList->header()->setResizeMode(QHeaderView::ResizeToContents);
     QTreeWidgetItem *autoItem = new QTreeWidgetItem(m_ui->qtdirList);
+    m_ui->qtdirList->installEventFilter(this);
     autoItem->setText(0, tr("Auto-detected"));
     autoItem->setFirstColumnSpanned(true);
     QTreeWidgetItem *manualItem = new QTreeWidgetItem(m_ui->qtdirList);
@@ -136,7 +177,7 @@ QtOptionsPageWidget::QtOptionsPageWidget(QWidget *parent, QList<QtVersion *> ver
         const QtVersion * const version = m_versions.at(i).data();
         QTreeWidgetItem *item = new QTreeWidgetItem(version->isAutodetected()? autoItem : manualItem);
         item->setText(0, version->name());
-        item->setText(1, QDir::toNativeSeparators(version->path()));
+        item->setText(1, QDir::toNativeSeparators(version->qmakeCommand()));
         item->setData(0, Qt::UserRole, version->uniqueId());
 
         if (version->isValid()) {
@@ -155,13 +196,17 @@ QtOptionsPageWidget::QtOptionsPageWidget(QWidget *parent, QList<QtVersion *> ver
             this, SLOT(updateCurrentQtName()));
 
 
-    connect(m_ui->qtPath, SIGNAL(changed(QString)),
-            this, SLOT(updateCurrentQtPath()));
+    connect(m_ui->qmakePath, SIGNAL(changed(QString)),
+            this, SLOT(updateCurrentQMakeLocation()));
     connect(m_ui->mingwPath, SIGNAL(changed(QString)),
             this, SLOT(updateCurrentMingwDirectory()));
 #ifdef QTCREATOR_WITH_S60
     connect(m_ui->mwcPath, SIGNAL(changed(QString)),
             this, SLOT(updateCurrentMwcDirectory()));
+    connect(m_ui->s60SDKPath, SIGNAL(changed(QString)),
+            this, SLOT(updateCurrentS60SDKDirectory()));
+    connect(m_ui->gccePath, SIGNAL(changed(QString)),
+            this, SLOT(updateCurrentGcceDirectory()));
 #endif
 
     connect(m_ui->addButton, SIGNAL(clicked()),
@@ -169,7 +214,7 @@ QtOptionsPageWidget::QtOptionsPageWidget(QWidget *parent, QList<QtVersion *> ver
     connect(m_ui->delButton, SIGNAL(clicked()),
             this, SLOT(removeQtDir()));
 
-    connect(m_ui->qtPath, SIGNAL(browsingFinished()),
+    connect(m_ui->qmakePath, SIGNAL(browsingFinished()),
             this, SLOT(onQtBrowsed()));
     connect(m_ui->mingwPath, SIGNAL(browsingFinished()),
             this, SLOT(onMingwBrowsed()));
@@ -189,6 +234,26 @@ QtOptionsPageWidget::QtOptionsPageWidget(QWidget *parent, QList<QtVersion *> ver
 
     showEnvironmentPage(0);
     updateState();
+}
+
+bool QtOptionsPageWidget::eventFilter(QObject *o, QEvent *e)
+{
+    // Set the items tooltip, which may cause costly initialization
+    // of QtVersion and must be up-to-date
+    if (o != m_ui->qtdirList || e->type() != QEvent::ToolTip)
+        return false;    
+    QHelpEvent *helpEvent = static_cast<QHelpEvent *>(e);
+    const QPoint treePos = helpEvent->pos() - QPoint(0, m_ui->qtdirList->header()->height());
+    QTreeWidgetItem *item = m_ui->qtdirList->itemAt(treePos);
+    if (!item)
+        return false;
+    const int index = indexForTreeItem(item);
+    if (index == -1)
+        return false;
+    const QString tooltip = m_versions.at(index)->toHtml();
+    QToolTip::showText(helpEvent->globalPos(), tooltip, m_ui->qtdirList);
+    helpEvent->accept();
+    return true;
 }
 
 int QtOptionsPageWidget::currentIndex() const
@@ -248,7 +313,7 @@ void QtOptionsPageWidget::buildDebuggingHelper()
     DebuggingHelperBuildTask *buildTask = new DebuggingHelperBuildTask(m_versions.at(index));
     connect(buildTask, SIGNAL(finished(QString,QString)), this, SLOT(debuggingHelperBuildFinished(QString,QString)),
             Qt::QueuedConnection);
-    QFuture<void> task = QtConcurrent::run(buildTask, &DebuggingHelperBuildTask::run);
+    QFuture<void> task = QtConcurrent::run(&DebuggingHelperBuildTask::run, buildTask);
     const QString taskName = tr("Building helpers");
     Core::ICore::instance()->progressManager()->addTask(task, taskName,
                                                         QLatin1String("Qt4ProjectManager::BuildHelpers"),
@@ -284,17 +349,22 @@ void QtOptionsPageWidget::addQtDir()
 
     QTreeWidgetItem *item = new QTreeWidgetItem(m_ui->qtdirList->topLevelItem(1));
     item->setText(0, newVersion->name());
-    item->setText(1, QDir::toNativeSeparators(newVersion->path()));
+    item->setText(1, QDir::toNativeSeparators(newVersion->qmakeCommand()));
     item->setData(0, Qt::UserRole, newVersion->uniqueId());
     item->setData(2, Qt::DecorationRole, QIcon());
 
     m_ui->qtdirList->setCurrentItem(item);
 
     m_ui->nameEdit->setText(newVersion->name());
-    m_ui->qtPath->setPath(newVersion->path());
+    m_ui->qmakePath->setPath(newVersion->qmakeCommand());
     m_ui->defaultCombo->addItem(newVersion->name());
     m_ui->nameEdit->setFocus();
     m_ui->nameEdit->selectAll();
+
+    if (!m_versions.at(m_defaultVersion)->isValid()) {
+        m_defaultVersion = m_versions.count() - 1;
+        m_ui->defaultCombo->setCurrentIndex(m_versions.count() - 1);
+    }
 }
 
 void QtOptionsPageWidget::removeQtDir()
@@ -324,7 +394,7 @@ static inline QString msgHtmlHelperToolTip(const QFileInfo &fi)
     return QtOptionsPageWidget::tr("<html><body><table><tr><td>File:</td><td><pre>%1</pre></td></tr>"
                                    "<tr><td>Last&nbsp;modified:</td><td>%2</td></tr>"
                                    "<tr><td>Size:</td><td>%3 Bytes</td></tr></table></body></html>").
-                      arg(fi.absoluteFilePath()).
+                      arg(QDir::toNativeSeparators(fi.absoluteFilePath())).
                       arg(fi.lastModified().toString(Qt::SystemLocaleLongDate)).
                       arg(fi.size());
 }
@@ -355,8 +425,13 @@ void QtOptionsPageWidget::updateState()
     const bool isAutodetected = enabled && version->isAutodetected();
     m_ui->delButton->setEnabled(enabled && !isAutodetected);
     m_ui->nameEdit->setEnabled(enabled && !isAutodetected);
-    m_ui->qtPath->setEnabled(enabled && !isAutodetected);
+    m_ui->qmakePath->setEnabled(enabled && !isAutodetected);
     m_ui->mingwPath->setEnabled(enabled);
+    m_ui->mwcPath->setEnabled(enabled);
+    bool s60SDKPathEnabled = enabled &&
+                             (isAutodetected ? version->s60SDKDirectory().isEmpty() : true);
+    m_ui->s60SDKPath->setEnabled(s60SDKPathEnabled);
+    m_ui->gccePath->setEnabled(enabled);
 
     const bool hasLog = enabled && !m_ui->qtdirList->currentItem()->data(2, Qt::UserRole).toString().isEmpty();
     m_ui->showLogButton->setEnabled(hasLog);
@@ -378,10 +453,14 @@ void QtOptionsPageWidget::makeMSVCVisible(bool visible)
     m_ui->msvcNotFoundLabel->setVisible(false);
 }
 
-void QtOptionsPageWidget::makeMWCVisible(bool visible)
+void QtOptionsPageWidget::makeS60Visible(bool visible)
 {
     m_ui->mwcLabel->setVisible(visible);
     m_ui->mwcPath->setVisible(visible);
+    m_ui->s60SDKLabel->setVisible(visible);
+    m_ui->s60SDKPath->setVisible(visible);
+    m_ui->gcceLabel->setVisible(visible);
+    m_ui->gccePath->setVisible(visible);
 }
 
 void QtOptionsPageWidget::showEnvironmentPage(QTreeWidgetItem *item)
@@ -391,7 +470,7 @@ void QtOptionsPageWidget::showEnvironmentPage(QTreeWidgetItem *item)
         if (index < 0) {
             makeMSVCVisible(false);
             makeMingwVisible(false);
-            makeMWCVisible(false);
+            makeS60Visible(false);
             return;
         }
         m_ui->errorLabel->setText("");
@@ -399,12 +478,12 @@ void QtOptionsPageWidget::showEnvironmentPage(QTreeWidgetItem *item)
         if (types.contains(ProjectExplorer::ToolChain::MinGW)) {
             makeMSVCVisible(false);
             makeMingwVisible(true);
-            makeMWCVisible(false);
+            makeS60Visible(false);
             m_ui->mingwPath->setPath(m_versions.at(index)->mingwDirectory());
         } else if (types.contains(ProjectExplorer::ToolChain::MSVC) || types.contains(ProjectExplorer::ToolChain::WINCE)){
             makeMSVCVisible(false);
             makeMingwVisible(false);
-            makeMWCVisible(false);
+            makeS60Visible(false);
             QStringList msvcEnvironments = ProjectExplorer::ToolChain::availableMSVCVersions();
             if (msvcEnvironments.count() == 0) {
                 m_ui->msvcLabel->setVisible(true);
@@ -422,25 +501,30 @@ void QtOptionsPageWidget::showEnvironmentPage(QTreeWidgetItem *item)
                  m_ui->msvcComboBox->blockSignals(block);
             }
 #ifdef QTCREATOR_WITH_S60
-        } else if (types.contains(ProjectExplorer::ToolChain::WINSCW)) {
+        } else if (types.contains(ProjectExplorer::ToolChain::WINSCW)
+                || types.contains(ProjectExplorer::ToolChain::RVCT_ARMV5)
+                || types.contains(ProjectExplorer::ToolChain::RVCT_ARMV6)
+                || types.contains(ProjectExplorer::ToolChain::GCCE)) {
             makeMSVCVisible(false);
             makeMingwVisible(false);
-            makeMWCVisible(true);
+            makeS60Visible(true);
             m_ui->mwcPath->setPath(m_versions.at(index)->mwcDirectory());
+            m_ui->s60SDKPath->setPath(m_versions.at(index)->s60SDKDirectory());
+            m_ui->gccePath->setPath(m_versions.at(index)->gcceDirectory());
 #endif
         } else if (types.contains(ProjectExplorer::ToolChain::INVALID)) {
             makeMSVCVisible(false);
             makeMingwVisible(false);
-            makeMWCVisible(false);
+            makeS60Visible(false);
             if (!m_versions.at(index)->isInstalled())
-                m_ui->errorLabel->setText(tr("The Qt Version %1 is not installed. Run make install")
-                                           .arg(QDir::toNativeSeparators(m_versions.at(index)->path())));
+                m_ui->errorLabel->setText(tr("The Qt Version identified by %1 is not installed. Run make install")
+                                           .arg(QDir::toNativeSeparators(m_versions.at(index)->qmakeCommand())));
             else
-                m_ui->errorLabel->setText(tr("%1 is not a valid Qt directory").arg(QDir::toNativeSeparators(m_versions.at(index)->path())));
+                m_ui->errorLabel->setText(tr("%1 does not specify a valid Qt installation").arg(QDir::toNativeSeparators(m_versions.at(index)->qmakeCommand())));
         } else { //ProjectExplorer::ToolChain::GCC
             makeMSVCVisible(false);
             makeMingwVisible(false);
-            makeMWCVisible(false);
+            makeS60Visible(false);
             m_ui->errorLabel->setText(tr("Found Qt version %1, using mkspec %2")
                                      .arg(m_versions.at(index)->qtVersionString(),
                                           m_versions.at(index)->mkspec()));
@@ -448,7 +532,7 @@ void QtOptionsPageWidget::showEnvironmentPage(QTreeWidgetItem *item)
     } else {
         makeMSVCVisible(false);
         makeMingwVisible(false);
-        makeMWCVisible(false);
+        makeS60Visible(false);
     }
 }
 
@@ -487,10 +571,10 @@ void QtOptionsPageWidget::versionChanged(QTreeWidgetItem *item, QTreeWidgetItem 
     int itemIndex = indexForTreeItem(item);
     if (itemIndex >= 0) {
         m_ui->nameEdit->setText(item->text(0));
-        m_ui->qtPath->setPath(item->text(1));
+        m_ui->qmakePath->setPath(item->text(1));
     } else {
         m_ui->nameEdit->clear();
-        m_ui->qtPath->setPath(QString()); // clear()
+        m_ui->qmakePath->setPath(QString()); // clear()
     }
     showEnvironmentPage(item);
     updateState();
@@ -498,15 +582,15 @@ void QtOptionsPageWidget::versionChanged(QTreeWidgetItem *item, QTreeWidgetItem 
 
 void QtOptionsPageWidget::onQtBrowsed()
 {
-    const QString dir = m_ui->qtPath->path();
+    const QString dir = m_ui->qmakePath->path();
     if (dir.isEmpty())
         return;
 
-    updateCurrentQtPath();
+    updateCurrentQMakeLocation();
     if (m_ui->nameEdit->text().isEmpty() || m_ui->nameEdit->text() == m_specifyNameString) {
-        QStringList dirSegments = dir.split(QDir::separator(), QString::SkipEmptyParts);
-        if (!dirSegments.isEmpty())
-            m_ui->nameEdit->setText(dirSegments.last());
+        QString name = ProjectExplorer::DebuggingHelperLibrary::qtVersionForQMake(QDir::cleanPath(dir));
+        if (!name.isEmpty())
+            m_ui->nameEdit->setText(name);
         updateCurrentQtName();
     }
     updateState();
@@ -587,7 +671,7 @@ void QtOptionsPageWidget::fixQtVersionName(int index)
     }
 }
 
-void QtOptionsPageWidget::updateCurrentQtPath()
+void QtOptionsPageWidget::updateCurrentQMakeLocation()
 {
     QTreeWidgetItem *currentItem = m_ui->qtdirList->currentItem();
     Q_ASSERT(currentItem);
@@ -595,10 +679,10 @@ void QtOptionsPageWidget::updateCurrentQtPath()
     if (currentItemIndex < 0)
         return;
     QtVersion *version = m_versions.at(currentItemIndex).data();
-    if (version->path() == m_ui->qtPath->path())
+    if (version->qmakeCommand() == m_ui->qmakePath->path())
         return;
-    version->setPath(m_ui->qtPath->path());
-    currentItem->setText(1, QDir::toNativeSeparators(version->path()));
+    version->setQMakeCommand(m_ui->qmakePath->path());
+    currentItem->setText(1, QDir::toNativeSeparators(version->qmakeCommand()));
     showEnvironmentPage(currentItem);
 
     if (version->isValid()) {
@@ -643,6 +727,24 @@ void QtOptionsPageWidget::updateCurrentMwcDirectory()
     if (currentItemIndex < 0)
         return;
     m_versions[currentItemIndex]->setMwcDirectory(m_ui->mwcPath->path());
+}
+void QtOptionsPageWidget::updateCurrentS60SDKDirectory()
+{
+    QTreeWidgetItem *currentItem = m_ui->qtdirList->currentItem();
+    Q_ASSERT(currentItem);
+    int currentItemIndex = indexForTreeItem(currentItem);
+    if (currentItemIndex < 0)
+        return;
+    m_versions[currentItemIndex]->setS60SDKDirectory(m_ui->s60SDKPath->path());
+}
+void QtOptionsPageWidget::updateCurrentGcceDirectory()
+{
+    QTreeWidgetItem *currentItem = m_ui->qtdirList->currentItem();
+    Q_ASSERT(currentItem);
+    int currentItemIndex = indexForTreeItem(currentItem);
+    if (currentItemIndex < 0)
+        return;
+    m_versions[currentItemIndex]->setGcceDirectory(m_ui->gccePath->path());
 }
 #endif
 

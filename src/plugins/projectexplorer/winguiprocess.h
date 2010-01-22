@@ -37,11 +37,14 @@
 
 #include <windows.h>
 
-using namespace Core::Utils;
+using namespace Utils;
 
 namespace ProjectExplorer {
 namespace Internal {
 
+/* Captures the debug output of a Windows GUI application (which
+ * would otherwise not be visible) using the debug interface and
+ * emits via a signal. */
 class WinGuiProcess : public QThread, public AbstractProcess
 {
     Q_OBJECT

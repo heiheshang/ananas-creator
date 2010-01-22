@@ -105,6 +105,10 @@ public:
         const QModelIndex &index) const
     {
         if (index.column() == 1) {
+            bool paintRed = index.data(RegisterChangedRole).toBool();
+            QPen oldPen = painter->pen();
+            if (paintRed)
+                painter->setPen(QColor(200, 0, 0));
             // FIXME: performance? this changes only on real font changes.
             QFontMetrics fm(option.font);
             int charWidth = fm.width(QLatin1Char('x'));
@@ -112,7 +116,7 @@ public:
                 charWidth = qMax(charWidth, fm.width(QLatin1Char(i)));
             for (int i = 'a'; i <= 'f'; ++i)
                 charWidth = qMax(charWidth, fm.width(QLatin1Char(i)));
-            QString str = index.model()->data(index, Qt::DisplayRole).toString();
+            QString str = index.data(Qt::DisplayRole).toString();
             int x = option.rect.x();
             for (int i = 0; i < str.size(); ++i) {
                 QRect r = option.rect;
@@ -121,6 +125,8 @@ public:
                 x += charWidth;
                 painter->drawText(r, Qt::AlignHCenter, QString(str.at(i)));
             }
+            if (paintRed)
+                painter->setPen(oldPen);
         } else {
             QItemDelegate::paint(painter, option, index);
         }
@@ -138,12 +144,10 @@ private:
 ///////////////////////////////////////////////////////////////////////
 
 RegisterWindow::RegisterWindow(DebuggerManager *manager)
-  : m_manager(manager), m_alwaysResizeColumnsToContents(true),
-    m_alwaysReloadContents(false)
+  : m_manager(manager), m_alwaysResizeColumnsToContents(true)
 {
     QAction *act = theDebuggerAction(UseAlternatingRowColors);
     setWindowTitle(tr("Registers"));
-    setSortingEnabled(true);
     setAlternatingRowColors(act->isChecked());
     setRootIsDecorated(false);
     setItemDelegate(new RegisterDelegate(m_manager, this));
@@ -162,9 +166,6 @@ void RegisterWindow::contextMenuEvent(QContextMenuEvent *ev)
     QMenu menu;
 
     QAction *actReload = menu.addAction(tr("Reload register listing"));
-    QAction *actAlwaysReload = menu.addAction(tr("Always reload register listing"));
-    actAlwaysReload->setCheckable(true);
-    actAlwaysReload->setChecked(m_alwaysReloadContents);
     menu.addSeparator();
 
     QModelIndex idx = indexAt(ev->pos());
@@ -176,6 +177,7 @@ void RegisterWindow::contextMenuEvent(QContextMenuEvent *ev)
     } else {
         actShowMemory->setText(tr("Open memory editor at %1").arg(address));
     }
+    actShowMemory->setEnabled(m_manager->debuggerActionsEnabled());
     menu.addSeparator();
 
     int base = model()->data(QModelIndex(), RegisterNumberBaseRole).toInt();
@@ -209,9 +211,7 @@ void RegisterWindow::contextMenuEvent(QContextMenuEvent *ev)
     else if (act == actAlwaysAdjust)
         setAlwaysResizeColumnsToContents(!m_alwaysResizeColumnsToContents);
     else if (act == actReload)
-        reloadContents();
-    else if (act == actAlwaysReload)
-        setAlwaysReloadContents(!m_alwaysReloadContents);
+        m_manager->reloadRegisters();
     else if (act == actShowMemory)
         (void) new MemoryViewAgent(m_manager, address);
     else if (act) {
@@ -233,18 +233,6 @@ void RegisterWindow::setAlwaysResizeColumnsToContents(bool on)
         ? QHeaderView::ResizeToContents : QHeaderView::Interactive;
     header()->setResizeMode(0, mode);
     header()->setResizeMode(1, mode);
-}
-
-void RegisterWindow::setAlwaysReloadContents(bool on)
-{
-    m_alwaysReloadContents = on;
-    if (m_alwaysReloadContents)
-        reloadContents();
-}
-
-void RegisterWindow::reloadContents()
-{
-    emit reloadRegisterRequested();
 }
 
 

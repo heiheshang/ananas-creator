@@ -39,6 +39,10 @@
 #include <projectexplorer/applicationrunconfiguration.h>
 #include <coreplugin/ifile.h>
 
+#include <extensionsystem/iplugin.h>
+#include <coreplugin/editormanager/ieditorfactory.h>
+#include <texteditor/basetexteditor.h>
+
 #include <QtCore/QDir>
 
 namespace AnanasProjectManager {
@@ -60,14 +64,15 @@ public:
     virtual QString name() const;
     virtual Core::IFile *file() const;
     virtual Manager *projectManager() const;
+    virtual ProjectExplorer::IBuildConfigurationFactory *buildConfigurationFactory() const;
 
     virtual QList<ProjectExplorer::Project *> dependsOn();
 
     virtual bool isApplication() const;
     virtual bool hasBuildSettings() const;
 
-    virtual ProjectExplorer::Environment environment(const QString &buildConfiguration) const;
-    virtual QString buildDirectory(const QString &buildConfiguration) const;
+    virtual ProjectExplorer::Environment environment(ProjectExplorer::BuildConfiguration *configuration) const;
+    virtual QString buildDirectory(ProjectExplorer::BuildConfiguration *configuration) const;
 
     virtual ProjectExplorer::BuildConfigWidget *createConfigWidget();
     virtual QList<ProjectExplorer::BuildConfigWidget*> subConfigWidgets();
@@ -136,7 +141,7 @@ private:
     QString m_fileName;
 };
 
-class AnanasRunConfiguration : public ProjectExplorer::ApplicationRunConfiguration
+class AnanasRunConfiguration : public ProjectExplorer::LocalApplicationRunConfiguration
 {
     Q_OBJECT
 public:
@@ -170,6 +175,7 @@ private:
     AnanasProject *m_project;
     QString m_scriptFile;
     QString m_qmlViewer;
+    QString m_qmlViewerArgs;
     QLatin1String m_type;
 };
 

@@ -34,6 +34,7 @@
 #include "openeditorsmodel.h"
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/actionmanager/actionmanager.h>
+#include <coreplugin/editormanager/ieditor.h>
 
 #include <coreplugin/findplaceholder.h>
 #include <utils/qtcassert.h>
@@ -67,7 +68,7 @@ using namespace Core;
 using namespace Core::Internal;
 
 
-//================EditorView====================
+// ================EditorView====================
 
 EditorView::EditorView(OpenEditorsModel *model, QWidget *parent) :
     QWidget(parent),
@@ -136,7 +137,7 @@ EditorView::EditorView(OpenEditorsModel *model, QWidget *parent) :
         toplayout->addWidget(m_lockButton);
         toplayout->addWidget(m_closeButton);
 
-        Core::Utils::StyledBar *top = new Core::Utils::StyledBar;
+        Utils::StyledBar *top = new Utils::StyledBar;
         top->setLayout(toplayout);
         tl->addWidget(top);
 
@@ -342,6 +343,7 @@ void EditorView::setCurrentEditor(IEditor *editor)
 {
     if (!editor || m_container->count() <= 0
         || m_container->indexOf(editor->widget()) == -1) {
+        updateEditorStatus(0);
         // ### TODO the combo box m_editorList should show an empty item
         return;
     }
@@ -375,6 +377,13 @@ void EditorView::updateEditorStatus(IEditor *editor)
 {
     static const QIcon lockedIcon(QLatin1String(":/core/images/locked.png"));
     static const QIcon unlockedIcon(QLatin1String(":/core/images/unlocked.png"));
+
+    m_lockButton->setVisible(editor != 0);
+
+    if (!editor) {
+        m_editorList->setToolTip(QString());
+        return;
+    }
 
     if (editor->file()->isReadOnly()) {
         m_lockButton->setIcon(lockedIcon);
@@ -478,9 +487,9 @@ void EditorView::updateEditorHistory(IEditor *editor)
 void EditorView::addCurrentPositionToNavigationHistory(IEditor *editor, const QByteArray &saveState)
 {
     if (editor && editor != currentEditor()) {
-        qDebug() << Q_FUNC_INFO << "this should not happen!";
-        return;
+        return; // we only save editor sate for the current editor, when the user interacts
     }
+
     if (!editor)
         editor = currentEditor();
     if (!editor)

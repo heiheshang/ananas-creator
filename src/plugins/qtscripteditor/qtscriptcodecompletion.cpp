@@ -1,3 +1,31 @@
+/**************************************************************************
+**
+** This file is part of Qt Creator
+**
+** Copyright (c) 2009 Nokia Corporation and/or its subsidiary(-ies).
+**
+** Contact: Nokia Corporation (qt-info@nokia.com)
+**
+** Commercial Usage
+**
+** Licensees holding valid Qt Commercial licenses may use this file in
+** accordance with the Qt Commercial License Agreement provided with the
+** Software or, alternatively, in accordance with the terms contained in
+** a written agreement between you and Nokia.
+**
+** GNU Lesser General Public License Usage
+**
+** Alternatively, this file may be used under the terms of the GNU Lesser
+** General Public License version 2.1 as published by the Free Software
+** Foundation and appearing in the file LICENSE.LGPL included in the
+** packaging of this file.  Please review the following information to
+** ensure the GNU Lesser General Public License version 2.1 requirements
+** will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
+**
+** If you are unsure which license is appropriate for your use, please
+** contact the sales department at http://qt.nokia.com/contact.
+**
+**************************************************************************/
 
 #include "qtscriptcodecompletion.h"
 #include "qtscripteditor.h"
@@ -55,7 +83,7 @@ int QtScriptCodeCompletion::startCompletion(TextEditor::ITextEditable *editor)
 
     foreach (const QString &word, edit->words()) {
         TextEditor::CompletionItem item(this);
-        item.m_text = word;
+        item.text = word;
         m_completions.append(item);
     }
 
@@ -102,9 +130,9 @@ void QtScriptCodeCompletion::completions(QList<TextEditor::CompletionItem> *comp
         const QRegExp regExp(keyRegExp, Qt::CaseSensitive);
 
         foreach (TextEditor::CompletionItem item, m_completions) {
-            if (regExp.indexIn(item.m_text) == 0) {
-                item.m_relevance = (key.length() > 0 &&
-                                    item.m_text.startsWith(key, Qt::CaseInsensitive)) ? 1 : 0;
+            if (regExp.indexIn(item.text) == 0) {
+                item.relevance = (key.length() > 0 &&
+                                    item.text.startsWith(key, Qt::CaseInsensitive)) ? 1 : 0;
                 (*completions) << item;
             }
         }
@@ -113,7 +141,7 @@ void QtScriptCodeCompletion::completions(QList<TextEditor::CompletionItem> *comp
 
 void QtScriptCodeCompletion::complete(const TextEditor::CompletionItem &item)
 {
-    const QString toInsert = item.m_text;
+    const QString toInsert = item.text;
     const int length = m_editor->position() - m_startPosition;
     m_editor->setCurPos(m_startPosition);
     m_editor->replace(length, toInsert);
@@ -126,8 +154,8 @@ bool QtScriptCodeCompletion::partiallyComplete(const QList<TextEditor::Completio
         return true;
     } else {
         // Compute common prefix
-        QString firstKey = completionItems.first().m_text;
-        QString lastKey = completionItems.last().m_text;
+        QString firstKey = completionItems.first().text;
+        QString lastKey = completionItems.last().text;
         const int length = qMin(firstKey.length(), lastKey.length());
         firstKey.truncate(length);
         lastKey.truncate(length);

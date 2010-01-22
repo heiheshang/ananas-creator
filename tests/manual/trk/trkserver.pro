@@ -1,12 +1,10 @@
 
 TEMPLATE = app
 
+include(../../../src/shared/trk/trk.pri)
+
 QT = core network
 win32:CONFIG+=console
 
-HEADERS += \
-    trkutils.h
-
 SOURCES += \
-    trkutils.cpp \
-    trkserver.cpp
+    $$PWD/trkserver.cpp

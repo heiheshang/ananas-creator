@@ -34,12 +34,13 @@
 
 #include <QtCore/QList>
 #include <QtCore/QHash>
-#include <QtCore/QSettings>
-#include <QtGui/QMainWindow>
-#include <QtGui/QDockWidget>
-#include <QtCore/QSettings>
 
-namespace Core {
+#include <QtGui/QMainWindow>
+
+QT_BEGIN_NAMESPACE
+class QSettings;
+QT_END_NAMESPACE
+
 namespace Utils {
 
 class QTCREATOR_UTILS_EXPORT FancyMainWindow : public QMainWindow
@@ -83,6 +84,5 @@ private:
 };
 
 } // namespace Utils
-} // namespace Core
 
 #endif // FANCYMAINWINDOW_H

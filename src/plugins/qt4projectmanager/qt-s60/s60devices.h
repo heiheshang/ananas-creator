@@ -34,6 +34,10 @@
 #include <QtCore/QString>
 #include <QtCore/QList>
 
+QT_BEGIN_NAMESPACE
+class QDebug;
+QT_END_NAMESPACE
+
 namespace Qt4ProjectManager {
 namespace Internal {
 
@@ -42,6 +46,9 @@ class S60Devices : public QObject
     Q_OBJECT
 public:
     struct Device {
+        Device();
+        QString toHtml() const;
+
         QString id;
         QString name;
         bool isDefault;
@@ -56,15 +63,21 @@ public:
     QList<Device> devices() const;
     bool detectQtForDevices();
     Device deviceForId(const QString &id) const;
+    Device deviceForEpocRoot(const QString &root) const;
 
     static QString cleanedRootPath(const QString &deviceRoot);
 signals:
     void qtVersionsChanged();
 
 private:
+    bool readLinux();
+    bool readWin();
     QString m_errorString;
     QList<Device> m_devices;
 };
+
+QDebug operator<<(QDebug dbg, const S60Devices::Device &d);
+QDebug operator<<(QDebug dbg, const S60Devices &d);
 
 } // namespace Internal
 } // namespace Qt4ProjectManager

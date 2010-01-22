@@ -35,12 +35,13 @@
 #include "itexteditor.h"
 #include "tabsettings.h"
 
+#include <coreplugin/ifile.h>
+
 QT_BEGIN_NAMESPACE
 class QTextCursor;
 class QTextDocument;
 class QSyntaxHighlighter;
 QT_END_NAMESPACE
-
 
 namespace TextEditor {
 
@@ -110,7 +111,7 @@ public:
 
     void reload(QTextCodec *codec);
 
-    void cleanWhitespace();
+    void cleanWhitespace(const QTextCursor &cursor);
 
 signals:
     void titleChanged(QString title);
@@ -146,7 +147,7 @@ private:
     bool m_hasDecodingError;
     QByteArray m_decodingErrorSample;
 
-    void cleanWhitespace(QTextCursor& cursor, bool onlyInModifiedLines);
+    void cleanWhitespace(QTextCursor& cursor, bool cleanIndentation, bool inEntireDocument);
     void ensureFinalNewLine(QTextCursor& cursor);
 };
 

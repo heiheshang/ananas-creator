@@ -40,6 +40,7 @@ const char * const VISUALIZE_WHITESPACE  = "TextEditor.VisualizeWhitespace";
 const char * const CLEAN_WHITESPACE      = "TextEditor.CleanWhitespace";
 const char * const TEXT_WRAPPING         = "TextEditor.TextWrapping";
 const char * const UN_COMMENT_SELECTION  = "TextEditor.UnCommentSelection";
+const char * const REFORMAT              = "TextEditor.Reformat";
 const char * const COLLAPSE              = "TextEditor.Collapse";
 const char * const EXPAND                = "TextEditor.Expand";
 const char * const UN_COLLAPSE_ALL       = "TextEditor.UnCollapseAll";
@@ -79,6 +80,7 @@ const char * const C_PARENTHESES         = "Parentheses";
 const char * const C_CURRENT_LINE        = "CurrentLine";
 const char * const C_CURRENT_LINE_NUMBER = "CurrentLineNumber";
 const char * const C_OCCURRENCES         = "Occurrences";
+const char * const C_OCCURRENCES_UNUSED  = "Occurrences.Unused";
 const char * const C_OCCURRENCES_RENAME  = "Occurrences.Rename";
 
 const char * const C_NUMBER              = "Number";
@@ -91,6 +93,7 @@ const char * const C_LABEL               = "Label";
 const char * const C_COMMENT             = "Comment";
 const char * const C_DOXYGEN_COMMENT     = "Doxygen.Comment";
 const char * const C_DOXYGEN_TAG         = "Doxygen.Tag";
+const char * const C_VISUAL_WHITESPACE   = "VisualWhitespace";
 
 const char * const C_DISABLED_CODE       = "DisabledCode";
 
@@ -98,6 +101,7 @@ const char * const C_ADDED_LINE          = "AddedLine";
 const char * const C_REMOVED_LINE        = "RemovedLine";
 const char * const C_DIFF_FILE           = "DiffFile";
 const char * const C_DIFF_LOCATION       = "DiffLocation";
+
 
 } // namespace Constants
 } // namespace TextEditor

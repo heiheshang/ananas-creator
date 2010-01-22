@@ -28,6 +28,9 @@
 **************************************************************************/
 
 #include "FastPreprocessor.h"
+#include <Literals.h>
+#include <TranslationUnit.h>
+#include <QtCore/QDebug>
 
 using namespace CPlusPlus;
 

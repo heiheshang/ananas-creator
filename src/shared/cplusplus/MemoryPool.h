@@ -53,8 +53,8 @@
 #include <cstddef>
 #include <new>
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
+
+namespace CPlusPlus {
 
 class CPLUSPLUS_EXPORT MemoryPool
 {
@@ -78,6 +78,22 @@ public:
         }
         return allocate_helper(size);
     }
+
+    struct State
+    {
+        char *ptr;
+        char *end;
+        int blockCount;
+
+        inline bool isValid() const
+        { return ptr != 0; }
+
+        inline State(char *ptr = 0, int blockCount = 0)
+            : ptr(ptr), blockCount(blockCount) {}
+    };
+
+    State state() const;
+    void rewind(const State &state);
 
 private:
     void *allocate_helper(size_t size);
@@ -110,7 +126,7 @@ public:
     void operator delete(void *, MemoryPool *);
 };
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // CPLUSPLUS_MEMORYPOOL_H

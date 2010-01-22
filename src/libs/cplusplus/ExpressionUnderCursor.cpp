@@ -29,6 +29,7 @@
 
 #include "ExpressionUnderCursor.h"
 #include "SimpleLexer.h"
+#include "BackwardsScanner.h"
 #include <Token.h>
 
 #include <QTextCursor>
@@ -36,143 +37,43 @@
 
 using namespace CPlusPlus;
 
-namespace CPlusPlus {
-
-class BackwardsScanner
-{
-    enum { MAX_BLOCK_COUNT = 10 };
-
-public:
-    BackwardsScanner(const QTextCursor &cursor)
-        : _offset(0)
-        , _blocksTokenized(0)
-        , _block(cursor.block())
-    {
-        _tokenize.setSkipComments(true);
-        _text = _block.text().left(cursor.position() - cursor.block().position());
-        _tokens.append(_tokenize(_text, previousBlockState(_block)));
-    }
-
-    QList<SimpleToken> tokens() const { return _tokens; }
-
-    const SimpleToken &operator[](int i)
-    {
-        while (_offset + i < 0) {
-            _block = _block.previous();
-            if (_blocksTokenized == MAX_BLOCK_COUNT || !_block.isValid()) {
-                ++_offset;
-                _tokens.prepend(SimpleToken()); // sentinel
-                break;
-            } else {
-                ++_blocksTokenized;
-
-                QString blockText = _block.text();
-                _text.prepend(blockText);
-                QList<SimpleToken> adaptedTokens;
-                for (int i = 0; i < _tokens.size(); ++i) {
-                    const SimpleToken &t = _tokens.at(i);
-                    const int position = t.position() + blockText.length();
-                    adaptedTokens.append(SimpleToken(t.kind(),
-                                                     position,
-                                                     t.length(),
-                                                     _text.midRef(position, t.length())));
-                }
-
-                _tokens = _tokenize(blockText, previousBlockState(_block));
-                _offset += _tokens.size();
-                _tokens += adaptedTokens;
-            }
-        }
-
-        return _tokens.at(_offset + i);
-    }
-
-    int startPosition() const
-    { return _block.position(); }
-
-    const QString &text() const
-    { return _text; }
-
-    QString text(int begin, int end) const
-    {
-        const SimpleToken &firstToken = _tokens.at(begin + _offset);
-        const SimpleToken &lastToken = _tokens.at(end + _offset - 1);
-        return _text.mid(firstToken.begin(), lastToken.end() - firstToken.begin());
-    }
-
-    int previousBlockState(const QTextBlock &block)
-    {
-        const QTextBlock prevBlock = block.previous();
-        if (prevBlock.isValid()) {
-            int state = prevBlock.userState();
-
-            if (state != -1)
-                return state;
-        }
-        return 0;
-    }
-
-private:
-    QList<SimpleToken> _tokens;
-    int _offset;
-    int _blocksTokenized;
-    QTextBlock _block;
-    QString _text;
-    SimpleLexer _tokenize;
-};
-
-}
-
 ExpressionUnderCursor::ExpressionUnderCursor()
+    : _jumpedComma(false)
 { }
 
 ExpressionUnderCursor::~ExpressionUnderCursor()
 { }
 
-int ExpressionUnderCursor::startOfMatchingBrace(BackwardsScanner &tk, int index)
+int ExpressionUnderCursor::startOfExpression(BackwardsScanner &tk, int index)
 {
-    if (tk[index - 1].is(T_RPAREN)) {
-        int i = index - 1;
-        int count = 0;
-        do {
-            if (tk[i].is(T_LPAREN)) {
-                if (! ++count)
-                    return i;
-            } else if (tk[i].is(T_RPAREN))
-                --count;
-            --i;
-        } while (count != 0 && tk[i].isNot(T_EOF_SYMBOL));
-    } else if (tk[index - 1].is(T_RBRACKET)) {
-        int i = index - 1;
-        int count = 0;
-        do {
-            if (tk[i].is(T_LBRACKET)) {
-                if (! ++count)
-                    return i;
-            } else if (tk[i].is(T_RBRACKET))
-                --count;
-            --i;
-        } while (count != 0 && tk[i].isNot(T_EOF_SYMBOL));
-    } else if (tk[index - 1].is(T_GREATER)) {
-        int i = index - 1;
-        int count = 0;
-        do {
-            if (tk[i].is(T_LESS)) {
-                if (! ++count)
-                    return i;
-            } else if (tk[i].is(T_GREATER))
-                --count;
-            --i;
-        } while (count != 0 && tk[i].isNot(T_EOF_SYMBOL));
+    index = startOfExpression_helper(tk, index);
+
+    if (_jumpedComma) {
+        const SimpleToken &tok = tk[index - 1];
+
+        switch (tok.kind()) {
+        case T_COMMA:
+        case T_LPAREN:
+        case T_LBRACKET:
+        case T_LBRACE:
+        case T_SEMICOLON:
+        case T_COLON:
+        case T_QUESTION:
+            break;
+
+        default:
+            if (tok.isOperator())
+                return startOfExpression(tk, index - 1);
+
+            break;
+        }
     }
 
     return index;
 }
 
-int ExpressionUnderCursor::startOfExpression(BackwardsScanner &tk, int index)
+int ExpressionUnderCursor::startOfExpression_helper(BackwardsScanner &tk, int index)
 {
-    // tk is a reference to a const QList. So, don't worry about [] access.
-    // ### TODO implement multiline support. It should be pretty easy.
     if (tk[index - 1].isLiteral()) {
         return index - 1;
     } else if (tk[index - 1].is(T_THIS)) {
@@ -208,10 +109,10 @@ int ExpressionUnderCursor::startOfExpression(BackwardsScanner &tk, int index)
         }
         return index - 1;
     } else if (tk[index - 1].is(T_RPAREN)) {
-        int rparenIndex = startOfMatchingBrace(tk, index);
+        int rparenIndex = tk.startOfMatchingBrace(index);
         if (rparenIndex != index) {
             if (tk[rparenIndex - 1].is(T_GREATER)) {
-                int lessIndex = startOfMatchingBrace(tk, rparenIndex);
+                int lessIndex = tk.startOfMatchingBrace(rparenIndex);
                 if (lessIndex != rparenIndex - 1) {
                     if (tk[lessIndex - 1].is(T_DYNAMIC_CAST)     ||
                         tk[lessIndex - 1].is(T_STATIC_CAST)      ||
@@ -230,13 +131,13 @@ int ExpressionUnderCursor::startOfExpression(BackwardsScanner &tk, int index)
         }
         return index;
     } else if (tk[index - 1].is(T_RBRACKET)) {
-        int rbracketIndex = startOfMatchingBrace(tk, index);
+        int rbracketIndex = tk.startOfMatchingBrace(index);
         if (rbracketIndex != index)
             return startOfExpression(tk, rbracketIndex);
         return index;
     } else if (tk[index - 1].is(T_COLON_COLON)) {
         if (tk[index - 2].is(T_GREATER)) { // ### not exactly
-            int lessIndex = startOfMatchingBrace(tk, index - 1);
+            int lessIndex = tk.startOfMatchingBrace(index - 1);
             if (lessIndex != index - 1)
                 return startOfExpression(tk, lessIndex);
             return index - 1;
@@ -271,21 +172,19 @@ QString ExpressionUnderCursor::operator()(const QTextCursor &cursor)
 
     _jumpedComma = false;
 
-    const int initialSize = scanner.tokens().size();
+    const int initialSize = scanner.startToken();
     const int i = startOfExpression(scanner, initialSize);
     if (i == initialSize)
         return QString();
 
-    return scanner.text(i, initialSize);
+    return scanner.mid(i);
 }
 
-int ExpressionUnderCursor::startOfFunctionCall(const QTextCursor &cursor)
+int ExpressionUnderCursor::startOfFunctionCall(const QTextCursor &cursor) const
 {
-    QString text;
-
     BackwardsScanner scanner(cursor);
 
-    int index = scanner.tokens().size();
+    int index = scanner.startToken();
 
     forever {
         const SimpleToken &tk = scanner[index - 1];
@@ -295,7 +194,7 @@ int ExpressionUnderCursor::startOfFunctionCall(const QTextCursor &cursor)
         else if (tk.is(T_LPAREN))
             return scanner.startPosition() + tk.position();
         else if (tk.is(T_RPAREN)) {
-            int matchingBrace = startOfMatchingBrace(scanner, index);
+            int matchingBrace = scanner.startOfMatchingBrace(index);
 
             if (matchingBrace == index) // If no matching brace found
                 return -1;

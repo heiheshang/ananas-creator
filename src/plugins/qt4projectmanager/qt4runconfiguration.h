@@ -31,11 +31,13 @@
 #define QT4RUNCONFIGURATION_H
 
 #include <utils/pathchooser.h>
+#include <utils/detailswidget.h>
 #include <projectexplorer/applicationrunconfiguration.h>
 #include <projectexplorer/environment.h>
 #include <projectexplorer/environmenteditmodel.h>
 #include <QtCore/QStringList>
 #include <QtGui/QWidget>
+#include <QtGui/QToolButton>
 
 QT_BEGIN_NAMESPACE
 class QWidget;
@@ -54,7 +56,7 @@ namespace Internal {
 
 class Qt4PriFileNode;
 
-class Qt4RunConfiguration : public ProjectExplorer::ApplicationRunConfiguration
+class Qt4RunConfiguration : public ProjectExplorer::LocalApplicationRunConfiguration
 {
     Q_OBJECT
     // to change the name and arguments and set the userenvironmentchanges
@@ -64,7 +66,7 @@ public:
     virtual ~Qt4RunConfiguration();
 
     virtual QString type() const;
-    virtual bool isEnabled() const;
+    virtual bool isEnabled(ProjectExplorer::BuildConfiguration *configuration) const;
     virtual QWidget *configurationWidget();
     virtual void save(ProjectExplorer::PersistentSettingsWriter &writer) const;
     virtual void restore(const ProjectExplorer::PersistentSettingsReader &reader);
@@ -96,7 +98,7 @@ signals:
     void nameChanged(const QString&);
     void commandLineArgumentsChanged(const QString&);
     void workingDirectoryChanged(const QString&);
-    void runModeChanged(ProjectExplorer::ApplicationRunConfiguration::RunMode runMode);
+    void runModeChanged(ProjectExplorer::LocalApplicationRunConfiguration::RunMode runMode);
     void usingDyldImageSuffixChanged(bool);
     void baseEnvironmentChanged();
     void userEnvironmentChangesChanged(const QList<ProjectExplorer::EnvironmentItem> &diff);
@@ -129,9 +131,8 @@ private:
     QStringList m_targets;
     QString m_executable;
     QString m_workingDir;
-    ProjectExplorer::ApplicationRunConfiguration::RunMode m_runMode;
+    ProjectExplorer::LocalApplicationRunConfiguration::RunMode m_runMode;
     bool m_userSetName;
-    QWidget *m_configWidget;
     bool m_cachedTargetInformationValid;
     bool m_isUsingDyldImageSuffix;
     bool m_userSetWokingDirectory;
@@ -158,7 +159,7 @@ private slots:
     void workingDirectoryChanged(const QString &workingDirectory);
     void commandLineArgumentsChanged(const QString &args);
     void nameChanged(const QString &name);
-    void runModeChanged(ProjectExplorer::ApplicationRunConfiguration::RunMode runMode);
+    void runModeChanged(ProjectExplorer::LocalApplicationRunConfiguration::RunMode runMode);
     void userEnvironmentChangesChanged(const QList<ProjectExplorer::EnvironmentItem> &userChanges);
     void baseEnvironmentChanged();
 
@@ -167,17 +168,20 @@ private slots:
     void usingDyldImageSuffixToggled(bool);
     void usingDyldImageSuffixChanged(bool);
     void baseEnvironmentComboBoxChanged(int index);
+
 private:
+    void updateSummary();
     Qt4RunConfiguration *m_qt4RunConfiguration;
     bool m_ignoreChange;
     QLabel *m_executableLabel;
-    Core::Utils::PathChooser *m_workingDirectoryEdit;
+    Utils::PathChooser *m_workingDirectoryEdit;
     QLineEdit *m_nameLineEdit;
     QLineEdit *m_argumentsLineEdit;
     QCheckBox *m_useTerminalCheck;
     QCheckBox *m_usingDyldImageSuffix;
 
     QComboBox *m_baseEnvironmentComboBox;
+    Utils::DetailsWidget *m_detailsContainer;
 
     ProjectExplorer::EnvironmentWidget *m_environmentWidget;
     bool m_isShown;

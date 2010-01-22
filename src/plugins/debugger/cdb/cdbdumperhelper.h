@@ -37,11 +37,11 @@
 #include <QtCore/QMap>
 
 namespace Debugger {
-namespace Internal {
-
-struct CdbComInterfaces;
-class IDebuggerManagerAccessForEngines;
 class DebuggerManager;
+
+namespace Internal {
+struct CdbComInterfaces;
+class CdbDumperInitThread;
 
 /* For code clarity, all the stuff related to custom dumpers goes here.
  * "Custom dumper" is a library compiled against the current
@@ -56,7 +56,17 @@ class DebuggerManager;
  * dumpType() is the main query function to obtain a list  of WatchData from
  * WatchData item produced by the smbol context.
  * Call disable(), should the debuggee crash (as performing debuggee
- * calls is no longer possible, then).*/
+ * calls is no longer possible, then).
+ *
+ * dumperCallThread specifies the thread to use when making the calls.
+ * As of Debugging Tools v 6.11.1.404 (6.10.2009), calls cannot be executed
+ * when the current thread is in some WaitFor...() function. The call will
+ * then hang (regardless whether that thread or some other, non-blocking thread
+ * is used), and the debuggee will be in running state afterwards (causing errors
+ * from ReadVirtual, etc).
+ * The current thread can be used when stepping or a breakpoint was
+ * hit. When interrupting the inferior, an artifical thread is created,
+ * that is not usable, either. */
 
 class CdbDumperHelper
 {
@@ -89,39 +99,45 @@ public:
 
     // Dump a WatchData item.
     enum DumpResult { DumpNotHandled, DumpOk, DumpError };
-    DumpResult dumpType(const WatchData &d, bool dumpChildren, int source,
+    DumpResult dumpType(const WatchData &d, bool dumpChildren,
                         QList<WatchData> *result, QString *errorMessage);
 
     inline CdbComInterfaces *comInterfaces() const { return m_cif; }
 
+    enum { InvalidDumperCallThread = 0xFFFFFFFF };
+    unsigned long dumperCallThread();
+    void setDumperCallThread(unsigned long t);
+
 private:
+    friend class CdbDumperInitThread;
     enum CallLoadResult { CallLoadOk, CallLoadError, CallLoadNoQtApp, CallLoadAlreadyLoaded };
 
     void clearBuffer();
-
-    bool ensureInitialized(QString *errorMessage);
     CallLoadResult initCallLoad(QString *errorMessage);
     bool initResolveSymbols(QString *errorMessage);
     bool initKnownTypes(QString *errorMessage);
 
+    inline DumpResult dumpTypeI(const WatchData &d, bool dumpChildren,
+                                QList<WatchData> *result, QString *errorMessage);
+
     bool getTypeSize(const QString &typeName, int *size, QString *errorMessage);
     bool runTypeSizeQuery(const QString &typeName, int *size, QString *errorMessage);
-    bool callDumper(const QString &call, const QByteArray &inBuffer, const char **outputPtr,
-                    bool ignoreAccessViolation, QString *errorMessage);
+    enum CallResult { CallOk, CallSyntaxError, CallFailed };
+    CallResult callDumper(const QString &call, const QByteArray &inBuffer, const char **outputPtr,
+                          bool ignoreAccessViolation, QString *errorMessage);
 
-    enum DumpExecuteResult { DumpExecuteOk, DumpExecuteSizeFailed,
-                             DumpComplexExpressionEncountered,
-                             DumpExecuteCallFailed };
+    enum DumpExecuteResult { DumpExecuteOk, DumpExpressionFailed, DumpExecuteCallFailed };
     DumpExecuteResult executeDump(const WatchData &wd,
-                                  const QtDumperHelper::TypeData& td, bool dumpChildren, int source,
+                                  const QtDumperHelper::TypeData& td, bool dumpChildren,
                                   QList<WatchData> *result, QString *errorMessage);
 
     static bool writeToDebuggee(CIDebugDataSpaces *ds, const QByteArray &buffer, quint64 address, QString *errorMessage);
 
     const bool m_tryInjectLoad;
+    const QString m_msgDisabled;
+    const QString m_msgNotInScope;
     State m_state;
     DebuggerManager *m_manager;
-    IDebuggerManagerAccessForEngines *m_access;
     CdbComInterfaces *m_cif;
 
     QString m_library;
@@ -136,6 +152,8 @@ private:
     QStringList m_failedTypes;
 
     QtDumperHelper m_helper;
+    unsigned long m_dumperCallThread;
+    QString m_goCommand;
 };
 
 } // namespace Internal

@@ -32,6 +32,7 @@
 
 #include <QtCore/QByteArray>
 #include <QtCore/QList>
+#include <QtCore/QVariant>
 
 namespace Debugger {
 namespace Internal {
@@ -128,7 +129,7 @@ public:
     void setStreamOutput(const QByteArray &name, const QByteArray &content);
 
 private:
-    friend class GdbResultRecord;
+    friend class GdbResponse;
     friend class GdbEngine;
 
     static QByteArray parseCString(const char *&from, const char *to);
@@ -148,22 +149,23 @@ enum GdbResultClass
     // "done" | "running" | "connected" | "error" | "exit" 
     GdbResultUnknown,
     GdbResultDone,
-    GdbResultCustomDone,
     GdbResultRunning,
     GdbResultConnected,
     GdbResultError,
     GdbResultExit,
 };
 
-class GdbResultRecord
+class GdbResponse
 {
 public:
-    GdbResultRecord() : token(-1), resultClass(GdbResultUnknown) {}
+    GdbResponse() : token(-1), resultClass(GdbResultUnknown) {}
     QByteArray toString() const;
+    static QByteArray stringFromResultClass(GdbResultClass resultClass);
 
     int            token;
     GdbResultClass resultClass;
     GdbMi          data;
+    QVariant       cookie;
 };
 
 } // namespace Internal

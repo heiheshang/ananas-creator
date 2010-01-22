@@ -31,8 +31,11 @@
 
 #include <QtCore/QSettings>
 #include <QtCore/QXmlStreamReader>
+#include <QtCore/QTextStream>
 #include <QtCore/QFile>
 #include <QtCore/QDir>
+#include <QtCore/QCoreApplication>
+#include <QtCore/QDebug>
 
 namespace {
     const char * const SYMBIAN_SDKS_KEY = "HKEY_LOCAL_MACHINE\\Software\\Symbian\\EPOC SDKs";
@@ -47,29 +50,104 @@ namespace {
     const char * const DEVICE_TOOLSROOT = "toolsroot";
 }
 
-using namespace Qt4ProjectManager::Internal;
+namespace Qt4ProjectManager {
+namespace Internal {
+
+S60Devices::Device::Device() :
+    isDefault(false)
+{
+}
+
+QString S60Devices::Device::toHtml() const
+{
+    QString rc;
+    QTextStream str(&rc);
+    str << "<html><body><table>"
+            << "<tr><td><b>" << QCoreApplication::translate("Qt4ProjectManager::Internal::S60Devices::Device", "Id:")
+            << "</b></td><td>" << id << "</td></tr>"
+            << "<tr><td><b>" << QCoreApplication::translate("Qt4ProjectManager::Internal::S60Devices::Device", "Name:")
+            << "</b></td><td>" << name << "</td></tr>"
+            << "<tr><td><b>" << QCoreApplication::translate("Qt4ProjectManager::Internal::S60Devices::Device", "EPOC:")
+            << "</b></td><td>" << epocRoot << "</td></tr>"
+            << "<tr><td><b>" << QCoreApplication::translate("Qt4ProjectManager::Internal::S60Devices::Device", "Tools:")
+            << "</b></td><td>" << toolsRoot << "</td></tr>"
+            << "<tr><td><b>" << QCoreApplication::translate("Qt4ProjectManager::Internal::S60Devices::Device", "Qt:")
+            << "</b></td><td>" << qt << "</td></tr>";
+    return rc;
+}
 
 S60Devices::S60Devices(QObject *parent)
         : QObject(parent)
 {
 }
 
+bool S60Devices::readLinux()
+{
+    m_errorString = QLatin1String("not implemented.");
+    return false;
+}
+
 bool S60Devices::read()
 {
     m_devices.clear();
-    m_errorString = QString();
-    // Check the windows registry via QSettings for devices.xml path
-    QSettings settings(SYMBIAN_SDKS_KEY, QSettings::NativeFormat);
-    QString devicesXmlPath = settings.value(SYMBIAN_PATH_KEY).toString();
-    if (devicesXmlPath.isEmpty()) {
-        m_errorString = "Could not find installed SDKs in registry.";
-        return false;
-    }
+    m_errorString.clear();
+#ifdef Q_OS_WIN
+    return readWin();
+#else
+    return readLinux();
+#endif
+}
 
-    devicesXmlPath += QLatin1String("/") + QLatin1String(SYMBIAN_DEVICES_FILE);
+// Windows: Get list of paths containing common program data
+// as pointed to by environment.
+static QStringList commonProgramFilesPaths()
+{
+    const QChar pathSep = QLatin1Char(';');
+    QStringList rc;
+    const QByteArray commonX86 = qgetenv("CommonProgramFiles(x86)");
+    if (!commonX86.isEmpty())
+        rc += QString::fromLocal8Bit(commonX86).split(pathSep);
+    const QByteArray common = qgetenv("CommonProgramFiles");
+    if (!common.isEmpty())
+        rc += QString::fromLocal8Bit(common).split(pathSep);
+    return rc;
+}
+
+// Windows EPOC
+
+// Find the "devices.xml" file containing the SDKs
+static QString devicesXmlFile(QString *errorMessage)
+{
+    const QString devicesFile = QLatin1String(SYMBIAN_DEVICES_FILE);
+    // Try registry
+    const QSettings settings(QLatin1String(SYMBIAN_SDKS_KEY), QSettings::NativeFormat);
+    const QString devicesRegistryXmlPath = settings.value(QLatin1String(SYMBIAN_PATH_KEY)).toString();
+    if (!devicesRegistryXmlPath.isEmpty())
+        return QDir::cleanPath(devicesRegistryXmlPath + QLatin1Char('/') + devicesFile);
+    // Look up common program data files
+    const QString symbianDir = QLatin1String("/symbian/");
+    foreach(const QString &commonDataDir, commonProgramFilesPaths()) {
+        const QFileInfo fi(commonDataDir + symbianDir + devicesFile);
+        if (fi.isFile())
+            return fi.absoluteFilePath();
+    }
+    // None found...
+    *errorMessage = QString::fromLatin1("The file '%1' containing the device SDK configuration "
+                                        "could not be found looking at the registry key "
+                                        "%2\\%3 or the common program data directories.").
+                                        arg(devicesFile, QLatin1String(SYMBIAN_SDKS_KEY),
+                                            QLatin1String(SYMBIAN_PATH_KEY));
+    return QString();
+}
+
+bool S60Devices::readWin()
+{
+    const QString devicesXmlPath = devicesXmlFile(&m_errorString);
+    if (devicesXmlPath.isEmpty())
+        return false;
     QFile devicesFile(devicesXmlPath);
-    if (!devicesFile.open(QIODevice::ReadOnly)) {
-        m_errorString = QString("Could not read devices file at %1.").arg(devicesXmlPath);
+    if (!devicesFile.open(QIODevice::ReadOnly|QIODevice::Text)) {
+        m_errorString = QString::fromLatin1("Could not open the devices file %1: %2").arg(devicesXmlPath, devicesFile.errorString());
         return false;
     }
     QXmlStreamReader xml(&devicesFile);
@@ -96,6 +174,8 @@ bool S60Devices::read()
                                 device.toolsRoot = xml.readElementText();
                             }
                         }
+                        if (device.toolsRoot.isEmpty())
+                            device.toolsRoot = device.epocRoot;
                         m_devices.append(device);
                     }
                 }
@@ -106,10 +186,10 @@ bool S60Devices::read()
     }
     devicesFile.close();
     if (xml.hasError()) {
-        m_errorString = xml.errorString();
+        m_errorString = QString::fromLatin1("Syntax error in devices file %1: %2").
+                        arg(devicesXmlPath, xml.errorString());
         return false;
     }
-
     return true;
 }
 
@@ -168,6 +248,16 @@ S60Devices::Device S60Devices::deviceForId(const QString &id) const
     return Device();
 }
 
+S60Devices::Device S60Devices::deviceForEpocRoot(const QString &root) const
+{
+    foreach (const S60Devices::Device &i, m_devices) {
+        if (i.epocRoot == root) {
+            return i;
+        }
+    }
+    return Device();
+}
+
 QString S60Devices::cleanedRootPath(const QString &deviceRoot)
 {
     QString path = deviceRoot;
@@ -180,3 +270,22 @@ QString S60Devices::cleanedRootPath(const QString &deviceRoot)
     }
     return path;
 }
+
+QDebug operator<<(QDebug db, const S60Devices::Device &d)
+{
+    QDebug nospace = db.nospace();
+    nospace << "id='" << d.id << "' name='" << d.name << "' default="
+            << d.isDefault << " Epoc='" << d.epocRoot << "' tools='"
+            << d.toolsRoot << "' Qt='" << d.qt << '\'';
+    return db;
+}
+
+QDebug operator<<(QDebug dbg, const S60Devices &d)
+{
+    foreach(const S60Devices::Device &device, d.devices())
+        dbg << device;
+    return dbg;
+}
+
+} // namespace Internal
+} // namespace Qt4ProjectManager

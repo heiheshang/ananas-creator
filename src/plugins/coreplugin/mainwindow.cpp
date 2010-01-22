@@ -85,6 +85,9 @@
 #include <QtGui/QShortcut>
 #include <QtGui/QStatusBar>
 #include <QtGui/QWizard>
+#include <QtGui/QPrinter>
+#include <QtGui/QToolButton>
+#include <QtGui/QMessageBox>
 
 /*
 #ifdef Q_OS_UNIX
@@ -123,7 +126,7 @@ MainWindow::MainWindow() :
     m_progressManager(new ProgressManagerPrivate()),
     m_scriptManager(new ScriptManagerPrivate(this)),
     m_variableManager(new VariableManager(this)),
-    m_vcsManager(new VCSManager()),
+    m_vcsManager(new VCSManager),
     m_viewManager(0),
     m_modeManager(0),
     m_mimeDatabase(new MimeDatabase),
@@ -160,7 +163,7 @@ MainWindow::MainWindow() :
     QCoreApplication::setOrganizationName(QLatin1String("Nokia"));
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QString baseName = qApp->style()->objectName();
-#ifdef Q_WS_X11    
+#ifdef Q_WS_X11
     if (baseName == QLatin1String("windows")) {
         // Sometimes we get the standard windows 95 style as a fallback
         // e.g. if we are running on a KDE4 desktop
@@ -325,7 +328,7 @@ bool MainWindow::init(QString *errorMessage)
 
 void MainWindow::modeChanged(Core::IMode *mode)
 {
-    if (mode == m_outputMode) {        
+    if (mode == m_outputMode) {
         int idx = OutputPaneManager::instance()->m_widgetComboBox->itemData(OutputPaneManager::instance()->m_widgetComboBox->currentIndex()).toInt();
         IOutputPane *out = OutputPaneManager::instance()->m_pageMap.value(idx);
         if (out && out->canFocus())
@@ -343,6 +346,7 @@ void MainWindow::extensionsInitialized()
     OutputPaneManager::instance()->init();
 
     m_actionManager->initialize();
+    m_vcsManager->extensionsInitialized();
     readSettings();
     updateContext();
 
@@ -678,6 +682,7 @@ void MainWindow::registerDefaultActions()
     cmd = am->registerAction(m_optionsAction, Constants::OPTIONS, m_globalContext);
 #ifdef Q_WS_MAC
     cmd->setDefaultKeySequence(QKeySequence("Ctrl+,"));
+    cmd->action()->setMenuRole(QAction::PreferencesRole);
 #endif
     mtools->addAction(cmd, Constants::G_DEFAULT_THREE);
     connect(m_optionsAction, SIGNAL(triggered()), this, SLOT(showOptionsDialog()));
@@ -735,7 +740,11 @@ void MainWindow::registerDefaultActions()
     cmd = am->registerAction(tmpaction, Constants::ABOUT_QTCREATOR, m_globalContext);
     mhelp->addAction(cmd, Constants::G_HELP_ABOUT);
     tmpaction->setEnabled(true);
+#ifdef Q_WS_MAC
+    cmd->action()->setMenuRole(QAction::ApplicationSpecificRole);
+#endif
     connect(tmpaction, SIGNAL(triggered()), this,  SLOT(aboutQtCreator()));
+
     //About Plugins Action
     tmpaction = new QAction(tr("About &Plugins..."), this);
     cmd = am->registerAction(tmpaction, Constants::ABOUT_PLUGINS, m_globalContext);
@@ -856,7 +865,7 @@ QStringList MainWindow::showNewItemDialog(const QString &title,
     if (defaultDir.isEmpty() && !m_coreImpl->fileManager()->currentFile().isEmpty())
         defaultDir = QFileInfo(m_coreImpl->fileManager()->currentFile()).absolutePath();
     if (defaultDir.isEmpty())
-        defaultDir = Core::Utils::PathChooser::homePath();
+        defaultDir = Utils::PathChooser::homePath();
 
     // Scan for wizards matching the filter and pick one. Don't show
     // dialog if there is only one.
@@ -1094,7 +1103,7 @@ void MainWindow::readSettings()
 {
     m_settings->beginGroup(QLatin1String(settingsGroup));
 
-    StyleHelper::setBaseColor(m_settings->value(QLatin1String(colorKey)).value<QColor>());
+    Utils::StyleHelper::setBaseColor(m_settings->value(QLatin1String(colorKey)).value<QColor>());
 
     const QVariant geom = m_settings->value(QLatin1String(geometryKey));
     if (geom.isValid()) {
@@ -1117,7 +1126,7 @@ void MainWindow::writeSettings()
 {
     m_settings->beginGroup(QLatin1String(settingsGroup));
 
-    m_settings->setValue(QLatin1String(colorKey), StyleHelper::baseColor());
+    m_settings->setValue(QLatin1String(colorKey), Utils::StyleHelper::baseColor());
 
     if (windowState() & (Qt::WindowMaximized | Qt::WindowFullScreen)) {
         m_settings->setValue(QLatin1String(maxKey), (bool) (windowState() & Qt::WindowMaximized));
@@ -1255,3 +1264,28 @@ void MainWindow::setFullScreen(bool on)
     }
 }
 
+// Display a warning with an additional button to open
+// the debugger settings dialog if settingsId is nonempty.
+
+bool MainWindow::showWarningWithOptions(const QString &title,
+                                        const QString &text,
+                                        const QString &details,
+                                        const QString &settingsCategory,
+                                        const QString &settingsId,
+                                        QWidget *parent)
+{
+    if (parent == 0)
+        parent = this;
+    QMessageBox msgBox(QMessageBox::Warning, title, text,
+                       QMessageBox::Ok, parent);
+    if (details.isEmpty())
+        msgBox.setDetailedText(details);
+    QAbstractButton *settingsButton = 0;
+    if (!settingsId.isEmpty() || !settingsCategory.isEmpty())
+        settingsButton = msgBox.addButton(tr("Settings..."), QMessageBox::AcceptRole);
+    msgBox.exec();
+    if (settingsButton && msgBox.clickedButton() == settingsButton) {
+        return showOptionsDialog(settingsCategory, settingsId);
+    }
+    return false;
+}

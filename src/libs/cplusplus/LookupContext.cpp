@@ -30,6 +30,7 @@
 #include "LookupContext.h"
 #include "ResolveExpression.h"
 #include "Overview.h"
+#include "CppBindings.h"
 
 #include <CoreTypes.h>
 #include <Symbols.h>
@@ -129,6 +130,46 @@ QList<Symbol *> LookupContext::resolveQualifiedNameId(QualifiedNameId *q,
                                                       const QList<Scope *> &visibleScopes,
                                                       ResolveMode mode) const
 {
+    QList<Symbol *> candidates;
+
+    if (true || mode & ResolveClass) {
+        for (int i = 0; i < visibleScopes.size(); ++i) {
+            Scope *scope = visibleScopes.at(i);
+
+            for (Symbol *symbol = scope->lookat(q); symbol; symbol = symbol->next()) {
+                if (! symbol->name())
+                    continue;
+                else if (! symbol->isClass())
+                    continue;
+
+                QualifiedNameId *qq = symbol->name()->asQualifiedNameId();
+
+                if (! qq)
+                    continue;
+                else if (! maybeValidSymbol(symbol, mode, candidates))
+                    continue;
+
+                if (! q->unqualifiedNameId()->isEqualTo(qq->unqualifiedNameId()))
+                    continue;
+
+                else if (qq->nameCount() == q->nameCount()) {
+                    unsigned j = 0;
+
+                    for (; j < q->nameCount(); ++j) {
+                        Name *classOrNamespaceName1 = q->nameAt(j);
+                        Name *classOrNamespaceName2 = qq->nameAt(j);
+
+                        if (! classOrNamespaceName1->isEqualTo(classOrNamespaceName2))
+                            break;
+                    }
+
+                    if (j == q->nameCount())
+                        candidates.append(symbol);
+                }
+            }
+        }
+    }
+
     QList<Scope *> scopes;
 
     if (q->nameCount() == 1)
@@ -148,7 +189,9 @@ QList<Symbol *> LookupContext::resolveQualifiedNameId(QualifiedNameId *q,
         }
     }
 
-    return resolve(q->unqualifiedNameId(), expanded, mode);
+    candidates += resolve(q->unqualifiedNameId(), expanded, mode);
+
+    return candidates;
 }
 
 QList<Symbol *> LookupContext::resolveOperatorNameId(OperatorNameId *opId,
@@ -197,12 +240,10 @@ QList<Symbol *> LookupContext::resolve(Name *name, const QList<Scope *> &visible
                 else if (! maybeValidSymbol(symbol, mode, candidates))
                     continue; // skip it, we're not looking for this kind of symbols
 
-
                 else if (Identifier *symbolId = symbol->identifier()) {
                     if (! symbolId->isEqualTo(id))
                         continue; // skip it, the symbol's id is not compatible with this lookup.
                 }
-
 
                 if (QualifiedNameId *q = symbol->name()->asQualifiedNameId()) {
 
@@ -276,7 +317,12 @@ QList<Scope *> LookupContext::buildVisibleScopes()
     QList<Scope *> scopes;
 
     if (_symbol) {
-        for (Scope *scope = _symbol->scope(); scope; scope = scope->enclosingScope()) {
+        Scope *scope = _symbol->scope();
+
+        if (Function *fun = _symbol->asFunction())
+            scope = fun->members(); // handle ctor initializers.
+
+        for (; scope; scope = scope->enclosingScope()) {
             if (scope == _thisDocument->globalSymbols())
                 break;
 
@@ -301,11 +347,15 @@ QList<Scope *> LookupContext::buildVisibleScopes()
 }
 
 QList<Scope *> LookupContext::visibleScopes(const QPair<FullySpecifiedType, Symbol *> &result) const
+{ return visibleScopes(result.second); }
+
+QList<Scope *> LookupContext::visibleScopes(Symbol *symbol) const
 {
-    Symbol *symbol = result.second;
     QList<Scope *> scopes;
-    for (Scope *scope = symbol->scope(); scope; scope = scope->enclosingScope())
-        scopes.append(scope);
+    if (symbol) {
+        for (Scope *scope = symbol->scope(); scope; scope = scope->enclosingScope())
+            scopes.append(scope);
+    }
     scopes += visibleScopes();
     scopes = expand(scopes);
     return scopes;
@@ -354,6 +404,11 @@ void LookupContext::expandNamespace(Namespace *ns,
                                     const QList<Scope *> &visibleScopes,
                                     QList<Scope *> *expandedScopes) const
 {
+    //qDebug() << "*** expand namespace:" << ns->fileName() << ns->line() << ns->column();
+
+    if (Scope *encl = ns->enclosingNamespaceScope())
+        expand(encl, visibleScopes, expandedScopes);
+
     if (Name *nsName = ns->name()) {
         const QList<Symbol *> namespaceList = resolveNamespace(nsName, visibleScopes);
         foreach (Symbol *otherNs, namespaceList) {
@@ -460,10 +515,18 @@ void LookupContext::expandFunction(Function *function,
                                                         q->isGlobal());
         const QList<Symbol *> candidates = resolveClassOrNamespace(nestedNameSpec, visibleScopes);
         for (int j = 0; j < candidates.size(); ++j) {
-            expand(candidates.at(j)->asScopedSymbol()->members(),
-                   visibleScopes, expandedScopes);
+            if (ScopedSymbol *scopedSymbol = candidates.at(j)->asScopedSymbol())
+                expand(scopedSymbol->members(), visibleScopes, expandedScopes);
         }
     }
+}
+
+void LookupContext::expandObjCMethod(ObjCMethod *method,
+                                     const QList<Scope *> &,
+                                     QList<Scope *> *expandedScopes) const
+{
+    if (! expandedScopes->contains(method->arguments()))
+        expandedScopes->append(method->arguments());
 }
 
 void LookupContext::expand(Scope *scope,
@@ -483,5 +546,131 @@ void LookupContext::expand(Scope *scope,
         expandBlock(block, visibleScopes, expandedScopes);
     } else if (Function *fun = scope->owner()->asFunction()) {
         expandFunction(fun, visibleScopes, expandedScopes);
+    } else if (ObjCMethod *meth = scope->owner()->asObjCMethod()) {
+        expandObjCMethod(meth, visibleScopes, expandedScopes);
     }
+}
+
+static void visibleClassBindings_helper(ClassBinding *classBinding,
+                                        QList<ClassBinding *> *allClassBindings,
+                                        QSet<ClassBinding *> *processed)
+{
+    if (! classBinding)
+        return;
+
+    else if (processed->contains(classBinding))
+        return;
+
+    processed->insert(classBinding);
+
+    foreach (ClassBinding *baseClassBinding, classBinding->baseClassBindings)
+        visibleClassBindings_helper(baseClassBinding, allClassBindings, processed);
+
+    allClassBindings->append(classBinding);
+}
+
+static QList<ClassBinding *> visibleClassBindings(Symbol *symbol, NamespaceBinding *globalNamespace)
+{
+    QList<ClassBinding *> classBindings;
+
+    if (! symbol)
+        return classBindings;
+
+    else if (Class *klass = symbol->asClass()) {
+        QSet<ClassBinding *> processed;
+
+        visibleClassBindings_helper(NamespaceBinding::find(klass, globalNamespace),
+                                    &classBindings, &processed);
+    }
+
+    return classBindings;
+}
+
+Symbol *LookupContext::canonicalSymbol(Symbol *symbol,
+                                       NamespaceBinding *globalNamespace)
+{
+    Symbol *canonicalSymbol = LookupContext::canonicalSymbol(symbol);
+    if (! canonicalSymbol)
+        return 0;
+
+    if (Identifier *symbolId = canonicalSymbol->identifier()) {
+        if (symbolId && canonicalSymbol->type()->isFunctionType()) {
+            Class *enclosingClass = canonicalSymbol->scope()->owner()->asClass();
+            const QList<ClassBinding *> classBindings = visibleClassBindings(enclosingClass, globalNamespace);
+
+            foreach (ClassBinding *baseClassBinding, classBindings) {
+                if (! baseClassBinding)
+                    continue;
+
+                foreach (Class *baseClass, baseClassBinding->symbols) {
+                    if (! baseClass)
+                        continue;
+
+                    for (Symbol *c = baseClass->members()->lookat(symbolId); c; c = c->next()) {
+                        if (! symbolId->isEqualTo(c->identifier()))
+                            continue;
+                        else if (Function *f = c->type()->asFunctionType()) {
+                            if (f->isVirtual())
+                                return LookupContext::canonicalSymbol(f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return canonicalSymbol;
+}
+
+Symbol *LookupContext::canonicalSymbol(const QList<Symbol *> &candidates,
+                                       NamespaceBinding *globalNamespaceBinding)
+{
+    if (candidates.isEmpty())
+        return 0;
+
+    return canonicalSymbol(candidates.first(), globalNamespaceBinding);
+}
+
+Symbol *LookupContext::canonicalSymbol(const QList<QPair<FullySpecifiedType, Symbol *> > &results,
+                                       NamespaceBinding *globalNamespaceBinding)
+{
+    QList<Symbol *> candidates;
+    QPair<FullySpecifiedType, Symbol *> result;
+
+    foreach (result, results)
+        candidates.append(result.second); // ### not exacly.
+
+    return canonicalSymbol(candidates, globalNamespaceBinding);
+}
+
+
+Symbol *LookupContext::canonicalSymbol(Symbol *symbol)
+{
+    Symbol *canonical = symbol;
+    Class *canonicalClass = 0;
+
+    for (; symbol; symbol = symbol->next()) {
+        if (symbol->identifier() == canonical->identifier()) {
+            canonical = symbol;
+
+            if (Class *klass = symbol->asClass())
+                canonicalClass = klass;
+        }
+    }
+
+    if (canonicalClass) {
+        Q_ASSERT(canonical != 0);
+
+        if (canonical->isForwardClassDeclaration())
+            return canonicalClass; // prefer class declarations when available.
+    }
+
+    if (canonical && canonical->scope()->isClassScope()) {
+        Class *enclosingClass = canonical->scope()->owner()->asClass();
+
+        if (enclosingClass->identifier() == canonical->identifier())
+            return enclosingClass;
+    }
+
+    return canonical;
 }

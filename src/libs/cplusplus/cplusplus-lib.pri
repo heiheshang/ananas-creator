@@ -1,4 +1,9 @@
-DEFINES += CPLUSPLUS_BUILD_LIB
+contains(CONFIG, dll) {
+    DEFINES += CPLUSPLUS_BUILD_LIB
+} else {
+    DEFINES += CPLUSPLUS_BUILD_STATIC_LIB
+}
+
 INCLUDEPATH += $$PWD
 
 include(../../shared/cplusplus/cplusplus.pri)
@@ -8,12 +13,16 @@ HEADERS += \
     $$PWD/Icons.h \
     $$PWD/ExpressionUnderCursor.h \
     $$PWD/TokenUnderCursor.h \
+    $$PWD/BackwardsScanner.h \
+    $$PWD/MatchingText.h \
     $$PWD/OverviewModel.h
 
 SOURCES += \
     $$PWD/Icons.cpp \
     $$PWD/ExpressionUnderCursor.cpp \
     $$PWD/TokenUnderCursor.cpp \
+    $$PWD/BackwardsScanner.cpp \
+    $$PWD/MatchingText.cpp \
     $$PWD/OverviewModel.cpp
 }
 
@@ -28,6 +37,8 @@ HEADERS += \
     $$PWD/LookupContext.h \
     $$PWD/CppBindings.h \
     $$PWD/ASTParent.h \
+    $$PWD/GenTemplateInstance.h \
+    $$PWD/FindUsages.h \
     $$PWD/CheckUndefinedSymbols.h \
     $$PWD/PreprocessorClient.h \
     $$PWD/PreprocessorEnvironment.h \
@@ -50,6 +61,8 @@ SOURCES += \
     $$PWD/LookupContext.cpp \
     $$PWD/CppBindings.cpp \
     $$PWD/ASTParent.cpp \
+    $$PWD/GenTemplateInstance.cpp \
+    $$PWD/FindUsages.cpp \
     $$PWD/CheckUndefinedSymbols.cpp \
     $$PWD/PreprocessorClient.cpp \
     $$PWD/PreprocessorEnvironment.cpp \

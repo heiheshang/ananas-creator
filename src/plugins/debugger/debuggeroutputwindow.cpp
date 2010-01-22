@@ -55,6 +55,7 @@ using namespace Find;
 
 #endif // GDBDEBUGGERLEAN
 
+using namespace Debugger;
 using namespace Debugger::Internal;
 
 static QChar charForChannel(int channel)
@@ -154,7 +155,6 @@ public:
         m_clearContentsAction = new QAction(this);
         m_clearContentsAction->setText(tr("Clear contents"));
         m_clearContentsAction->setEnabled(true);
-        m_clearContentsAction->setShortcut(Qt::ControlModifier + Qt::Key_R);
         connect(m_clearContentsAction, SIGNAL(triggered(bool)),
             parent, SLOT(clearContents()));
 
@@ -309,6 +309,8 @@ DebuggerOutputWindow::DebuggerOutputWindow(QWidget *parent)
 
     m_splitter->addWidget(m_inputText);
     m_splitter->addWidget(m_combinedText);
+    m_splitter->setStretchFactor(0, 1);
+    m_splitter->setStretchFactor(1, 3);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setMargin(0);

@@ -41,6 +41,10 @@
 
 #include <QtCore/QDir>
 
+namespace QmlEditor {
+class QmlModelManagerInterface;
+}
+
 namespace QmlProjectManager {
 namespace Internal {
 
@@ -60,25 +64,25 @@ public:
     virtual QString name() const;
     virtual Core::IFile *file() const;
     virtual Manager *projectManager() const;
+    virtual ProjectExplorer::IBuildConfigurationFactory *buildConfigurationFactory() const;
 
     virtual QList<ProjectExplorer::Project *> dependsOn();
 
     virtual bool isApplication() const;
     virtual bool hasBuildSettings() const;
 
-    virtual ProjectExplorer::Environment environment(const QString &buildConfiguration) const;
-    virtual QString buildDirectory(const QString &buildConfiguration) const;
+    virtual ProjectExplorer::Environment environment(ProjectExplorer::BuildConfiguration *configuration) const;
+    virtual QString buildDirectory(ProjectExplorer::BuildConfiguration *configuration) const;
 
     virtual ProjectExplorer::BuildConfigWidget *createConfigWidget();
     virtual QList<ProjectExplorer::BuildConfigWidget*> subConfigWidgets();
 
-    virtual void newBuildConfiguration(const QString &buildConfiguration);
     virtual QmlProjectNode *rootProjectNode() const;
     virtual QStringList files(FilesMode fileMode) const;
 
     QStringList targets() const;
     QmlMakeStep *makeStep() const;
-    QString buildParser(const QString &buildConfiguration) const;
+    QString buildParser(ProjectExplorer::BuildConfiguration *configuration) const;
 
     enum RefreshOptions {
         Files         = 0x01,
@@ -104,6 +108,7 @@ private:
     QString m_filesFileName;
     QmlProjectFile *m_file;
     QString m_projectName;
+    QmlEditor::QmlModelManagerInterface *m_modelManager;
 
     QStringList m_files;
 
@@ -136,7 +141,7 @@ private:
     QString m_fileName;
 };
 
-class QmlRunConfiguration : public ProjectExplorer::ApplicationRunConfiguration
+class QmlRunConfiguration : public ProjectExplorer::LocalApplicationRunConfiguration
 {
     Q_OBJECT
 public:
@@ -161,6 +166,7 @@ public:
 private Q_SLOTS:
     void setMainScript(const QString &scriptFile);
     void onQmlViewerChanged();
+    void onQmlViewerArgsChanged();
 
 
 private:
@@ -169,7 +175,9 @@ private:
 private:
     QmlProject *m_project;
     QString m_scriptFile;
-    QString m_qmlViewer;
+    QString m_qmlViewerCustomPath;
+    QString m_qmlViewerDefaultPath;
+    QString m_qmlViewerArgs;
     QLatin1String m_type;
 };
 

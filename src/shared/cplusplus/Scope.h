@@ -51,36 +51,8 @@
 
 #include "CPlusPlusForwardDeclarations.h"
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
 
-class CPLUSPLUS_EXPORT Use
-{
-public:
-    inline Name *name() const
-    { return _name; }
-
-    inline unsigned sourceOffset() const
-    { return _sourceOffset; }
-
-    inline Symbol *lastVisibleSymbol() const
-    { return _lastVisibleSymbol; }
-
-private:
-    void init(unsigned sourceOffset, Name *name, Symbol *lastVisibleSymbol)
-    {
-        _sourceOffset = sourceOffset;
-        _name = name;
-        _lastVisibleSymbol = lastVisibleSymbol;
-    }
-
-    unsigned _sourceOffset;
-
-    Name *_name;
-    Symbol *_lastVisibleSymbol;
-
-    friend class Scope;
-};
+namespace CPlusPlus {
 
 class CPLUSPLUS_EXPORT Scope
 {
@@ -157,10 +129,9 @@ public:
     /// Returns the last Symbol in the scope.
     iterator lastSymbol() const;
 
+    Symbol *lookat(Name *name) const;
     Symbol *lookat(Identifier *id) const;
     Symbol *lookat(int operatorId) const;
-
-    void addUse(unsigned sourceOffset, Name *name);
 
 private:
     /// Returns the hash value for the given Symbol.
@@ -182,7 +153,7 @@ private:
     int _hashSize;
 };
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // CPLUSPLUS_SCOPE_H

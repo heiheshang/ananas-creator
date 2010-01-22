@@ -51,8 +51,8 @@
 
 #include "CPlusPlusForwardDeclarations.h"
 
-CPLUSPLUS_BEGIN_HEADER
-CPLUSPLUS_BEGIN_NAMESPACE
+
+namespace CPlusPlus {
 
 class CPLUSPLUS_EXPORT FullySpecifiedType
 {
@@ -119,6 +119,10 @@ public:
     bool operator != (const FullySpecifiedType &other) const;
     bool operator < (const FullySpecifiedType &other) const;
 
+    FullySpecifiedType simplified() const;
+
+    void copySpecifiers(const FullySpecifiedType &type);
+
 private:
     Type *_type;
     struct Flags {
@@ -149,7 +153,7 @@ private:
     };
 };
 
-CPLUSPLUS_END_NAMESPACE
-CPLUSPLUS_END_HEADER
+} // end of namespace CPlusPlus
+
 
 #endif // CPLUSPLUS_FULLYSPECIFIEDTYPE_H

@@ -32,6 +32,8 @@
 
 #include <extensionsystem/iplugin.h>
 #include <coreplugin/editormanager/ieditorfactory.h>
+#include <coreplugin/ifile.h>
+#include <texteditor/basetexteditor.h>
 
 #include <QtCore/QtPlugin>
 #include <QtCore/QPointer>
@@ -196,7 +198,7 @@ private:
     DirectoryEditorFile *m_file;
     QList<int> m_context;
     QToolBar *m_toolBar;
-    Core::Utils::LineColumnLabel *m_cursorPositionLabel;
+    //Core::Utils::LineColumnLabel *m_cursorPositionLabel;
 };
 
 

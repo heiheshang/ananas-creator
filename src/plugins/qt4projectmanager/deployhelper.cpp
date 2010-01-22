@@ -50,8 +50,7 @@ DeployHelperRunStep::DeployHelperRunStep(Qt4Project *pro)
 
 bool DeployHelperRunStep::init(const QString &configuration)
 {
-    Q_UNUSED(configuration)
-    m_qtdir = m_pro->qtDir(configuration);
+    m_qtdir = m_pro->qtDir(m_pro->buildConfiguration(configuration));
     QFileInfo fi(m_pro->file()->fileName());
     m_appdir = fi.absolutePath();
     //find target
@@ -166,7 +165,7 @@ void DeployHelperRunStep::cleanup()
 
 void DeployHelperRunStep::readyRead()
 {
-    // TODO Unbreak the application output (this whole thing should be moved to a IRunConfigurationRunner)
+    // TODO Unbreak the application output (this whole thing should be moved to a IRunControlFactory)
     QProcess * proc = qobject_cast<QProcess *>(sender());
     while (proc->canReadLine()) {
         QString line = proc->readLine().trimmed();

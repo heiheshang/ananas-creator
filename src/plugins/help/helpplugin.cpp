@@ -47,6 +47,7 @@
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/editormanager/editormanager.h>
+#include <coreplugin/editormanager/ieditor.h>
 #include <coreplugin/findplaceholder.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/minisplitter.h>
@@ -417,7 +418,7 @@ bool HelpPlugin::initialize(const QStringList &arguments, QString *error)
         cmd->setDefaultKeySequence(QKeySequence(tr("Ctrl++")));
         connect(a, SIGNAL(triggered()), m_centralWidget, SLOT(zoomIn()));
         advancedMenu->addAction(cmd, Core::Constants::G_EDIT_FONT);
-        
+
         a = new QAction(tr("Decrease Font Size"), this);
         cmd = am->registerAction(a, TextEditor::Constants::DECREASE_FONT_SIZE,
             modecontext);
@@ -448,7 +449,7 @@ QHelpEngine* HelpPlugin::helpEngine() const
 
 void HelpPlugin::createRightPaneSideBar()
 {
-    QAction *switchToHelpMode = new QAction("Go to Help Mode", this);
+    QAction *switchToHelpMode = new QAction(tr("Go to Help Mode"), this);
     m_rightPaneBackwardAction =
         new QAction(QIcon(QLatin1String(":/help/images/previous.png")),
         tr("Previous"), this);
@@ -477,7 +478,7 @@ void HelpPlugin::createRightPaneSideBar()
     hboxLayout->addWidget(rightPaneToolBar);
     hboxLayout->addStretch(5);
     hboxLayout->addWidget(closeButton);
-    Core::Utils::StyledBar *w = new Core::Utils::StyledBar;
+    Utils::StyledBar *w = new Utils::StyledBar;
     w->setLayout(hboxLayout);
     connect(closeButton, SIGNAL(clicked()), this, SLOT(slotHideRightPane()));
 
@@ -490,7 +491,7 @@ void HelpPlugin::createRightPaneSideBar()
     addAutoReleasedObject(new Core::BaseRightPaneWidget(m_rightPaneSideBar));
 
     rightPaneLayout->addWidget(w);
-    m_helpViewerForSideBar = new HelpViewer(m_helpEngine, 0);
+    m_helpViewerForSideBar = new HelpViewer(m_helpEngine, 0, m_rightPaneSideBar);
     Aggregation::Aggregate *agg = new Aggregation::Aggregate();
     agg->add(m_helpViewerForSideBar);
     agg->add(new HelpViewerFindSupport(m_helpViewerForSideBar));
@@ -571,57 +572,82 @@ void HelpPlugin::extensionsInitialized()
         return;
     }
 
-    bool needsSetup = false;
     bool assistantInternalDocRegistered = false;
+    QStringList documentationToRemove;
+    QStringList filtersToRemove;
 
-    const QString &docInternal = QString("com.nokia.qtcreator.%1%2")
-        .arg(IDE_VERSION_MAJOR).arg(IDE_VERSION_MINOR);
+    const QString &docInternal = QString("com.nokia.qtcreator.%1%2%3")
+        .arg(IDE_VERSION_MAJOR).arg(IDE_VERSION_MINOR).arg(IDE_VERSION_RELEASE);
+    const QString filterInternal = QString("Qt Creator %1.%2.%3")
+        .arg(IDE_VERSION_MAJOR).arg(IDE_VERSION_MINOR).arg(IDE_VERSION_RELEASE);
+    const QRegExp filterRegExp("Qt Creator \\d*\\.\\d*\\.\\d*");
     const QStringList &docs = m_helpEngine->registeredDocumentations();
     foreach (const QString &ns, docs) {
         if (ns == docInternal) {
             assistantInternalDocRegistered = true;
-            break;
+        } else if (ns.startsWith("com.nokia.qtcreator.")) {
+            documentationToRemove << ns;
+        }
+    }
+    foreach (const QString &filter, m_helpEngine->customFilters()) {
+        if (filterRegExp.exactMatch(filter) && filter != filterInternal) {
+            filtersToRemove << filter;
         }
     }
 
-    if (!assistantInternalDocRegistered) {
-        QFileInfo fi(m_helpEngine->collectionFile());
-
-        const QString qchFileName =
-            QDir::cleanPath(QCoreApplication::applicationDirPath()
-#if defined(Q_OS_MAC)
-            + QLatin1String("/../Resources/doc/qtcreator.qch"));
-#else
-            + QLatin1String("../../share/doc/qtcreator/qtcreator.qch"));
-#endif
-        QHelpEngineCore hc(fi.absoluteFilePath());
+    //remove any qtcreator documentation that doesn't belong to current version
+    if (!documentationToRemove.isEmpty() || !filtersToRemove.isEmpty() || !assistantInternalDocRegistered) {
+        QHelpEngineCore hc(m_helpEngine->collectionFile());
         hc.setupData();
-        QString fileNamespace = QHelpEngineCore::namespaceName(qchFileName);
-        if (!fileNamespace.isEmpty()
-            && !hc.registeredDocumentations().contains(fileNamespace)) {
-                if (!hc.registerDocumentation(qchFileName))
-                    qDebug() << hc.error();
-                needsSetup = true;
+        foreach (const QString &ns, documentationToRemove) {
+            hc.unregisterDocumentation(ns);
         }
+        foreach (const QString &filter, filtersToRemove) {
+            hc.removeCustomFilter(filter);
+        }
+
+        if (!assistantInternalDocRegistered) {
+            const QString qchFileName =
+                QDir::cleanPath(QCoreApplication::applicationDirPath()
+#if defined(Q_OS_MAC)
+                + QLatin1String("/../Resources/doc/qtcreator.qch"));
+#else
+                + QLatin1String("../../share/doc/qtcreator/qtcreator.qch"));
+#endif
+            if (!hc.registerDocumentation(qchFileName))
+                qDebug() << qPrintable(hc.error());
+        }
+
     }
 
-    QLatin1String key("UnfilteredFilterInserted");
-    int i = m_helpEngine->customValue(key).toInt();
-    if (i != 1) {
-        {
-            QHelpEngineCore hc(m_helpEngine->collectionFile());
-            hc.setupData();
-            hc.addCustomFilter(tr("Unfiltered"), QStringList());
-            hc.setCustomValue(key, 1);
+    const QLatin1String weAddedFilterKey("UnfilteredFilterInserted");
+    const QLatin1String previousFilterNameKey("UnfilteredFilterName");
+    int i = m_helpEngine->customValue(weAddedFilterKey).toInt();
+    const QString filterName = tr("Unfiltered");
+    if (i == 1) { // we added a filter at some point
+        // remove previously added filter
+        QHelpEngineCore hc(m_helpEngine->collectionFile());
+        hc.setupData();
+        QString previousFilterName = hc.customValue(previousFilterNameKey).toString();
+        if (!previousFilterName.isEmpty()) { // we noted down the name of the previously added filter
+            hc.removeCustomFilter(previousFilterName);
         }
-        m_helpEngine->blockSignals(true);
-        m_helpEngine->setCurrentFilter(tr("Unfiltered"));
-        m_helpEngine->blockSignals(false);
-        needsSetup = true;
+        if (previousFilterName != filterName) { // potentially remove a filter with new name
+            hc.removeCustomFilter(filterName);
+        }
     }
+    {
+        QHelpEngineCore hc(m_helpEngine->collectionFile());
+        hc.setupData();
+        hc.addCustomFilter(filterName, QStringList());
+        hc.setCustomValue(weAddedFilterKey, 1);
+        hc.setCustomValue(previousFilterNameKey, filterName);
+    }
+    bool blocked = m_helpEngine->blockSignals(true);
+    m_helpEngine->setCurrentFilter(filterName);
+    m_helpEngine->blockSignals(blocked);
 
-    if (needsSetup)
-        m_helpEngine->setupData();
+    m_helpEngine->setupData();
 
     updateFilterComboBox();
     m_bookmarkManager->setupBookmarkModels();
@@ -633,7 +659,7 @@ void HelpPlugin::extensionsInitialized()
 
     font = qVariantValue<QFont>(m_helpEngine->customValue(QLatin1String("font"),
         font));
-    
+
     webSettings->setFontFamily(QWebSettings::StandardFont, font.family());
     webSettings->setFontSize(QWebSettings::DefaultFontSize, font.pointSize());
 #endif
@@ -712,13 +738,15 @@ HelpViewer* HelpPlugin::viewerForContextMode()
 {
     HelpViewer *viewer = 0;
     bool showSideBySide = false;
+    Core::RightPanePlaceHolder* placeHolder = Core::RightPanePlaceHolder::current();
+    Core::IEditor *editor = Core::EditorManager::instance()->currentEditor();
 
     switch (m_helpEngine->customValue(QLatin1String("ContextHelpOption"), 0).toInt())
     {
     case 0: // side by side if possible
         {
-            if (Core::IEditor *editor = Core::EditorManager::instance()->currentEditor()) {
-                if (editor->widget() && editor->widget()->isVisible() && editor->widget()->width() < 800 )
+            if ((!placeHolder || !placeHolder->isVisible()) && editor) {
+                if (!editor->widget() && editor->widget()->isVisible() && editor->widget()->width() < 800 )
                     break;
             }
         }
@@ -730,7 +758,6 @@ HelpViewer* HelpPlugin::viewerForContextMode()
         break;
     }
 
-    Core::RightPanePlaceHolder* placeHolder = Core::RightPanePlaceHolder::current();
     if (placeHolder && showSideBySide) {
         Core::RightPaneWidget::instance()->setShown(true);
         viewer = m_helpViewerForSideBar;
@@ -798,6 +825,8 @@ void HelpPlugin::activateContents()
 {
     activateHelpMode();
     m_sideBar->activateItem(m_contentItem);
+    openHelpPage(QString::fromLatin1("qthelp://com.nokia.qtcreator.%1%2%3/doc/index.html")
+                 .arg(IDE_VERSION_MAJOR).arg(IDE_VERSION_MINOR).arg(IDE_VERSION_RELEASE));
 }
 
 void HelpPlugin::activateSearch()

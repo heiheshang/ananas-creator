@@ -113,7 +113,9 @@ private:
 
     bool completeInclude(const QTextCursor &cursor);
 
-    bool completeConstructorOrFunction(const QList<CPlusPlus::TypeOfExpression::Result> &);
+    bool completeConstructorOrFunction(const QList<CPlusPlus::TypeOfExpression::Result> &,
+                                       const CPlusPlus::LookupContext &,
+                                       int endOfExpression, bool toolTipOnly);
 
     bool completeMember(const QList<CPlusPlus::TypeOfExpression::Result> &,
                         const CPlusPlus::LookupContext &context);
@@ -144,25 +146,22 @@ private:
 
     int findStartOfName(int pos = -1) const;
 
-    QList<TextEditor::CompletionItem> m_completions;
-
+private:
+    CppModelManager *m_manager;
     TextEditor::ITextEditable *m_editor;
     int m_startPosition;     // Position of the cursor from which completion started
 
-    CppModelManager *m_manager;
     Qt::CaseSensitivity m_caseSensitivity;
     bool m_autoInsertBrackets;
     bool m_partialCompletionEnabled;
-
     bool m_forcedCompletion;
+    unsigned m_completionOperator;
 
     CPlusPlus::Icons m_icons;
     CPlusPlus::Overview overview;
     CPlusPlus::TypeOfExpression typeOfExpression;
-
-    unsigned m_completionOperator;
-
     QPointer<FunctionArgumentWidget> m_functionArgumentWidget;
+    QList<TextEditor::CompletionItem> m_completions;
 };
 
 } // namespace Internal

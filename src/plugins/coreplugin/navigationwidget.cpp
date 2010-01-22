@@ -38,6 +38,8 @@
 
 #include <extensionsystem/pluginmanager.h>
 
+#include <utils/styledbar.h>
+
 #include <QtCore/QDebug>
 #include <QtCore/QSettings>
 
@@ -45,6 +47,7 @@
 #include <QtGui/QHBoxLayout>
 #include <QtGui/QResizeEvent>
 #include <QtGui/QToolButton>
+#include <QtGui/QShortcut>
 
 Q_DECLARE_METATYPE(Core::INavigationWidgetFactory *)
 
@@ -366,7 +369,7 @@ NavigationSubWidget::NavigationSubWidget(NavigationWidget *parentWidget)
     m_navigationComboBox->setMinimumContentsLength(0);
     m_navigationWidget = 0;
 
-    m_toolBar = new Core::Utils::StyledBar(this);
+    m_toolBar = new Utils::StyledBar(this);
     QHBoxLayout *toolBarLayout = new QHBoxLayout;
     toolBarLayout->setMargin(0);
     toolBarLayout->setSpacing(0);
@@ -423,7 +426,7 @@ void NavigationSubWidget::setCurrentIndex(int index)
     layout()->addWidget(m_navigationWidget);
 
     // Add Toolbutton
-    m_additionalToolBarWidgets = n.doockToolBarWidgets;
+    m_additionalToolBarWidgets = n.dockToolBarWidgets;
     QHBoxLayout *layout = qobject_cast<QHBoxLayout *>(m_toolBar->layout());
     foreach (QToolButton *w, m_additionalToolBarWidgets) {
         layout->insertWidget(layout->count()-2, w);

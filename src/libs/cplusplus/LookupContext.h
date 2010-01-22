@@ -54,6 +54,15 @@ public:
     Document::Ptr document(const QString &fileName) const;
     Snapshot snapshot() const;
 
+    static Symbol *canonicalSymbol(const QList<Symbol *> &candidates,
+                                   NamespaceBinding *globalNamespaceBinding);
+
+    static Symbol *canonicalSymbol(Symbol *symbol,
+                                   NamespaceBinding *globalNamespaceBinding);
+
+    static Symbol *canonicalSymbol(const QList<QPair<FullySpecifiedType, Symbol *> > &candidates,
+                                   NamespaceBinding *globalNamespaceBinding);
+
     QList<Symbol *> resolve(Name *name) const
     { return resolve(name, visibleScopes()); }
 
@@ -89,6 +98,7 @@ public:
     QList<Scope *> visibleScopes() const
     { return _visibleScopes; }
 
+    QList<Scope *> visibleScopes(Symbol *symbol) const;
     QList<Scope *> visibleScopes(const QPair<FullySpecifiedType, Symbol *> &result) const;
 
     QList<Scope *> expand(const QList<Scope *> &scopes) const;
@@ -114,10 +124,16 @@ public:
                         const QList<Scope *> &visibleScopes,
                         QList<Scope *> *expandedScopes) const;
 
+    void expandObjCMethod(ObjCMethod *method,
+                          const QList<Scope *> &visibleScopes,
+                          QList<Scope *> *expandedScopes) const;
+
     void expandEnumOrAnonymousSymbol(ScopedSymbol *scopedSymbol,
                                      QList<Scope *> *expandedScopes) const;
 
 private:
+    static Symbol *canonicalSymbol(Symbol *symbol);
+
     QList<Symbol *> resolveQualifiedNameId(QualifiedNameId *q,
                                            const QList<Scope *> &visibleScopes,
                                            ResolveMode mode) const;

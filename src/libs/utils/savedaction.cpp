@@ -44,7 +44,7 @@
 #include <QtGui/QSpinBox>
 
 
-using namespace Core::Utils;
+using namespace Utils;
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -54,7 +54,7 @@ using namespace Core::Utils;
 //////////////////////////////////////////////////////////////////////////
 
 /*!
-    \class Core::Utils::SavedAction
+    \class Utils::SavedAction
     
     \brief The SavedAction class is a helper class for actions with persistent
     state.
@@ -326,10 +326,9 @@ void SavedAction::connectWidget(QWidget *widget, ApplyMode applyMode)
 */
 void SavedAction::disconnectWidget()
 {
-    QTC_ASSERT(m_widget,
-        qDebug() << "Widget already disconnected: " << m_widget << toString(); return);
     m_widget = 0;
 }
+
 void SavedAction::apply(QSettings *s)
 {
     if (QAbstractButton *button = qobject_cast<QAbstractButton *>(m_widget))
@@ -421,7 +420,8 @@ void SavedAction::trigger(const QVariant &data)
 void SavedActionSet::insert(SavedAction *action, QWidget *widget)
 {
     m_list.append(action);
-    action->connectWidget(widget);
+    if (widget)
+        action->connectWidget(widget);
 }
 
 void SavedActionSet::apply(QSettings *settings)

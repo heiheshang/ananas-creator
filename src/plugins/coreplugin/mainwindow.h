@@ -35,15 +35,12 @@
 #include "eventfilteringmainwindow.h"
 
 #include <QtCore/QMap>
-#include <QtCore/QList>
-#include <QtCore/QSet>
-#include <QtCore/QPointer>
-#include <QtGui/QPrinter>
-#include <QtGui/QToolButton>
 
 QT_BEGIN_NAMESPACE
 class QSettings;
 class QShortcut;
+class QPrinter;
+class QToolButton;
 QT_END_NAMESPACE
 
 namespace Core {
@@ -140,6 +137,12 @@ public slots:
     bool showOptionsDialog(const QString &category = QString(),
                            const QString &page = QString(),
                            QWidget *parent = 0);
+
+    bool showWarningWithOptions(const QString &title, const QString &text,
+                                const QString &details = QString(),
+                                const QString &settingsCategory = QString(),
+                                const QString &settingsId = QString(),
+                                QWidget *parent = 0);
 
 protected:
     virtual void changeEvent(QEvent *e);

@@ -28,7 +28,9 @@
 **************************************************************************/
 
 #include "toolchain.h"
+#include "project.h"
 #include "cesdkhandler.h"
+#include "projectexplorersettings.h"
 
 #include <QtCore/QFileInfo>
 #include <QtCore/QProcess>
@@ -112,13 +114,11 @@ QString ToolChain::toolChainName(ToolChainType tc)
     case LinuxICC:
         return QCoreApplication::translate("ToolChain", "Intel C++ Compiler (Linux)");
     case MinGW:
-        return QCoreApplication::translate("ToolChain", "MinGW");
+        return QString::fromLatin1("MinGW");
     case MSVC:
         return QCoreApplication::translate("ToolChain", "Microsoft Visual C++");
     case WINCE:
         return QCoreApplication::translate("ToolChain", "Windows CE");
-
-#ifdef QTCREATOR_WITH_S60
     case WINSCW:
         return QCoreApplication::translate("ToolChain", "WINSCW");
     case GCCE:
@@ -127,8 +127,6 @@ QString ToolChain::toolChainName(ToolChainType tc)
         return QCoreApplication::translate("ToolChain", "RVCT (ARMV5)");
     case RVCT_ARMV6:
         return QCoreApplication::translate("ToolChain", "RVCT (ARMV6)");
-#endif
-
     case OTHER:
         return QCoreApplication::translate("ToolChain", "Other");
     case INVALID:
@@ -185,6 +183,7 @@ QList<HeaderPath> GccToolChain::systemHeaderPaths()
         QProcess cpp;
         ProjectExplorer::Environment env = ProjectExplorer::Environment::systemEnvironment();
         addToEnvironment(env);
+        env.set(QLatin1String("LC_ALL"), QLatin1String("C"));   //override current locale settings
         cpp.setEnvironment(env.toStringList());
         cpp.setReadChannelMode(QProcess::MergedChannels);
         cpp.start(m_gcc, arguments);
@@ -301,17 +300,85 @@ bool MSVCToolChain::equals(ToolChain *other) const
     return (m_name == o->m_name);
 }
 
+QByteArray msvcCompilationFile() {
+    static const char* macros[] = {"_ATL_VER", "_CHAR_UNSIGNED", "__CLR_VER",
+                                   "__cplusplus_cli", "__COUNTER__", "__cplusplus",
+                                   "_CPPLIB_VER", "_CPPRTTI", "_CPPUNWIND",
+                                   "_DEBUG", "_DLL", "__FUNCDNAME__",
+                                   "__FUNCSIG__","__FUNCTION__","_INTEGRAL_MAX_BITS",
+                                   "_M_ALPHA","_M_CEE","_M_CEE_PURE",
+                                   "_M_CEE_SAFE","_M_IX86","_M_IA64",
+                                   "_M_IX86_FP","_M_MPPC","_M_MRX000",
+                                   "_M_PPC","_M_X64","_MANAGED",
+                                   "_MFC_VER","_MSC_BUILD", /* "_MSC_EXTENSIONS", */
+                                   "_MSC_FULL_VER","_MSC_VER","__MSVC_RUNTIME_CHECKS",
+                                   "_MT", "_NATIVE_WCHAR_T_DEFINED", "_OPENMP",
+                                   "_VC_NODEFAULTLIB", "_WCHAR_T_DEFINED", "_WIN32",
+                                   "_WIN32_WCE", "_WIN64", "_Wp64", "__DATE__",
+                                    "__DATE__", "__TIME__", "__TIMESTAMP__",
+                                   0};
+    QByteArray file = "#define __PPOUT__(x) V##x=x\n\n";
+    int i =0;
+    while (macros[i] != 0) {
+        const QByteArray macro(macros[i]);
+        file += "#if defined(" + macro + ")\n__PPOUT__("
+                + macro + ")\n#endif\n";
+        ++i;
+    }
+    file += "\nvoid main(){}\n\n";
+    return file;
+}
+
 QByteArray MSVCToolChain::predefinedMacros()
 {
-    return  "#define __WIN32__\n"
-            "#define __WIN32\n"
-            "#define _WIN32\n"
-            "#define WIN32\n"
-            "#define __WINNT__\n"
-            "#define __WINNT\n"
-            "#define WINNT\n"
-            "#define _X86_\n"
-            "#define __MSVCRT__\n";
+    if (m_predefinedMacros.isEmpty()) {
+        m_predefinedMacros += "#define __MSVCRT__\n"
+                              "#define __w64\n"
+                              "#define __int64 long long\n"
+                              "#define __int32 long\n"
+                              "#define __int16 short\n"
+                              "#define __int8 char\n"
+                              "#define __ptr32\n"
+                              "#define __ptr64\n";
+
+        QString tmpFilePath;
+        {
+            // QTemporaryFile is buggy and will not unlock the file for cl.exe
+            QTemporaryFile tmpFile(QDir::tempPath()+"/envtestXXXXXX.cpp");
+            tmpFile.setAutoRemove(false);
+            if (!tmpFile.open())
+                return m_predefinedMacros;
+            tmpFilePath = QFileInfo(tmpFile).canonicalFilePath();
+            tmpFile.write(msvcCompilationFile());
+            tmpFile.close();
+        }
+        ProjectExplorer::Environment env = ProjectExplorer::Environment::systemEnvironment();
+        addToEnvironment(env);
+        QProcess cpp;
+        cpp.setEnvironment(env.toStringList());
+        cpp.setWorkingDirectory(QDir::tempPath());
+        QStringList arguments;
+        arguments << "/EP" << QDir::toNativeSeparators(tmpFilePath);
+        cpp.start(QLatin1String("cl.exe"), arguments);
+        cpp.closeWriteChannel();
+        cpp.waitForFinished();
+        QList<QByteArray> output = cpp.readAllStandardOutput().split('\n');
+        foreach (const QByteArray& line, output) {
+            if (line.startsWith('V')) {
+                QList<QByteArray> split = line.split('=');
+                QByteArray key = split.at(0).mid(1);
+                QByteArray value = split.at(1);
+                if (!value.isEmpty()) {
+                    value.chop(1); //remove '\n'
+                }
+                QByteArray newDefine = "#define " + key + " " + value + '\n';
+                m_predefinedMacros.append(newDefine);
+            }            
+        }
+        QFile::remove(tmpFilePath);
+    }
+    //qDebug() << m_predefinedMacros;
+    return m_predefinedMacros;
 }
 
 QList<HeaderPath> MSVCToolChain::systemHeaderPaths()
@@ -449,10 +516,10 @@ void WinCEToolChain::addToEnvironment(ProjectExplorer::Environment &env)
 
     path += "/";
 
-//        qDebug()<<"MSVC path"<<msvcPath;
+//        qDebug()<<"MSVC path"<<path;
 //        qDebug()<<"looking for platform name in"<< path() + "/mkspecs/" + mkspec() +"/qmake.conf";
     // Find Platform name
-//        qDebug()<<"Platform Name"<<platformName;
+//        qDebug()<<"Platform Name"<<m_platform;
 
     CeSdkHandler cesdkhandler;
     cesdkhandler.parse(path);

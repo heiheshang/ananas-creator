@@ -28,20 +28,17 @@
 **************************************************************************/
 
 #include "rvcttoolchain.h"
-
-#include "qt4project.h"
+#include <QtCore/QProcess>
 
 using namespace ProjectExplorer;
 using namespace Qt4ProjectManager::Internal;
 
-RVCTToolChain::RVCTToolChain(S60Devices::Device device, ToolChain::ToolChainType type,
-                             const QString &makeTargetBase)
+RVCTToolChain::RVCTToolChain(S60Devices::Device device, ToolChain::ToolChainType type)
     : m_versionUpToDate(false),
     m_deviceId(device.id),
     m_deviceName(device.name),
     m_deviceRoot(device.epocRoot),
-    m_type(type),
-    m_makeTargetBase(makeTargetBase)
+    m_type(type)
 {
 }
 
@@ -80,7 +77,7 @@ QByteArray RVCTToolChain::predefinedMacros()
 {
     // see http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0205f/Babbacdb.html
     updateVersion();
-    QByteArray ba = QString::fromLocal8Bit(
+    QByteArray ba = QString::fromLatin1(
         "#define __arm__arm__\n"
         "#define __ARMCC_VERSION %1%2%3%4\n"
         "#define __ARRAY_OPERATORS\n"
@@ -96,10 +93,11 @@ QByteArray RVCTToolChain::predefinedMacros()
         "#define __TARGET_FEATURE_HALFWORD\n"
         "#define __TARGET_FEATURE_THUMB\n"
         "#define _WCHAR_T\n"
+        "#define __SYMBIAN32__\n"
         ).arg(m_major, 1, 10, QLatin1Char('0'))
         .arg(m_minor, 1, 10, QLatin1Char('0'))
         .arg("0")
-        .arg(m_build, 3, 10, QLatin1Char('0')).toLocal8Bit();
+        .arg(m_build, 3, 10, QLatin1Char('0')).toLatin1();
     return ba;
 }
 
@@ -132,19 +130,6 @@ QString RVCTToolChain::makeCommand() const
     return "make";
 }
 
-QString RVCTToolChain::defaultMakeTarget() const
-{
-    const Qt4Project *qt4project = qobject_cast<const Qt4Project *>(m_project);
-    if (qt4project) {
-        if (!(QtVersion::QmakeBuildConfig(qt4project->value(
-                qt4project->activeBuildConfiguration(),
-                "buildConfiguration").toInt()) & QtVersion::DebugBuild)) {
-            return QString::fromLocal8Bit("release-%1").arg(m_makeTargetBase);
-        }
-    }
-    return QString::fromLocal8Bit("debug-%1").arg(m_makeTargetBase);
-}
-
 bool RVCTToolChain::equals(ToolChain *other) const
 {
     return (other->type() == type()
@@ -152,7 +137,3 @@ bool RVCTToolChain::equals(ToolChain *other) const
             && m_deviceName == static_cast<RVCTToolChain *>(other)->m_deviceName);
 }
 
-void RVCTToolChain::setProject(const ProjectExplorer::Project *project)
-{
-    m_project = project;
-}

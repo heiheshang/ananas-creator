@@ -57,7 +57,7 @@
 
 using namespace std;
 
-CPLUSPLUS_BEGIN_NAMESPACE
+using namespace CPlusPlus;
 
 Scope::Scope(ScopedSymbol *owner)
     : _owner(owner),
@@ -208,6 +208,21 @@ void Scope::enterSymbol(Symbol *symbol)
     }
 }
 
+Symbol *Scope::lookat(Name *name) const
+{
+    if (! name)
+        return 0;
+
+    else if (OperatorNameId *opId = name->asOperatorNameId())
+        return lookat(opId->kind());
+
+    else if (Identifier *id = name->identifier())
+        return lookat(id);
+
+    else
+        return 0;
+}
+
 Symbol *Scope::lookat(Identifier *id) const
 {
     if (! _hash || ! id)
@@ -297,7 +312,4 @@ Scope::iterator Scope::firstSymbol() const
 Scope::iterator Scope::lastSymbol() const
 { return _symbols + _symbolCount + 1; }
 
-void Scope::addUse(unsigned, Name *)
-{ }
 
-CPLUSPLUS_END_NAMESPACE

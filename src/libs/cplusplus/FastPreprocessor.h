@@ -34,6 +34,8 @@
 #include "CppDocument.h"
 #include "pp.h"
 
+#include <Control.h>
+
 #include <QtCore/QSet>
 #include <QtCore/QString>
 
@@ -58,9 +60,13 @@ public:
 
     virtual void macroAdded(const Macro &) {}
 
+    virtual void passedMacroDefinitionCheck(unsigned, const Macro &) {}
+    virtual void failedMacroDefinitionCheck(unsigned, const QByteArray &) {}
+
     virtual void startExpandingMacro(unsigned,
                                      const Macro &,
                                      const QByteArray &,
+                                     bool,
                                      const QVector<MacroArgumentReference> &) {}
 
     virtual void stopExpandingMacro(unsigned, const Macro &) {}

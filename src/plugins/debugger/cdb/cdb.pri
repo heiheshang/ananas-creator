@@ -4,22 +4,16 @@
 win32 {
 contains(QMAKE_CXX, cl) {
 
-CDB_PATH="$$(ProgramFiles)/Debugging Tools For Windows/sdk"
+CDB_PATH="$$(CDB_PATH)"
+isEmpty(CDB_PATH):CDB_PATH="$$(ProgramFiles)/Debugging Tools For Windows/sdk"
 
-!exists ($$CDB_PATH) {
-  CDB_PATH="$$(ProgramFiles)/Debugging Tools For Windows (x86)/sdk"
-}
+!exists($$CDB_PATH):CDB_PATH="$$(ProgramFiles)/Debugging Tools For Windows (x86)/sdk"
+!exists($$CDB_PATH):CDB_PATH="$$(ProgramFiles)/Debugging Tools For Windows (x64)/sdk"
+!exists($$CDB_PATH):CDB_PATH="$$(ProgramFiles)/Debugging Tools For Windows 64-bit/sdk"
 
-!exists ($$CDB_PATH) {
-  CDB_PATH="$$(ProgramFiles)/Debugging Tools For Windows (x64)/sdk"
-}
+exists($$CDB_PATH) {
 
-!exists ($$CDB_PATH) {
-  CDB_PATH="$$(ProgramFiles)/Debugging Tools For Windows 64-bit/sdk"
-}
-
-exists ($$CDB_PATH) {
-message("Experimental: Adding support for $$CDB_PATH")
+message("Adding support for $$CDB_PATH")
 
 DEFINES+=CDB_ENABLED
 
@@ -27,6 +21,7 @@ CDB_PLATFORM=i386
 
 INCLUDEPATH*=$$CDB_PATH
 INCLUDEPATH*=$$PWD
+DEPENDPATH*=$$PWD
 
 CDB_LIBPATH=$$CDB_PATH/lib/$$CDB_PLATFORM
 
@@ -67,8 +62,9 @@ SOURCES += \
 
 FORMS += $$PWD/cdboptionspagewidget.ui
 
+LIBS+=-lpsapi
 } else {
    message("Debugging Tools for Windows could not be found in $$CDB_PATH")
-}
-}
-}
+} # exists($$CDB_PATH)
+} # (QMAKE_CXX, cl)
+} # win32

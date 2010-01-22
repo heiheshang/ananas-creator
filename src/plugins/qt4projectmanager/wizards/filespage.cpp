@@ -39,7 +39,7 @@ namespace Internal {
 
 FilesPage::FilesPage(QWidget *parent) :
     QWizardPage(parent),
-    m_newClassWidget(new Core::Utils::NewClassWidget)
+    m_newClassWidget(new Utils::NewClassWidget)
 {
     m_newClassWidget->setPathInputVisible(false);
     setTitle(tr("Class Information"));
@@ -183,6 +183,16 @@ bool FilesPage::lowerCaseFiles() const
 void FilesPage::setLowerCaseFiles(bool l)
 {
     m_newClassWidget->setLowerCaseFiles(l);
+}
+
+bool FilesPage::isClassTypeComboVisible() const
+{
+    return m_newClassWidget->isClassTypeComboVisible();
+}
+
+void FilesPage::setClassTypeComboVisible(bool v)
+{
+    m_newClassWidget->setClassTypeComboVisible(v);
 }
 
 } // namespace Internal

@@ -32,6 +32,7 @@
 #include <coreplugin/dialogs/ioptionspage.h>
 
 #include <QtCore/QSharedPointer>
+#include <QtCore/QFutureInterface>
 
 #include <QtGui/QWidget>
 #include <QtGui/QPixmap>
@@ -61,7 +62,7 @@ public:
     explicit DebuggingHelperBuildTask(const QSharedPointerQtVersion &version);
     virtual ~DebuggingHelperBuildTask();
 
-    void run();
+    void run(QFutureInterface<void> &future);
 
 signals:
     void finished(const QString &versionName, const QString &output);
@@ -80,6 +81,8 @@ public:
     QList<QSharedPointerQtVersion> versions() const;
     int defaultVersion() const;
     void finish();
+
+    virtual bool eventFilter(QObject *o, QEvent *e);
 
 private:
     void showEnvironmentPage(QTreeWidgetItem * item);
@@ -108,15 +111,17 @@ private slots:
     void updateState();
     void makeMingwVisible(bool visible);
     void makeMSVCVisible(bool visible);
-    void makeMWCVisible(bool visible);
+    void makeS60Visible(bool visible);
     void onQtBrowsed();
     void onMingwBrowsed();
     void defaultChanged(int index);
     void updateCurrentQtName();
-    void updateCurrentQtPath();
+    void updateCurrentQMakeLocation();
     void updateCurrentMingwDirectory();
 #ifdef QTCREATOR_WITH_S60
     void updateCurrentMwcDirectory();
+    void updateCurrentS60SDKDirectory();
+    void updateCurrentGcceDirectory();
 #endif
     void msvcVersionChanged();
     void buildDebuggingHelper();

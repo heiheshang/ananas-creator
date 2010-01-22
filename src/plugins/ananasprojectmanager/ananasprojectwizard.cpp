@@ -46,7 +46,7 @@
 #include <QtGui/QTreeView>
 
 using namespace AnanasProjectManager::Internal;
-using namespace Core::Utils;
+using namespace Utils;
 
 namespace {
 
@@ -121,11 +121,11 @@ private:
 AnanasProjectWizardDialog::AnanasProjectWizardDialog(QWidget *parent)
     : QWizard(parent)
 {
-    setWindowTitle(tr("Import of QML Project"));
+    setWindowTitle(tr("Import of Ananas Project"));
 
     // first page
     m_firstPage = new FileWizardPage;
-    m_firstPage->setTitle(tr("QML Project"));
+    m_firstPage->setTitle(tr("Ananas Project"));
     m_firstPage->setNameLabel(tr("Project name:"));
     m_firstPage->setPathLabel(tr("Location:"));
 

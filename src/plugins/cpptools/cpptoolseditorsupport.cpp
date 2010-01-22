@@ -30,6 +30,8 @@
 #include "cpptoolseditorsupport.h"
 #include "cppmodelmanager.h"
 
+#include <coreplugin/ifile.h>
+
 #include <texteditor/itexteditor.h>
 #include <texteditor/basetexteditor.h>
 
@@ -163,7 +165,8 @@ class CheckDocument: protected ASTVisitor
 
 public:
     CheckDocument(Document::Ptr doc, Snapshot snapshot)
-        : ASTVisitor(doc->control()), _doc(doc), _snapshot(snapshot)
+        : ASTVisitor(doc->control()), _doc(doc), _snapshot(snapshot),
+          _line(0), _column(0)
     { }
 
     QList<QuickFixOperationPtr> operator()(QTextCursor tc)
@@ -412,6 +415,8 @@ void CppEditorSupport::checkDocumentNow()
     const QByteArray preprocessedCode = snapshot.preprocessedCode(plainText, fileName);
 
     if (Document::Ptr doc = snapshot.documentFromSource(preprocessedCode, fileName)) {
+        doc->parse();
+
         CheckDocument checkDocument(doc, snapshot);
         QList<QuickFixOperationPtr> quickFixes = checkDocument(ed->textCursor());
         if (! quickFixes.isEmpty()) {

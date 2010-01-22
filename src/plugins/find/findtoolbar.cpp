@@ -69,7 +69,8 @@ FindToolBar::FindToolBar(FindPlugin *plugin, CurrentDocumentFind *currentDocumen
       m_replaceNextAction(0),
       m_casesensitiveIcon(":/find/images/casesensitively.png"),
       m_regexpIcon(":/find/images/regexp.png"),
-      m_wholewordsIcon(":/find/images/wholewords.png")
+      m_wholewordsIcon(":/find/images/wholewords.png"),
+      m_findIncrementalTimer(this), m_findStepTimer(this)
 {
     //setup ui
     m_ui.setupUi(this);
@@ -90,7 +91,7 @@ FindToolBar::FindToolBar(FindPlugin *plugin, CurrentDocumentFind *currentDocumen
     m_findCompleter->popup()->installEventFilter(this);
     m_ui.replaceEdit->setCompleter(m_replaceCompleter);
 
-    m_ui.findEdit->setSide(qApp->layoutDirection() == Qt::LeftToRight ? Core::Utils::FancyLineEdit::Right : Core::Utils::FancyLineEdit::Left);
+    m_ui.findEdit->setSide(qApp->layoutDirection() == Qt::LeftToRight ? Utils::FancyLineEdit::Right : Utils::FancyLineEdit::Left);
     QMenu *lineEditMenu = new QMenu(m_ui.findEdit);
     m_ui.findEdit->setMenu(lineEditMenu);
 
@@ -215,6 +216,12 @@ FindToolBar::FindToolBar(FindPlugin *plugin, CurrentDocumentFind *currentDocumen
     connect(m_currentDocumentFind, SIGNAL(candidateChanged()), this, SLOT(adaptToCandidate()));
     connect(m_currentDocumentFind, SIGNAL(changed()), this, SLOT(updateToolBar()));
     updateToolBar();
+
+    m_findIncrementalTimer.setSingleShot(true);
+    m_findStepTimer.setSingleShot(true);
+    connect(&m_findIncrementalTimer, SIGNAL(timeout()),
+            this, SLOT(invokeFindIncremental()));
+    connect(&m_findStepTimer, SIGNAL(timeout()), this, SLOT(invokeFindStep()));
 }
 
 FindToolBar::~FindToolBar()
@@ -223,6 +230,16 @@ FindToolBar::~FindToolBar()
 
 bool FindToolBar::eventFilter(QObject *obj, QEvent *event)
 {
+    if (event->type() == QEvent::KeyPress) {
+        QKeyEvent *ke = static_cast<QKeyEvent *>(event);
+        if (ke->key() == Qt::Key_Down) {
+            if (obj == m_ui.findEdit)
+                m_findCompleter->complete();
+            else if (obj == m_ui.replaceEdit)
+                m_replaceCompleter->complete();
+        }
+    }
+
     if ((obj == m_ui.findEdit || obj == m_findCompleter->popup())
                && event->type() == QEvent::KeyPress) {
         QKeyEvent *ke = static_cast<QKeyEvent *>(event);
@@ -261,7 +278,7 @@ bool FindToolBar::eventFilter(QObject *obj, QEvent *event)
             m_currentDocumentFind->clearFindScope();
         }
     }
-    return Core::Utils::StyledBar::eventFilter(obj, event);
+    return Utils::StyledBar::eventFilter(obj, event);
 }
 
 void FindToolBar::adaptToCandidate()
@@ -373,17 +390,27 @@ void FindToolBar::selectFindText()
 
 void FindToolBar::invokeFindStep()
 {
+    m_findStepTimer.stop();
+    m_findIncrementalTimer.stop();
     if (m_currentDocumentFind->isEnabled()) {
         m_plugin->updateFindCompletion(getFindText());
-        m_currentDocumentFind->findStep(getFindText(), effectiveFindFlags());
+        IFindSupport::Result result =
+            m_currentDocumentFind->findStep(getFindText(), effectiveFindFlags());
+        if (result == IFindSupport::NotYetFound)
+            m_findStepTimer.start(50);
     }
 }
 
 void FindToolBar::invokeFindIncremental()
 {
+    m_findIncrementalTimer.stop();
+    m_findStepTimer.stop();
     if (m_currentDocumentFind->isEnabled()) {
         QString text = getFindText();
-        m_currentDocumentFind->findIncremental(text, effectiveFindFlags());
+        IFindSupport::Result result =
+            m_currentDocumentFind->findIncremental(text, effectiveFindFlags());
+        if (result == IFindSupport::NotYetFound)
+            m_findIncrementalTimer.start(50);
         if (text.isEmpty())
             m_currentDocumentFind->clearResults();
     }
@@ -421,6 +448,8 @@ void FindToolBar::invokeReplaceAll()
 
 void FindToolBar::invokeResetIncrementalSearch()
 {
+    m_findIncrementalTimer.stop();
+    m_findStepTimer.stop();
     if (m_currentDocumentFind->isEnabled())
         m_currentDocumentFind->resetIncrementalSearch();
 }
@@ -569,7 +598,7 @@ bool FindToolBar::focusNextPrevChild(bool next)
     else if (!next && m_ui.findEdit->hasFocus())
         m_ui.replaceAllButton->setFocus(Qt::TabFocusReason);
     else
-        return Core::Utils::StyledBar::focusNextPrevChild(next);
+        return Utils::StyledBar::focusNextPrevChild(next);
     return true;
 }
 

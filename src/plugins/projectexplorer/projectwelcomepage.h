@@ -30,18 +30,19 @@
 #ifndef PROJECTWELCOMEPAGE_H
 #define PROJECTWELCOMEPAGE_H
 
-#include <extensionsystem/iwelcomepage.h>
+#include <utils/iwelcomepage.h>
 
 namespace ProjectExplorer {
 namespace Internal {
 
 class ProjectWelcomePageWidget;
 
-class ProjectWelcomePage : public ExtensionSystem::IWelcomePage
+class ProjectWelcomePage : public Utils::IWelcomePage
 {
     Q_OBJECT
 public:
     ProjectWelcomePage();
+    ~ProjectWelcomePage();
 
     QWidget *page();
     QString title() const { return tr("Develop"); }
