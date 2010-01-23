@@ -60,9 +60,17 @@ private:
     void GetFormsList();
     void CatList();
 private slots:
-    void doubleClicked ( int row, int column );
+    void doubleClickedElement ( int row, int column );
+    void doubleClickedGroup ( int row, int column );
+    void doubleClickedForm ( int row, int column );
     void edit_field ();
+    void editGroupAttribute_clicked();
     void createNewElementAttribute_clicked();
+    void createNewGroupAttribute_clicked();
+    void elementAttributesList_selectionChanged();
+    void activateElement(QTableWidgetItem* item);
+    void activateGroup(QTableWidgetItem* item);
+    void activateForm(QTableWidgetItem* item);
 };
 }
 

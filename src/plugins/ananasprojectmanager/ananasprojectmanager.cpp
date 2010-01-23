@@ -80,7 +80,6 @@ void Manager::unregisterProject(AnanasProject *project)
 
 void Manager::notifyChanged(const QString &fileName)
 {
-    Core::MessageManager::instance()->printToOutputPane(tr("Manager::notifyChanged %1").arg(fileName));
     foreach (AnanasProject *project, m_projects) {
         if (fileName == project->filesFileName()) {
             project->refresh(AnanasProject::Files);

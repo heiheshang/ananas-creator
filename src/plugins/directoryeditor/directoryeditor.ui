@@ -197,8 +197,8 @@
        <string/>
       </property>
       <property name="icon">
-       <iconset>
-        <normaloff>../ananasprojectmanager/images/arrow_up.png</normaloff>../ananasprojectmanager/images/arrow_up.png</iconset>
+       <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+        <normaloff>:/images/arrow_up.png</normaloff>:/images/arrow_up.png</iconset>
       </property>
      </widget>
      <widget class="QPushButton" name="deleteElementAttribute">
@@ -262,8 +262,8 @@
        <string/>
       </property>
       <property name="icon">
-       <iconset>
-        <normaloff>../ananasprojectmanager/images/arrow_down.png</normaloff>../ananasprojectmanager/images/arrow_down.png</iconset>
+       <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+        <normaloff>:/images/arrow_down.png</normaloff>:/images/arrow_down.png</iconset>
       </property>
      </widget>
      <widget class="QTableWidget" name="elementAttributesList">
@@ -275,8 +275,14 @@
         <height>130</height>
        </rect>
       </property>
+      <property name="editTriggers">
+       <set>QAbstractItemView::NoEditTriggers</set>
+      </property>
       <property name="selectionMode">
        <enum>QAbstractItemView::SingleSelection</enum>
+      </property>
+      <property name="selectionBehavior">
+       <enum>QAbstractItemView::SelectRows</enum>
       </property>
       <column>
        <property name="text">
@@ -313,8 +319,8 @@
        <string/>
       </property>
       <property name="icon">
-       <iconset>
-        <normaloff>../ananasprojectmanager/images/arrow_up.png</normaloff>../ananasprojectmanager/images/arrow_up.png</iconset>
+       <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+        <normaloff>:/images/arrow_up.png</normaloff>:/images/arrow_up.png</iconset>
       </property>
      </widget>
      <widget class="QToolButton" name="moveDownGroupAttribute">
@@ -333,8 +339,8 @@
        <string/>
       </property>
       <property name="icon">
-       <iconset>
-        <normaloff>../ananasprojectmanager/images/arrow_down.png</normaloff>../ananasprojectmanager/images/arrow_down.png</iconset>
+       <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+        <normaloff>:/images/arrow_down.png</normaloff>:/images/arrow_down.png</iconset>
       </property>
      </widget>
      <widget class="QPushButton" name="editGroupAttribute">
@@ -391,8 +397,14 @@
         <height>130</height>
        </rect>
       </property>
+      <property name="editTriggers">
+       <set>QAbstractItemView::NoEditTriggers</set>
+      </property>
       <property name="selectionMode">
        <enum>QAbstractItemView::SingleSelection</enum>
+      </property>
+      <property name="selectionBehavior">
+       <enum>QAbstractItemView::SelectRows</enum>
       </property>
       <column>
        <property name="text">
@@ -668,8 +680,14 @@
         <height>121</height>
        </rect>
       </property>
+      <property name="editTriggers">
+       <set>QAbstractItemView::NoEditTriggers</set>
+      </property>
       <property name="selectionMode">
        <enum>QAbstractItemView::SingleSelection</enum>
+      </property>
+      <property name="selectionBehavior">
+       <enum>QAbstractItemView::SelectRows</enum>
       </property>
       <column>
        <property name="text">
@@ -866,6 +884,8 @@
    </widget>
   </widget>
  </widget>
- <resources/>
+ <resources>
+  <include location="../ananasprojectmanager/libananas/designer.qrc"/>
+ </resources>
  <connections/>
 </ui>

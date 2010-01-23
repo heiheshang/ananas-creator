@@ -352,11 +352,11 @@ QString AnanasRunConfiguration::type() const
 
 QString AnanasRunConfiguration::executable() const
 {
-    if (! QFile::exists(m_qmlViewer)) {
-        QMessageBox::information(Core::ICore::instance()->mainWindow(),
-                                 tr("Ananas Viewer"),
-                                 tr("Could not find the qmlviewer executable, please specify one."));
-    }
+//    if (! QFile::exists(m_qmlViewer)) {
+//        QMessageBox::information(Core::ICore::instance()->mainWindow(),
+//                                 tr("Ananas Viewer"),
+//                                 tr("Could not find the qmlviewer executable, please specify one."));
+//    }
 
     return m_qmlViewer;
 }
