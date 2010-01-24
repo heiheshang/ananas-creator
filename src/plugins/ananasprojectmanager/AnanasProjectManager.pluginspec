@@ -21,9 +21,8 @@ will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.</license>
     <dependencyList>
         <dependency name="TextEditor" version="1.3.1"/>
         <dependency name="ProjectExplorer" version="1.3.1"/>
-        <dependency name="CppTools" version="1.3.1"/>
-        <dependency name="CppEditor" version="1.3.1"/>
         <dependency name="Help" version="1.3.1"/>
-         <dependency name="DirectoryEditor" version="1.3.1"/>
+        <dependency name="DirectoryEditor" version="1.3.1"/>
+        <dependency name="FieldEditor" version="1.3.1"/>
     </dependencyList>
 </plugin>

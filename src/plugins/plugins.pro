@@ -33,6 +33,9 @@ SUBDIRS   = plugin_coreplugin \
             plugin_resourceeditor \
             plugin_genericprojectmanager \
             plugin_qmleditor \
+            plugin_ananasprojectmanager \
+            plugin_directoryeditor \
+            plugin_fieldeditor \
             plugin_qmlprojectmanager \
             debugger/dumper.pro
 
@@ -178,3 +181,27 @@ plugin_qmlprojectmanager.depends = plugin_texteditor
 plugin_qmlprojectmanager.depends += plugin_projectexplorer
 plugin_qmlprojectmanager.depends += plugin_help
 plugin_qmlprojectmanager.depends += plugin_qmleditor
+
+plugin_ananasprojectmanager.subdir = ananasprojectmanager
+plugin_ananasprojectmanager.depends = plugin_texteditor
+plugin_ananasprojectmanager.depends += plugin_projectexplorer
+plugin_ananasprojectmanager.depends += plugin_help
+plugin_ananasprojectmanager.depends += plugin_qmleditor
+plugin_ananasprojectmanager.depends += plugin_directoryeditor
+plugin_ananasprojectmanager.depends += plugin_fieldeditor
+
+plugin_directoryeditor.subdir = directoryeditor
+plugin_directoryeditor.depends = plugin_texteditor
+plugin_directoryeditor.depends += plugin_projectexplorer
+plugin_directoryeditor.depends += plugin_help
+plugin_directoryeditor.depends += plugin_qmleditor
+plugin_directoryeditor.depends += plugin_ananasprojectmanager
+plugin_directoryeditor.depends += plugin_fieldeditor
+
+plugin_fieldeditor.subdir = fieldeditor
+plugin_fieldeditor.depends = plugin_texteditor
+plugin_fieldeditor.depends += plugin_projectexplorer
+plugin_fieldeditor.depends += plugin_help
+plugin_fieldeditor.depends += plugin_qmleditor
+plugin_fieldeditor.depends += plugin_ananasprojectmanager
+plugin_fieldeditor.depends += plugin_directoryeditor
