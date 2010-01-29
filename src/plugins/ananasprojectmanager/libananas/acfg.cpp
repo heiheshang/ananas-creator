@@ -176,27 +176,26 @@ bool DomCfgItem::hasChildren() const
 }
 int DomCfgItem::childCount()
 {
-    if (domNode.childNodes().count()>0) {
-	if (domNode.nodeName()==md_root || parent()==0)
-		return md_row_count;
+   if (domNode.childNodes().count()>0) {
+    if (domNode.nodeName()==md_root || parent()==0)
+        return md_row_count;
 
-	int nodeCount=0;
-	QString nodeName;
+   int nodeCount=0;
+   QString nodeName;
 
-	for(int j=0;j<domNode.childNodes().count();j++) {
-		nodeName = domNode.childNodes().item(j).nodeName();
-		if (nodeName!=md_description && nodeName!=md_string_view && nodeName!=md_svfunction)
-			nodeCount++;
-	}
-	return nodeCount;
+   for(int j=0;j<domNode.childNodes().count();j++) {
+    nodeName = domNode.childNodes().item(j).nodeName();
+   if (nodeName!=md_description && nodeName!=md_string_view && nodeName!=md_svfunction)
+    nodeCount++;
    }
-return 0;
+   return nodeCount;
+      }
+   return 0;
 }
 DomCfgItem *DomCfgItem::child(int i)
 {
  DomCfgItem *childItem;
  if (childItems.contains(i)) {
-     //Core::MessageManager::instance()->printToOutputPane(tr("Contains %1 %2").arg(childItems[i]->cfgName(),QString::number(i)));
         return childItems[i];
     }
     if (i >= 0 && i < domNode.childNodes().count()) {
@@ -208,10 +207,8 @@ DomCfgItem *DomCfgItem::child(int i)
 	QDomElement images = childNode.firstChildElement(md_image_collection);
 
 		if (!images.isNull()) {
-//aLog::print(aLog::Debug,"image");
 		childItem = new DomCfgItem(images, 7, this);
         	childItems[7] = childItem;
-		//return childItem;
 		}
 
 	QDomElement metadata = childNode.firstChildElement(md_metadata);
@@ -257,7 +254,6 @@ DomCfgItem *DomCfgItem::child(int i)
             {
                 QDomNode item = listNode.item(j);
                 childItem = new DomCfgItem(item, nodeI, this);
-                //Core::MessageManager::instance()->printToOutputPane(tr("%1 %2").arg(childItem->cfgName(),QString::number(nodeI)));
                 childItems[nodeI]=childItem;
                 if (!firstChildItem)
                                 firstChildItem=childItem;
@@ -313,10 +309,8 @@ DomCfgItem *DomCfgItem::child(int i)
 
 DomCfgItem* DomCfgItem::child(QString f)
 {
-//aLog::print(aLog::Debug,"DomCfgItem::child(QString f) вход "+f+"\n");
  for (int i=0;i<childCount();i++)
 	{
-//aLog::print(aLog::Debug,"DomCfgItem::child(QString f) "+child(i)->nodeName()+"\n");
 
 	if (child(i)->node().nodeName()==f)
 		return child(i);
@@ -339,6 +333,12 @@ DomCfgItem* DomCfgItem::child(QString f,int j)
 return 0;
 }
 
+bool DomCfgItem::remove(int i)
+{
+ node().removeChild(child(i)->node());
+ childItems.remove(i);
+ return true;
+}
 
 QString DomCfgItem::cfgName() const
 {
@@ -470,8 +470,9 @@ QMenu *DomCfgItem::menu() const
 	}
 	if (domNode.nodeName()==md_catalogue) {
 	 QMenu *contextMenu = new QMenu(tr("Context menu"));
-	 contextMenu->addAction("Open element view");
-	 contextMenu->addAction("Property");
+         contextMenu->addAction("New");
+         contextMenu->addAction("Edit");
+         contextMenu->addAction("Delete");
 	 return contextMenu;
 	}
  return 0;
@@ -732,6 +733,43 @@ void DomCfgItem::insert(DomCfgItem *context,QString &otype,QString &name,long id
 	if ( !name.isNull()) i.setAttribute(mda_name,name);
 	context->node().appendChild( i );
 }
+DomCfgItem* DomCfgItem::newCatalogue()
+{
+    if (node().nodeName()==md_catalogues) {
+        QString otype=md_catalogue;
+        QString name=tr("New Catalogue");
+        insert(this,otype,name,0);
+        DomCfgItem* catalogue=child(childCount()-1);
+        otype = md_element;
+        name = "";
+        insert( catalogue, otype , name, -1 );
+        otype = md_group;
+        insert( catalogue, otype , name, -1 );
+        otype = md_forms;
+        insert( catalogue, otype , name, -1 );
+        otype = md_webforms;
+        insert( catalogue, otype , name, -1 );
+        return catalogue;
+    }
+    return 0;
+}
+
+DomCfgItem* DomCfgItem::newElement()
+{
+    QString otype=md_field;
+    QString name=tr("New");
+    insert(this,otype,name,0);
+
+    DomCfgItem *field=child(childCount()-1);
+    field->setAttr(mda_type,QString("C 10\t")+QObject::tr("Char"));
+    field->setAttr(mda_sort,"0");
+    field->setAttr(mda_plus,"0");
+    field->setAttr(mda_nz,"0");
+    field->setAttr(mda_sum,"0");
+    return field;
+
+}
+
 QByteArray
 DomCfgItem::binary()
 {

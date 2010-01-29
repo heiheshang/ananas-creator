@@ -63,11 +63,12 @@ private slots:
     void doubleClickedElement ( int row, int column );
     void doubleClickedGroup ( int row, int column );
     void doubleClickedForm ( int row, int column );
-    void edit_field ();
+    void editElementAttribute_clicked();
     void editGroupAttribute_clicked();
     void createNewElementAttribute_clicked();
     void createNewGroupAttribute_clicked();
     void elementAttributesList_selectionChanged();
+    void deleteElementAttribute_clicked();
     void activateElement(QTableWidgetItem* item);
     void activateGroup(QTableWidgetItem* item);
     void activateForm(QTableWidgetItem* item);

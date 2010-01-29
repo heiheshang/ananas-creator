@@ -57,7 +57,6 @@ if ( role == Qt::DecorationRole )
 if ( role == Qt::DisplayRole )
 {
         DomCfgItem *item = static_cast<DomCfgItem*> ( index.internalPointer() );
-//connect(this,SIGNAL(customContextMenuRequested(QPoint)),item,SLOT(item->s//howContextMenu(QPoint)));
         QDomNode node = item->node();
         QString nodeName = node.nodeName();
         if ( nodeName=="xml" )
@@ -275,12 +274,15 @@ void AnanasExplorerSideBar::showmenu (const QPoint &pos)
 void AnanasExplorerSideBar::actionTree(QAction *a)
 {
 DomCfgItem *item = static_cast<DomCfgItem*> ( currentIndex().internalPointer() );
+QDomNode node = item->node();
     if (a->text()==tr("Property")) {
-        QDomNode node = item->node();
+
         if (node.nodeName()=="xml") {
             configInfo *info = new configInfo(item,this,Qt::Dialog);
             info->show();
         }
+    }
+    if (a->text()==tr("Edit")) {
         if (node.nodeName()==md_catalogue) {
            QString titlePattern = tr("Catalogue $");
            QDomNode stringView =  item->node();
@@ -290,12 +292,38 @@ DomCfgItem *item = static_cast<DomCfgItem*> ( currentIndex().internalPointer() )
            Core::IEditor* editor = manager->openEditorWithContents("Directory Editor", &cfgName,"");
            if (editor) {
             manager->activateEditor(editor);
-            QMetaObject::invokeMethod(editor->widget(), "setData",
-            Q_ARG(DomCfgItem*, item));
+
+           if (!QMetaObject::invokeMethod(editor->widget(), "setData",Qt::DirectConnection,
+            Q_ARG(DomCfgItem*, item)))
+               qCritical() << "Can't invoke method!";
             connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
           }
         }
     }
+
+    if (a->text()==tr("New")) {
+        if (node.nodeName()==md_catalogue) {
+           QString titlePattern = tr("Catalogue $");
+
+           DomCfgItem *catalogues=item->parent();
+           //DomCfgItem *lastcatalogue = catalogues->child(catalogues->childCount()-1);
+           DomCfgItem* catalogue = catalogues->newCatalogue();
+
+           Core::EditorManager* manager = Core::EditorManager::instance();
+
+           QString cfgName = catalogue->cfgName();
+           Core::IEditor* editor = manager->openEditorWithContents("Directory Editor", &cfgName,"");
+           if (editor) {
+            manager->activateEditor(editor);
+
+           if (!QMetaObject::invokeMethod(editor->widget(), "setData",Qt::DirectConnection,
+            Q_ARG(DomCfgItem*, catalogue)))
+               qCritical() << "Can't invoke method!";
+            connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
+          }
+        }
+    }
+
     if (a->text()==tr("Open global module")) {
 
         QDomNode global =  item->root()->node().namedItem(md_root).namedItem(md_metadata).namedItem(md_globals).namedItem(md_sourcecode);

@@ -313,7 +313,7 @@ System object id
 
 #define md_row_count		8
 
-class ANANAS_EXPORT DomCfgItem : public QObject
+class  DomCfgItem : public QObject
 {
     Q_OBJECT
 public:
@@ -323,9 +323,11 @@ public:
     virtual DomCfgItem *child(int i);
     virtual DomCfgItem *child(QString f);
     virtual DomCfgItem *child(QString f,int j);
-    DomCfgItem *parent();
-    //virtual DomCfgItem *parentObject();//Возвращает владельца объекта конфигурации
+    virtual bool remove(int i);//Удаляет i потомка объекта
+    DomCfgItem *parent();//Возвращает владельца объекта конфигурации
     void insert(DomCfgItem *context,QString &otype,QString &name,long id);
+    DomCfgItem* newCatalogue();
+    DomCfgItem* newElement();
     QDomNode node() const;
     QString nodeName() const;
     QString nodeValue() const;

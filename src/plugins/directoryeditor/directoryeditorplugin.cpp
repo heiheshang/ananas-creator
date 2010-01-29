@@ -140,6 +140,7 @@ using namespace DIRECTORYEditor::Internal;
     QString DirectoryEditorFile::mimeType() const { return m_mimeType; }
 
     bool DirectoryEditorFile::save(const QString &fileName) {
+        Q_UNUSED(fileName);
         //Core::MessageManager::instance()->printToOutputPane(tr("DirectoryEditor"));
 //        QFile file(fileName);
 //
@@ -168,6 +169,7 @@ using namespace DIRECTORYEditor::Internal;
     }
 
     bool DirectoryEditorFile::open(const QString &fileName) {
+        Q_UNUSED(fileName);
 //        QFile file(fileName);
 //        if (file.open(QIODevice::ReadOnly)) {
 //            m_fileName = fileName;

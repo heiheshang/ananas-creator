@@ -4,7 +4,7 @@
 #include <QStandardItemModel>
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/messageoutputwindow.h>
-
+#include <QDebug>
 
 using namespace DIRECTORYEditor;
 
@@ -37,9 +37,9 @@ void DirectoryEditor::languageChange()
 void DirectoryEditor::setData( DomCfgItem *o )
 {
      item = o;
-     setWindowTitle( tr("Catalogue:") + o->attr( mda_name ) );
-     eName->setText( o->attr( mda_name ) );
-     eDescription->setText( o->attr( md_description ) );
+     setWindowTitle( tr("Catalogue:") + item->attr( mda_name ) );
+     eName->setText( item->attr( mda_name ) );
+     eDescription->setText( item->attr( md_description ) );
      //DomCfgItem *fields = o->find(md_element);//->find(md_field);
 //     listField->setSortingEnabled(false);
 //     QTableWidgetItem *newItem;
@@ -62,11 +62,13 @@ void DirectoryEditor::setData( DomCfgItem *o )
         connect(groupAttributesList,SIGNAL(cellDoubleClicked ( int , int ) ),this,SLOT(doubleClickedGroup(int,int)));
         connect(formsList,SIGNAL(cellDoubleClicked ( int , int ) ),this,SLOT(doubleClickedForm(int,int)));
 
-        connect(editElementAttribute,SIGNAL(pressed() ),this,SLOT(edit_field()));
+        connect(editElementAttribute,SIGNAL(pressed() ),this,SLOT(editElementAttribute_clicked()));
         connect(createNewElementAttribute,SIGNAL(pressed()) ,this,SLOT(createNewElementAttribute_clicked()));
 
         connect(editGroupAttribute,SIGNAL(pressed() ),this,SLOT(editGroupAttribute_clicked()));
         connect(createNewGroupAttribute,SIGNAL(pressed()) ,this,SLOT(createNewGroupAttribute_clicked()));
+
+        connect(deleteElementAttribute,SIGNAL(pressed()),this,SLOT(deleteElementAttribute_clicked()));
 
         connect(elementAttributesList,SIGNAL(itemClicked(QTableWidgetItem*)),this,SLOT(activateElement(QTableWidgetItem*)));
         connect(groupAttributesList,SIGNAL(itemClicked(QTableWidgetItem*)),this,SLOT(activateGroup(QTableWidgetItem*)));
@@ -77,26 +79,7 @@ void DirectoryEditor::setData( DomCfgItem *o )
         GetFormsList();
         CatList();
 }
-void DirectoryEditor::edit_field()
-{
-    int currentRow;
-    currentRow = elementAttributesList->currentIndex().row();
-    if (currentRow==-1) {
-        currentRow=1;
-    }
-    Core::EditorManager* manager = Core::EditorManager::instance();
-    DomCfgItem *element=item->find(md_element);
 
-    QString cfgName = element->child(currentRow)->cfgName();
-    Core::IEditor* editor = manager->openEditorWithContents("Field Editor", &cfgName,"");
-    if (editor) {
-        manager->activateEditor(editor);
-        QMetaObject::invokeMethod(editor->widget(), "setData",
-        Q_ARG(DomCfgItem*, element->child(currentRow)));
-        connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
-    }
-
-}
 void DirectoryEditor::doubleClickedElement ( int row, int ) {
     Core::EditorManager* manager = Core::EditorManager::instance();
 
@@ -251,7 +234,6 @@ void DirectoryEditor::GetElementAttributesList()
         for(int i=0;i<fields->childCount();i++) {
         if (fields->child(i)->nodeName()==md_field) {
             newItem = new QTableWidgetItem(fields->child(i)->attr(mda_name));
-            //newItem->setFlags(Qt::ItemIsSelectable);
             elementAttributesList->setRowCount(childCount+1);
             elementAttributesList->setItem(childCount,0,newItem);
             elementAttributesList->setRowHeight(childCount,20);
@@ -478,16 +460,8 @@ void DirectoryEditor::CatList()
 void DirectoryEditor::createNewElementAttribute_clicked()
 {
     DomCfgItem *element=item->find(md_element);
-    QString otype=md_field;
-    QString name=tr("New");
-    item->insert(element,otype,name,0);
+    DomCfgItem* field = element->newElement();
 
-    DomCfgItem *field=element->child(element->childCount()-1);
-    field->setAttr(mda_type,QString("C 10\t")+QObject::tr("Char"));
-    field->setAttr(mda_sort,"0");
-    field->setAttr(mda_plus,"0");
-    field->setAttr(mda_nz,"0");
-    field->setAttr(mda_sum,"0");
     Core::EditorManager* manager = Core::EditorManager::instance();
 
     QString cfgName = field->cfgName();
@@ -618,8 +592,26 @@ void DirectoryEditor::activateForm(QTableWidgetItem* item)
 //вызывает форму редактирования атрибута элемента.
 // * \_ru
 //*/
-//void dEditCat::editElementAttribute_clicked()
-//{
+void DirectoryEditor::editElementAttribute_clicked()
+{
+    int currentRow;
+    currentRow = elementAttributesList->currentIndex().row();
+    if (currentRow==-1) {
+        currentRow=1;
+    }
+    Core::EditorManager* manager = Core::EditorManager::instance();
+    DomCfgItem *element=item->find(md_element);
+
+    QString cfgName = element->child(currentRow)->cfgName();
+    Core::IEditor* editor = manager->openEditorWithContents("Field Editor", &cfgName,"");
+    if (editor) {
+        manager->activateEditor(editor);
+        QMetaObject::invokeMethod(editor->widget(), "setData",
+        Q_ARG(DomCfgItem*, element->child(currentRow)));
+        connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
+    }
+
+
 //    aCfg *md = item->md;
 //    aCfgItem obj = item->obj;
 //    QWorkspace *ws = mainform->ws;
@@ -645,8 +637,8 @@ void DirectoryEditor::activateForm(QTableWidgetItem* item)
 //    mainform->addTab(++mainform->lastTabId,e->name());
 //    e->parentWidget()->setGeometry(10,10,e->parentWidget()->frameSize().width(),
 //        e->parentWidget()->frameSize().height());
-//}
-//
+}
+
 ///*!
 // * \en
 // * Processes the user pressing button " Delete " and deletes from metadata attribute of an element in the catalogue.
@@ -655,11 +647,12 @@ void DirectoryEditor::activateForm(QTableWidgetItem* item)
 // * Обрабатывает пользовательское нажатие кнопки "Удалить" и удаляет из метаданных атрибут элемента в справочнике.
 // * \_ru
 //*/
-//void dEditCat::deleteElementAttribute_clicked()
-//{
-//        if (elementAttributesList->childCount() == 0)
-//                return;
-//
+void DirectoryEditor::deleteElementAttribute_clicked()
+{
+
+        if (elementAttributesList->rowCount() == 0)
+                return;
+        item->find(md_element)->remove(elementAttributesList->currentRow());
 //        aCfg *md = item->md;
 //        aListViewItem *i = (aListViewItem *) elementAttributesList->currentItem(), *elementitem;
 //
@@ -682,9 +675,9 @@ void DirectoryEditor::activateForm(QTableWidgetItem* item)
 //                        deleteElementAttribute->setEnabled(FALSE);
 //                }
 //        }
-//}
-//
-//
+}
+
+
 ///*!
 // * \en
 // *  Processes the user pressing the button " Move up"
