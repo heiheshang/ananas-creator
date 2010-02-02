@@ -74,6 +74,8 @@ void DirectoryEditor::setData( DomCfgItem *o )
         connect(groupAttributesList,SIGNAL(itemClicked(QTableWidgetItem*)),this,SLOT(activateGroup(QTableWidgetItem*)));
         connect(formsList,SIGNAL(itemClicked(QTableWidgetItem*)),this,SLOT(activateForm(QTableWidgetItem*)));
 
+        connect(moveUpElementAttribute,SIGNAL(pressed()),this,SLOT(moveUpElementAttribute_clicked()));
+
         GetElementAttributesList();
         GetGroupAttributesList();
         GetFormsList();
@@ -242,6 +244,20 @@ void DirectoryEditor::GetElementAttributesList()
         }
         elementAttributesList->setColumnWidth ( 0, elementAttributesList->width()-30 );
         elementAttributesList->setSelectionBehavior(QAbstractItemView::SelectRows);
+
+        if (elementAttributesList->rowCount()==0) {
+             moveUpElementAttribute->setEnabled(false);
+             moveDownElementAttribute->setEnabled(false);
+             editElementAttribute->setEnabled(false);
+             deleteElementAttribute->setEnabled(false);
+        }
+        else {
+            moveUpElementAttribute->setEnabled(true);
+            moveDownElementAttribute->setEnabled(true);
+            editElementAttribute->setEnabled(true);
+            deleteElementAttribute->setEnabled(true);
+        }
+
 //        aCfg *md = item->md;
 //        aCfgItem obj = item->obj, cobj, e;
 //        e = md->find( obj, md_element ); // Find Element context
@@ -666,14 +682,14 @@ void DirectoryEditor::deleteElementAttribute_clicked()
 //                                delete elementitem;
 //                        }
 //                }
-//                GetElementAttributesList();
-//                if (elementAttributesList->childCount() == 0)
-//                {
-//                        moveUpElementAttribute->setEnabled(FALSE);
-//                        moveDownElementAttribute->setEnabled(FALSE);
-//                        editElementAttribute->setEnabled(FALSE);
-//                        deleteElementAttribute->setEnabled(FALSE);
-//                }
+                GetElementAttributesList();
+                //if (elementAttributesList->rowCount() == 0)
+                //{
+                //        moveUpElementAttribute->setEnabled(FALSE);
+                //        moveDownElementAttribute->setEnabled(FALSE);
+                //        editElementAttribute->setEnabled(FALSE);
+                //        deleteElementAttribute->setEnabled(FALSE);
+                //}
 //        }
 }
 
@@ -686,18 +702,20 @@ void DirectoryEditor::deleteElementAttribute_clicked()
 // * Обрабатывает пользовательское нажатие кнопки "Переместить вверх"
 // * \_ru
 //*/
-//void dEditCat::moveUpElementAttribute_clicked()
-//{
-//        aListViewItem *ai = (aListViewItem *) elementAttributesList->currentItem(), *eitem;
-//        aCfg *md = item->md;
-//        QString itemName = ai->text(0);
-//        eitem = item->findItemInMD(item, "catalogue", md->attr(item->obj, mda_name ), "field", itemName);
-//        eitem->moveUp();
-//        GetElementAttributesList();
-//        elementAttributesList->setCurrentItem(elementAttributesList->findItem(itemName, 0));
-//        elementAttributesList_selectionChanged();
-//}
-//
+void DirectoryEditor::moveUpElementAttribute_clicked()
+{
+        //aListViewItem *ai = (aListViewItem *) elementAttributesList->currentItem(), *eitem;
+        //aCfg *md = item->md;
+        //QString itemName = item->attr(mda_name);
+        //eitem = item->findItemInMD(item, "catalogue", md->attr(item->obj, mda_name ), "field", itemName);
+        //eitem->moveUp();
+        DomCfgItem* eitem = item->find(md_element)->child(elementAttributesList->currentRow());
+        eitem->moveUp();
+        GetElementAttributesList();
+        //elementAttributesList->setCurrentItem(elementAttributesList->findItem(itemName, 0));
+        //elementAttributesList_selectionChanged();
+}
+
 ///*!
 // * \en
 // *  Processes the user pressing the button " Move down"

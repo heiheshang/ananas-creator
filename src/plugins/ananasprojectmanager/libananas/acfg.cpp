@@ -733,6 +733,37 @@ void DomCfgItem::insert(DomCfgItem *context,QString &otype,QString &name,long id
 	if ( !name.isNull()) i.setAttribute(mda_name,name);
 	context->node().appendChild( i );
 }
+
+bool DomCfgItem::moveUp()
+{
+    DomCfgItem* p = parent();
+    int currentrow=row();
+    int prevrow=row()-1;
+    if (currentrow==0)
+        prevrow=p->childCount();
+    if (!p->node().insertBefore(node(),p->child(prevrow)->node()).isNull()) {
+        p->childItems.remove(prevrow);
+        p->childItems.remove(currentrow);
+        return true;
+    }
+    return false;
+}
+
+bool DomCfgItem::moveDown()
+{
+    DomCfgItem* p = parent();
+    int currentrow=row();
+    int prevrow=row()+1;
+    if (currentrow==p->childCount())
+        prevrow=0;
+    if (!p->node().insertAfter(node(),p->child(prevrow)->node()).isNull()) {
+        p->childItems.remove(prevrow);
+        p->childItems.remove(currentrow);
+        return true;
+    }
+    return false;
+}
+
 DomCfgItem* DomCfgItem::newCatalogue()
 {
     if (node().nodeName()==md_catalogues) {

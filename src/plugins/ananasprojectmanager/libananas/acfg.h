@@ -324,6 +324,8 @@ public:
     virtual DomCfgItem *child(QString f);
     virtual DomCfgItem *child(QString f,int j);
     virtual bool remove(int i);//Удаляет i потомка объекта
+    bool moveUp();//Передвигает элемент вверх
+    bool moveDown();//Передвигает элемент вниз
     DomCfgItem *parent();//Возвращает владельца объекта конфигурации
     void insert(DomCfgItem *context,QString &otype,QString &name,long id);
     DomCfgItem* newCatalogue();
