@@ -468,7 +468,7 @@ QMenu *DomCfgItem::menu() const
 	 contextMenu->addAction("Property");
 	 return contextMenu;
 	}
-	if (domNode.nodeName()==md_catalogue) {
+        if (domNode.nodeName()==md_catalogue || domNode.nodeName()==md_journal) {
 	 QMenu *contextMenu = new QMenu(tr("Context menu"));
          contextMenu->addAction("New");
          contextMenu->addAction("Edit");

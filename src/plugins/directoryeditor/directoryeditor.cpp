@@ -69,6 +69,8 @@ void DirectoryEditor::setData( DomCfgItem *o )
         connect(createNewGroupAttribute,SIGNAL(pressed()) ,this,SLOT(createNewGroupAttribute_clicked()));
 
         connect(deleteElementAttribute,SIGNAL(pressed()),this,SLOT(deleteElementAttribute_clicked()));
+        connect(deleteGroupAttribute,SIGNAL(pressed()),this,SLOT(deleteGroupAttribute_clicked()));
+        connect(deleteForm,SIGNAL(pressed()),this,SLOT(deleteForm_clicked()));
 
         connect(elementAttributesList,SIGNAL(itemClicked(QTableWidgetItem*)),this,SLOT(activateElement(QTableWidgetItem*)));
         connect(groupAttributesList,SIGNAL(itemClicked(QTableWidgetItem*)),this,SLOT(activateGroup(QTableWidgetItem*)));
@@ -76,6 +78,9 @@ void DirectoryEditor::setData( DomCfgItem *o )
 
         connect(moveUpElementAttribute,SIGNAL(pressed()),this,SLOT(moveUpElementAttribute_clicked()));
         connect(moveDownElementAttribute,SIGNAL(pressed()),this,SLOT(moveDownElementAttribute_clicked()));
+
+        connect(moveUpGroupAttribute,SIGNAL(pressed()),this,SLOT(moveUpGroupAttribute_clicked()));
+        connect(moveDownGroupAttribute,SIGNAL(pressed()),this,SLOT(moveDownGroupAttribute_clicked()));
 
         GetElementAttributesList();
         GetGroupAttributesList();
@@ -234,6 +239,7 @@ void DirectoryEditor::GetElementAttributesList()
         QTableWidgetItem *newItem;
         DomCfgItem *fields = item->find(md_element);//->find(md_field);
         childCount=0;
+        elementAttributesList->clear();
         for(int i=0;i<fields->childCount();i++) {
         if (fields->child(i)->nodeName()==md_field) {
             newItem = new QTableWidgetItem(fields->child(i)->attr(mda_name));
@@ -287,6 +293,7 @@ void DirectoryEditor::GetGroupAttributesList()
         QTableWidgetItem* newItem;
         DomCfgItem *fields = item->find(md_group);//->find(md_field);
         childCount=0;
+        groupAttributesList->clear();
         for(int i=0;i<fields->childCount();i++) {
         if (fields->child(i)->nodeName()==md_field) {
             newItem = new QTableWidgetItem(fields->child(i)->attr(mda_name));
@@ -297,6 +304,7 @@ void DirectoryEditor::GetGroupAttributesList()
             }
         }
     groupAttributesList->setColumnWidth ( 0, groupAttributesList->width()-30 );
+    groupAttributesList->setSelectionBehavior(QAbstractItemView::SelectRows);
 //        aCfg *md = item->md;
 //        aCfgItem obj = item->obj, g, field;
 //        g = md->find( obj, md_group ); // Find Group context
@@ -321,6 +329,7 @@ void DirectoryEditor::GetFormsList()
     QTableWidgetItem* newItem;
     DomCfgItem *form = item->find(md_forms);
     childCount=0;
+    formsList->clear();
     for(int i=0;i<form->childCount();i++) {
         if (form->child(i)->nodeName()==md_form) {
             newItem = new QTableWidgetItem(form->child(i)->attr(mda_name));
@@ -331,6 +340,7 @@ void DirectoryEditor::GetFormsList()
             }
         }
     formsList->setColumnWidth ( 0, formsList->width()-30 );
+    formsList->setSelectionBehavior(QAbstractItemView::SelectRows);
    // formsList->setSourceModel(model);
 //        formsList->clear();
 //        int i;
@@ -670,6 +680,7 @@ void DirectoryEditor::deleteElementAttribute_clicked()
         if (elementAttributesList->rowCount() == 0)
                 return;
         item->find(md_element)->remove(elementAttributesList->currentRow());
+        GetElementAttributesList();
 //        aCfg *md = item->md;
 //        aListViewItem *i = (aListViewItem *) elementAttributesList->currentItem(), *elementitem;
 //
@@ -915,11 +926,12 @@ void DirectoryEditor::editGroupAttribute_clicked()
 // * Обрабатывает пользовательское нажатие кнопки "Удалить" и удаляет из метаданных атрибут группы в справочнике.
 // * \_ru
 //*/
-//void dEditCat::deleteGroupAttribute_clicked()
-//{
-//        if (groupAttributesList->childCount() == 0)
-//                return;
-//
+void DirectoryEditor::deleteGroupAttribute_clicked()
+{
+        if (groupAttributesList->rowCount() == 0)
+                return;
+        item->find(md_group)->remove(groupAttributesList->currentRow());
+        GetGroupAttributesList();
 //        aCfg *md = item->md;
 //        aListViewItem *i = (aListViewItem *) groupAttributesList->currentItem(), *groupitem;
 //
@@ -933,17 +945,17 @@ void DirectoryEditor::editGroupAttribute_clicked()
 //                                delete groupitem;
 //                        }
 //                }
-//                GetGroupAttributesList();
-//                if (groupAttributesList->childCount() == 0)
-//                {
-//                        moveUpGroupAttribute->setEnabled(FALSE);
-//                        moveDownGroupAttribute->setEnabled(FALSE);
-//                        editGroupAttribute->setEnabled(FALSE);
-//                        deleteGroupAttribute->setEnabled(FALSE);
-//                }
+                GetGroupAttributesList();
+                if (groupAttributesList->rowCount() == 0)
+                {
+                        moveUpGroupAttribute->setEnabled(FALSE);
+                        moveDownGroupAttribute->setEnabled(FALSE);
+                        editGroupAttribute->setEnabled(FALSE);
+                        deleteGroupAttribute->setEnabled(FALSE);
+                }
 //        }
-//}
-//
+}
+
 ///*!
 // * \en
 // *  Processes the user pressing the button " Move up "
@@ -952,8 +964,11 @@ void DirectoryEditor::editGroupAttribute_clicked()
 // * Обрабатывает пользовательское нажатие кнопки "Переместить вверх"
 // * \_ru
 //*/
-//void dEditCat::moveUpGroupAttribute_clicked()
-//{
+void DirectoryEditor::moveUpGroupAttribute_clicked()
+{
+    DomCfgItem* eitem = item->find(md_group)->child(groupAttributesList->currentRow());
+    eitem->moveUp();
+    GetGroupAttributesList();
 //        aListViewItem *ai = (aListViewItem *) groupAttributesList->currentItem(), *gitem;
 //        aCfg *md = item->md;
 //        QString itemName = ai->text(0);
@@ -962,8 +977,8 @@ void DirectoryEditor::editGroupAttribute_clicked()
 //        GetGroupAttributesList();
 //        groupAttributesList->setCurrentItem(groupAttributesList->findItem(itemName, 0));
 //        groupAttributesList_selectionChanged();
-//}
-//
+}
+
 ///*!
 // * \en
 // *  Processes the user pressing the button " Move down "
@@ -972,8 +987,11 @@ void DirectoryEditor::editGroupAttribute_clicked()
 // * Обрабатывает пользовательское нажатие кнопки "Переместить вниз"
 // * \_ru
 //*/
-//void dEditCat::moveDownGroupAttribute_clicked()
-//{
+void DirectoryEditor::moveDownGroupAttribute_clicked()
+{
+    DomCfgItem* eitem = item->find(md_group)->child(elementAttributesList->currentRow());
+    eitem->moveDown();
+    GetGroupAttributesList();
 //        aListViewItem *ai = (aListViewItem *) groupAttributesList->currentItem(), *gitem;
 //        aCfg *md = item->md;
 //        QString itemName = ai->text(0);
@@ -982,8 +1000,8 @@ void DirectoryEditor::editGroupAttribute_clicked()
 //        GetGroupAttributesList();
 //        groupAttributesList->setCurrentItem(groupAttributesList->findItem(itemName, 0));
 //        groupAttributesList_selectionChanged();
-//}
-//
+}
+
 ///*!
 // * \en
 // *  Activation of buttons of moving under the list at a choice of an element of attribute
@@ -1195,11 +1213,12 @@ void DirectoryEditor::elementAttributesList_selectionChanged()
 // * Обрабатывает пользовательское нажатие кнопки "Удалить" и удаляет из метаданных форму справочника.
 // * \_ru
 //*/
-//void dEditCat::deleteForm_clicked()
-//{
-//        if (formsList->childCount() == 0 )
-//                return;
-//
+void DirectoryEditor::deleteForm_clicked()
+{
+        if (formsList->rowCount() == 0 )
+                return;
+        item->find(md_forms)->remove(formsList->currentRow());
+        GetFormsList();
 //        aCfg *md = item->md;
 //        aListViewItem *i = (aListViewItem *) formsList->currentItem(), *formitem;
 //
@@ -1213,15 +1232,15 @@ void DirectoryEditor::elementAttributesList_selectionChanged()
 //                                delete formitem;
 //                        }
 //                }
-//                GetFormsList();
-//                if (formsList->childCount() == 0 )
-//                {
-//                        editForm->setEnabled( FALSE );
-//                        deleteForm->setEnabled( FALSE );
-//                }
+
+                if (formsList->rowCount() == 0 )
+                {
+                        editForm->setEnabled( FALSE );
+                        deleteForm->setEnabled( FALSE );
+                }
 //        }
-//}
-//
+}
+
 //
 ///*!
 // * \en

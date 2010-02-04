@@ -74,6 +74,10 @@ private slots:
     void activateForm(QTableWidgetItem* item);
     void moveUpElementAttribute_clicked();
     void moveDownElementAttribute_clicked();
+    void deleteGroupAttribute_clicked();
+    void moveUpGroupAttribute_clicked();
+    void moveDownGroupAttribute_clicked();
+    void deleteForm_clicked();
 };
 }
 
