@@ -75,6 +75,7 @@ void DirectoryEditor::setData( DomCfgItem *o )
         connect(formsList,SIGNAL(itemClicked(QTableWidgetItem*)),this,SLOT(activateForm(QTableWidgetItem*)));
 
         connect(moveUpElementAttribute,SIGNAL(pressed()),this,SLOT(moveUpElementAttribute_clicked()));
+        connect(moveDownElementAttribute,SIGNAL(pressed()),this,SLOT(moveDownElementAttribute_clicked()));
 
         GetElementAttributesList();
         GetGroupAttributesList();
@@ -724,19 +725,20 @@ void DirectoryEditor::moveUpElementAttribute_clicked()
 // * Обрабатывает пользовательское нажатие кнопки "Переместить вниз"
 // * \_ru
 //*/
-//void dEditCat::moveDownElementAttribute_clicked()
-//{
-//        aListViewItem *ai = (aListViewItem *) elementAttributesList->currentItem(), *eitem;
-//        aCfg *md = item->md;
-//        QString itemName = ai->text(0);
-//        eitem = item->findItemInMD(item, "catalogue", md->attr(item->obj, mda_name ), "field", itemName);
-//        eitem->moveDown();
-//        GetElementAttributesList();
-//        elementAttributesList->setCurrentItem(elementAttributesList->findItem(itemName, 0));
-//        elementAttributesList_selectionChanged();
-//}
-//
-//
+void DirectoryEditor::moveDownElementAttribute_clicked()
+{
+        //aListViewItem *ai = (aListViewItem *) elementAttributesList->currentItem(), *eitem;
+        //aCfg *md = item->md;
+        //QString itemName = ai->text(0);
+        //eitem = item->findItemInMD(item, "catalogue", md->attr(item->obj, mda_name ), "field", itemName);
+        DomCfgItem* eitem = item->find(md_element)->child(elementAttributesList->currentRow());
+        eitem->moveDown();
+        GetElementAttributesList();
+        //elementAttributesList->setCurrentItem(elementAttributesList->findItem(itemName, 0));
+        //elementAttributesList_selectionChanged();
+}
+
+
 ///*!
 // * \en
 // *  Processes the user pressing the button " New attribute of group " and creates in metadata new attribute of an element.

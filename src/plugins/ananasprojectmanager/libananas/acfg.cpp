@@ -740,7 +740,7 @@ bool DomCfgItem::moveUp()
     int currentrow=row();
     int prevrow=row()-1;
     if (currentrow==0)
-        prevrow=p->childCount();
+            return true;
     if (!p->node().insertBefore(node(),p->child(prevrow)->node()).isNull()) {
         p->childItems.remove(prevrow);
         p->childItems.remove(currentrow);
@@ -754,8 +754,9 @@ bool DomCfgItem::moveDown()
     DomCfgItem* p = parent();
     int currentrow=row();
     int prevrow=row()+1;
-    if (currentrow==p->childCount())
-        prevrow=0;
+    if (currentrow==p->childCount()-1)
+            return true;
+
     if (!p->node().insertAfter(node(),p->child(prevrow)->node()).isNull()) {
         p->childItems.remove(prevrow);
         p->childItems.remove(currentrow);
