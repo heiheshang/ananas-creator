@@ -1,3 +1,4 @@
+
 #include <coreplugin/filemanager.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/ifile.h>

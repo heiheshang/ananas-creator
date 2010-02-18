@@ -27,8 +27,8 @@
 **
 **************************************************************************/
 
-#ifndef QMLNEWPROJECTWIZARD_H
-#define QMLNEWPROJECTWIZARD_H
+#ifndef ANANASNEWPROJECTWIZARD_H
+#define ANANSNEWPROJECTWIZARD_H
 
 #include <coreplugin/basefilewizard.h>
 #include <QtGui/QWizard>
@@ -110,4 +110,4 @@ protected:
 } // end of namespace Internal
 } // end of namespace AnanasProjectManager
 
-#endif // QMLNEWPROJECTWIZARD_H
+#endif // ANANASNEWPROJECTWIZARD_H

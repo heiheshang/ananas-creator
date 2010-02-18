@@ -1,3 +1,4 @@
+
 #include "fieldeditor.h"
 #include <QDate>
 #include <QString>

@@ -12,3 +12,4 @@ RESOURCES += directoryeditor.qrc \
     ../ananasprojectmanager/libananas/designer.qrc
 FORMS = directoryeditor.ui
 OTHER_FILES += DirectoryEditor.pluginspec
+

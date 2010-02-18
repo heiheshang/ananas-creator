@@ -1,3 +1,4 @@
+
 #include "directoryeditor.h"
 #include <coreplugin/editormanager/editormanager.h>
 #include <QTableWidgetItem>

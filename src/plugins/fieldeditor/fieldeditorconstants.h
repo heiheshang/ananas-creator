@@ -1,3 +1,4 @@
+
 #ifndef FIELDEDITORCONSTANTS_H
 #define FIELDEDITORCONSTANTS_H
 namespace FIELDEditor {

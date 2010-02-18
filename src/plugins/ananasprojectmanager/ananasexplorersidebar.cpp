@@ -1,5 +1,3 @@
-
-
 #include "ananasexplorersidebar.h"
 #include <QTextStream>
 #include <QtXml/QtXml>

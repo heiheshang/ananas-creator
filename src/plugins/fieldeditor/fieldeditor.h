@@ -1,3 +1,4 @@
+
 #ifndef FIELDEDITOR_H
 #define FIELDEDITOR_H
 
