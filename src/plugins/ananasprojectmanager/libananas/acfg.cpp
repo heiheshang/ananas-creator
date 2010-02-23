@@ -786,6 +786,28 @@ DomCfgItem* DomCfgItem::newCatalogue()
     return 0;
 }
 
+DomCfgItem* DomCfgItem::newJournal()
+{
+    if (node().nodeName()==md_journals) {
+        QString otype=md_journal;
+        QString name=tr("New Journal");
+        insert(this,otype,name,0);
+        DomCfgItem* journal=child(childCount()-1);
+        otype = md_element;
+        name = "";
+        insert( journal, otype , name, -1 );
+        otype = md_group;
+        insert( journal, otype , name, -1 );
+        otype = md_forms;
+        insert( journal, otype , name, -1 );
+        otype = md_webforms;
+        insert( journal, otype , name, -1 );
+        return journal;
+    }
+    return 0;
+}
+
+
 DomCfgItem* DomCfgItem::newElement()
 {
     QString otype=md_field;

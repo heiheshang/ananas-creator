@@ -1,0 +1,8 @@
+<RCC>
+    <qresource prefix="/journaleditor">
+        <file>JournalEditor.mimetypes.xml</file>
+    </qresource>
+    <qresource prefix="/icon">
+        <file>ananas16x16.jpg</file>
+    </qresource>
+</RCC>

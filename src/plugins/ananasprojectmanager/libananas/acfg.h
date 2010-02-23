@@ -329,6 +329,7 @@ public:
     DomCfgItem *parent();//Возвращает владельца объекта конфигурации
     void insert(DomCfgItem *context,QString &otype,QString &name,long id);
     DomCfgItem* newCatalogue();
+    DomCfgItem* newJournal();
     DomCfgItem* newElement();
     QDomNode node() const;
     QString nodeName() const;
