@@ -6,6 +6,7 @@
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/messageoutputwindow.h>
 #include <QDebug>
+#include <QFile>
 
 using namespace DIRECTORYEditor;
 
@@ -68,6 +69,8 @@ void DirectoryEditor::setData( DomCfgItem *o )
 
         connect(editGroupAttribute,SIGNAL(pressed() ),this,SLOT(editGroupAttribute_clicked()));
         connect(createNewGroupAttribute,SIGNAL(pressed()) ,this,SLOT(createNewGroupAttribute_clicked()));
+
+        connect(editForm,SIGNAL(pressed()),this,SLOT(editForm_clicked()));
 
         connect(deleteElementAttribute,SIGNAL(pressed()),this,SLOT(deleteElementAttribute_clicked()));
         connect(deleteGroupAttribute,SIGNAL(pressed()),this,SLOT(deleteGroupAttribute_clicked()));
@@ -1171,6 +1174,37 @@ void DirectoryEditor::elementAttributesList_selectionChanged()
 //        }
 //}
 //
+
+///*!
+// * \en
+// * \ru
+// * Обрабатывает запись формы
+// * \_ru
+//*/
+void DirectoryEditor::updateForm(QList<Core::IEditor*> editor)
+{
+     for (int i = 0; i < editor.size(); ++i) {
+        QHashIterator<QString, QString> of(openForm);
+        while (of.hasNext()) {
+            of.next();
+            if (of.value() == editor.at(i)->file()->fileName()) {
+                DomCfgItem* form = item->find(md_forms);
+                for (int j=0;j<=form->childCount()-1;j++) {
+                    QString id_form = form->child(j)->attr(mda_id);
+                    if (id_form == of.key()) {
+                        //Переписываем форму
+                        QFile file_ui(editor.at(i)->file()->fileName());
+                        QTextStream text_ui(&file_ui);
+                        form->setText(md_formdesign,text_ui.readAll());
+                        file_ui.close();
+                        openForm.remove(id_form);
+                    }
+                }
+            }
+        }
+    }
+}
+
 ///*!
 // * \en
 // *  Processes the user pressing button " Edit " and causes dialogue of editing of the document
@@ -1179,32 +1213,46 @@ void DirectoryEditor::elementAttributesList_selectionChanged()
 // * Обрабатывает пользовательское нажатие кнопки "Редактировать" и вызывает диалог редактирования документа
 // * \_ru
 //*/
-//void dEditCat::editForm_clicked()
-//{
-//    aCfg *md = item->md;
-//    aCfgItem obj = item->obj;
-//    aWindowsList *wl = mainform->wl;
-//    QWorkspace *ws = mainform->ws;
-//    aListViewItem *ai = (aListViewItem *) formsList->currentItem(), *formitem;
-//        formitem = item->findItemInMD(item, "catalogue", md->attr( item->obj, mda_name ), "form", ai->text(0));
-//    QString oclass = md->objClass( obj );
-//    int objid = md->id( ai->obj );
-//    if ( wl->find( objid ) )
-//    {
-//        wl->get( objid )->setFocus();
-//        return;
-//    }
-//    QWidget *editor;
-//    dEditDialog *e = new dEditDialog( ws, 0, WDestructiveClose );
-//    wl->insert( objid, e );
-//    editor = e;
-//    e->setData(formitem);
-//    QObject::connect( mainform, SIGNAL( tosave() ), editor, SLOT( updateMD() ) );
-//    QObject::connect(e, SIGNAL(destroyed()), this, SLOT(GetFormsList()));
-//    e->show();
-//    mainform->addTab(++mainform->lastTabId,e->name());
-//    e->parentWidget()->setGeometry(0,0,e->parentWidget()->frameSize().width(), e->parentWidget()->frameSize().height());
-//}
+void DirectoryEditor::editForm_clicked()
+{
+    if (formsList->rowCount() == 0 )
+            return;
+    DomCfgItem* form = item->find(md_forms)->child(formsList->currentRow());
+    QString id_form = form->attr(mda_id);
+    QString tpl_name = "inputformcat";
+    QString ui, s, tpldir;
+
+
+
+    #ifdef Q_OS_WIN32
+            tpldir = qApp->applicationDirPath()+"/templates/";
+    #else
+            tpldir = "/usr/share/ananas/templates/";
+    #endif
+            //tpldir = ":/designer/templates/";
+    QString name_file_ui = tpldir+tpl_name+id_form+".ui";
+    QFile file_ui( name_file_ui );
+    if (!file_ui.exists()) {
+        if (file_ui.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream text_ui(&file_ui);
+            text_ui.setCodec("UTF-8");
+            text_ui << form->node().namedItem(md_formdesign).toElement().text();
+            file_ui.close();
+        }
+    }
+
+    Core::EditorManager* manager = Core::EditorManager::instance();
+
+    QString cfgName = form->cfgName();
+    Core::IEditor* editor = manager->openEditor(name_file_ui);
+    if (editor) {
+        manager->activateEditor(editor);
+        openForm.insert(id_form,name_file_ui);
+        connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),this,SLOT(updateForm(QList<Core::IEditor*>)));
+    }
+
+
+}
 //
 ///*!
 // * \en

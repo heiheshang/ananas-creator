@@ -41,7 +41,6 @@ public:
     void setEditorInterface(Core::IEditor *ieditor) { m_ieditor = ieditor; }
     Q_INVOKABLE void setData( DomCfgItem * o );
 public slots:
-    //virtual void setData( DomCfgItem * o );
     virtual void updateMD(QList<Core::IEditor*> editor);
     virtual void eSv_activated( int index );
     virtual void eSvG_activated( int index );
@@ -60,6 +59,7 @@ private:
     void GetGroupAttributesList();
     void GetFormsList();
     void CatList();
+    QHash<QString,QString> openForm;
 private slots:
     void doubleClickedElement ( int row, int column );
     void doubleClickedGroup ( int row, int column );
@@ -78,7 +78,9 @@ private slots:
     void deleteGroupAttribute_clicked();
     void moveUpGroupAttribute_clicked();
     void moveDownGroupAttribute_clicked();
+    void editForm_clicked();
     void deleteForm_clicked();
+    void updateForm(QList<Core::IEditor*> editor);
 };
 }
 
