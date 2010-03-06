@@ -185,7 +185,7 @@ int DomCfgItem::childCount()
 
    for(int j=0;j<domNode.childNodes().count();j++) {
     nodeName = domNode.childNodes().item(j).nodeName();
-   if (nodeName!=md_description && nodeName!=md_string_view && nodeName!=md_svfunction)
+   if (nodeName!=md_description && nodeName!=md_string_view && nodeName!=md_svfunction && nodeName!=md_used_doc)
     nodeCount++;
    }
    return nodeCount;
@@ -269,9 +269,9 @@ DomCfgItem *DomCfgItem::child(int i)
 	int nodeI = 0;
 	QDomNode cur = domNode.firstChild();
 	while(!cur.isNull()) {
-		if (cur.nodeName()!=md_used_doc) {
+            if (cur.nodeName()!=md_used_doc) {
 			childItem = new DomCfgItem(cur, nodeI, this);
-			childItems[nodeI]=childItem;
+                        childItems[nodeI]=childItem;
 			nodeI++;
 			if (!firstChildItem)
 				firstChildItem=childItem;
@@ -564,7 +564,7 @@ DomCfgItem *DomCfgItem::find(QString f)
  	if (nodeName()==f)
 		return this;
 	for(int i=0;i<childCount();i++) {
-		if (child(i)->nodeName()==f)
+            if (child(i)->nodeName()==f)
 			return child(i);
 		else {
 			if (child(i)->hasChildren()) {

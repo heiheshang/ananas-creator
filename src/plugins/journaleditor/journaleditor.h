@@ -32,11 +32,10 @@ public:
     QHash<int,DomCfgItem*> fields, fieldsg;
     //aAliasEditor *al;
     DomCfgItem *item;
-    DomCfgItem * docs;
-    DomCfgItem * doc;
+    //DomCfgItem * docs;
+    //DomCfgItem * doc;
     void setModified(bool);
     bool isModified() const;
-    void GetAllDocsList();
     Core::IEditor *editorInterface() const { return m_ieditor; }
     void setEditorInterface(Core::IEditor *ieditor) { m_ieditor = ieditor; }
     Q_INVOKABLE void setData( DomCfgItem * o );
@@ -56,6 +55,8 @@ private:
     void init();
     void destroy();
     Core::IEditor *m_ieditor;
+    void GetAllDocsList();
+    void GetJournalDocs();
 private slots:
     void typeChange();
     void addDoc();

@@ -44,13 +44,14 @@ void JournalEditor::setData( DomCfgItem *o )
 
 
 
-connect(cbType,SIGNAL(clicked()),this,SLOT(typeChange()));
-connect(bAddDoc,SIGNAL(clicked()),this,SLOT(addDoc()));
-connect(bRemoveDoc, SIGNAL(clicked()),this,SLOT(removeDoc()));
-connect(bMoveUp,SIGNAL(clicked()),this,SLOT(moveUp()));
-connect(bMoveDown,SIGNAL(clicked()),this,SLOT(moveDown()));
+    connect(cbType,SIGNAL(clicked()),this,SLOT(typeChange()));
+    connect(bAddDoc,SIGNAL(clicked()),this,SLOT(addDoc()));
+    connect(bRemoveDoc, SIGNAL(clicked()),this,SLOT(removeDoc()));
+    connect(bMoveUp,SIGNAL(clicked()),this,SLOT(moveUp()));
+    connect(bMoveDown,SIGNAL(clicked()),this,SLOT(moveDown()));
 
-GetAllDocsList();
+    GetAllDocsList();
+    GetJournalDocs();
 }
 
 //void JournalEditor::doubleClickedElement ( int row, int ) {
@@ -80,12 +81,13 @@ void JournalEditor::typeChange()
 void JournalEditor::addDoc()
 {
     int i,childCount;
+    DomCfgItem* docs = item->root()->find(md_documents);
     childCount = journalDocs->rowCount();
     QList<QTableWidgetItem*>  itemList;
     itemList= allDocs->selectedItems();
     QTableWidgetItem * newItem;
     for(i=0; i<itemList.count();i++){
-        doc = docs->child(allDocs->currentRow());
+        DomCfgItem* doc = docs->child(allDocs->currentRow());
         newItem = new QTableWidgetItem(docs->child(allDocs->currentRow())->attr(mda_name));
         journalDocs->setRowCount(childCount+1);
         //allDocs->setColumnCount(1);
@@ -239,7 +241,7 @@ bool JournalEditor::isModified() const
 void JournalEditor::GetAllDocsList()
 {
     int i,childCount;
-    docs = item->root()->find(md_documents);
+    DomCfgItem* docs = item->root()->find(md_documents);
     QTableWidgetItem *newItem;
     childCount =0;
     for(int i=0;i<docs->childCount();i++) {
@@ -254,4 +256,29 @@ void JournalEditor::GetAllDocsList()
     allDocs->setSelectionBehavior(QAbstractItemView::SelectRows);
 }
 
+
+void JournalEditor::GetJournalDocs()
+{
+    int i,childCount;
+    QString id = "";
+    QDomNode journalDoc = item->find(md_columns)->node().firstChild();
+    while(!journalDoc.isNull()) {
+        if (journalDoc.nodeName()==md_used_doc) {
+           id = journalDoc.childNodes().item(0).nodeValue();
+           qDebug() << id;
+           DomCfgItem* docs = item->root()->find(md_documents)->findObjectById(id);
+           QTableWidgetItem *newItem;
+           childCount =0;
+           newItem = new QTableWidgetItem(docs->attr(mda_name));
+           journalDocs->setRowCount(childCount+1);
+           journalDocs->setColumnCount(1);
+           journalDocs->setItem(childCount,0,newItem);
+           journalDocs->setRowHeight(childCount,20);
+        }
+       journalDoc = journalDoc.nextSibling();
+    }
+
+    journalDocs->setColumnWidth ( 0, journalDocs->width());
+    journalDocs->setSelectionBehavior(QAbstractItemView::SelectRows);
+}
 
