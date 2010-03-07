@@ -52,11 +52,15 @@ protected slots:
     virtual void languageChange();
 
 private:
+    QHash<QString,DomCfgItem*> used_doc;
     void init();
     void destroy();
     Core::IEditor *m_ieditor;
-    void GetAllDocsList();
-    void GetJournalDocs();
+    void getAllDocsList();
+    void getJournalDocs();
+    void getJournalColumns();
+    void getUsedDoc();
+    void deleteDoc(QString name);
 private slots:
     void typeChange();
     void addDoc();

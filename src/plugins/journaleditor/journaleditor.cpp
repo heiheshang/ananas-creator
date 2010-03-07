@@ -50,8 +50,10 @@ void JournalEditor::setData( DomCfgItem *o )
     connect(bMoveUp,SIGNAL(clicked()),this,SLOT(moveUp()));
     connect(bMoveDown,SIGNAL(clicked()),this,SLOT(moveDown()));
 
-    GetAllDocsList();
-    GetJournalDocs();
+    getUsedDoc();
+    getAllDocsList();
+    getJournalDocs();
+    getJournalColumns();
 }
 
 //void JournalEditor::doubleClickedElement ( int row, int ) {
@@ -88,14 +90,23 @@ void JournalEditor::addDoc()
     QTableWidgetItem * newItem;
     for(i=0; i<itemList.count();i++){
         DomCfgItem* doc = docs->child(allDocs->currentRow());
+        if (used_doc.contains(doc->attr(mda_id)))
+            continue;
+        QDomElement i;
+        QDomDocument xml;
+        i = xml.createElement(md_used_doc);
+        QDomNode node = item->find(md_columns)->node().appendChild(i);
+        QDomText t = xml.createTextNode(doc->attr(mda_id));
+        node.appendChild(t);
+        used_doc.insert(doc->attr(mda_id),doc);
         newItem = new QTableWidgetItem(docs->child(allDocs->currentRow())->attr(mda_name));
         journalDocs->setRowCount(childCount+1);
-        //allDocs->setColumnCount(1);
         journalDocs->setItem(childCount,0,newItem);
         journalDocs->setRowHeight(childCount,20);
         childCount++;
     }
     journalDocs->setColumnWidth ( 0, journalDocs->width());
+    getJournalColumns();
 //journalDocs->setSelectionBehavior(QAbstractItemView::SelectRows);
 
 //    ananasListViewItem *cur = (ananasListViewItem *)allDocs->selectedItem();
@@ -112,14 +123,44 @@ void JournalEditor::removeDoc()
     int n = journalDocs->selectedItems().count();
     if (n){
         for(int i=0; i<n;i++){
+            QString name = journalDocs->selectedItems().last()->text();
             journalDocs->removeRow(journalDocs->selectedItems().last()->row());
+            deleteDoc(name);
+            getJournalColumns();
         }
     }
 }
 
-
+void JournalEditor::deleteDoc(QString name)
+{
+    QHashIterator<QString, DomCfgItem*> i(used_doc);
+    while (i.hasNext()) {
+         i.next();
+         if (i.value()->attr(mda_name) == name) {
+             QDomNode journalDoc = item->find(md_columns)->node().firstChild();
+             while(!journalDoc.isNull()) {
+                 QString id = "";
+                 if (journalDoc.nodeName()==md_used_doc) {
+                    id = journalDoc.childNodes().item(0).nodeValue();
+                    if (i.key() == id) {
+                        journalDoc.removeChild(journalDoc.childNodes().item(0));
+                        break;
+                    }
+                 }
+                 journalDoc = journalDoc.nextSibling();
+             }
+             used_doc.remove(i.key());
+             break;
+         }
+     }
+}
 void JournalEditor::moveUp()
 {
+    if (columnsDoc->selectedItems().count()==0)
+        return;
+    DomCfgItem* eitem = item->find(md_columns)->child(columnsDoc->indexOfTopLevelItem(columnsDoc->selectedItems().last()));
+    eitem->moveUp();
+    getJournalColumns();
 //    ananasListViewItem *aitem, *after;
 //
 //    aitem = (ananasListViewItem *) journalDocs->selectedItem();
@@ -134,6 +175,11 @@ void JournalEditor::moveUp()
 
 void JournalEditor::moveDown()
 {
+    if (columnsDoc->selectedItems().count()==0)
+        return;
+    DomCfgItem* eitem = item->find(md_columns)->child(columnsDoc->indexOfTopLevelItem(columnsDoc->selectedItems().last()));
+    eitem->moveDown();
+    getJournalColumns();
 //    ananasListViewItem *aitem, *after;
 //    aitem = (ananasListViewItem *)journalDocs->selectedItem();
 //    if ( aitem )
@@ -238,7 +284,7 @@ bool JournalEditor::isModified() const
     //return (m_undoStack.size() != m_unmodifiedState);
 }
 
-void JournalEditor::GetAllDocsList()
+void JournalEditor::getAllDocsList()
 {
     int i,childCount;
     DomCfgItem* docs = item->root()->find(md_documents);
@@ -247,7 +293,6 @@ void JournalEditor::GetAllDocsList()
     for(int i=0;i<docs->childCount();i++) {
         newItem = new QTableWidgetItem(docs->child(i)->attr(mda_name));
         allDocs->setRowCount(childCount+1);
-        //allDocs->setColumnCount(1);
         allDocs->setItem(childCount,0,newItem);
         allDocs->setRowHeight(childCount,20);
         childCount++;
@@ -257,28 +302,75 @@ void JournalEditor::GetAllDocsList()
 }
 
 
-void JournalEditor::GetJournalDocs()
+void JournalEditor::getJournalDocs()
 {
-    int i,childCount;
-    QString id = "";
-    QDomNode journalDoc = item->find(md_columns)->node().firstChild();
-    while(!journalDoc.isNull()) {
-        if (journalDoc.nodeName()==md_used_doc) {
-           id = journalDoc.childNodes().item(0).nodeValue();
-           qDebug() << id;
-           DomCfgItem* docs = item->root()->find(md_documents)->findObjectById(id);
-           QTableWidgetItem *newItem;
-           childCount =0;
-           newItem = new QTableWidgetItem(docs->attr(mda_name));
-           journalDocs->setRowCount(childCount+1);
-           journalDocs->setColumnCount(1);
-           journalDocs->setItem(childCount,0,newItem);
-           journalDocs->setRowHeight(childCount,20);
-        }
-       journalDoc = journalDoc.nextSibling();
-    }
+    int childCount=0;
+    QHashIterator<QString, DomCfgItem*> i(used_doc);
+    while (i.hasNext()) {
+         i.next();
+         QTableWidgetItem *newItem;
+         newItem = new QTableWidgetItem(i.value()->attr(mda_name));
+         journalDocs->setRowCount(childCount+1);
+         journalDocs->setColumnCount(1);
+         journalDocs->setItem(childCount,0,newItem);
+         journalDocs->setRowHeight(childCount,20);
+         childCount++;
+     }
 
     journalDocs->setColumnWidth ( 0, journalDocs->width());
     journalDocs->setSelectionBehavior(QAbstractItemView::SelectRows);
 }
 
+void JournalEditor::getJournalColumns()
+{
+    QList<QTreeWidgetItem *> items;
+    QHashIterator<QString, DomCfgItem*> i(used_doc);
+    columnsDoc->clear();
+    treeDocs->clear();
+    DomCfgItem* columns = item->find(md_columns);
+    columnsDoc->setColumnCount(1);
+    for (int i=0;i<=columns->childCount()-1;i++) {
+           QTreeWidgetItem* column = new QTreeWidgetItem((QTreeWidget*)0, QStringList(QString("%1").arg(columns->child(i)->attr(mda_name))));
+           items.append(column);
+           QDomNode field = columns->child(i)->node().firstChild();
+           while(!field.isNull()) {
+               DomCfgItem* f = item->root()->findObjectById(field.childNodes().item(0).nodeValue());
+               QString nameObject = f->parent()->parent()->cfgName()+"."+f->attr(mda_name);
+               QTreeWidgetItem *fi = new QTreeWidgetItem(column, QStringList(QString("%1").arg(nameObject)));
+               field = field.nextSibling();
+           }
+        }
+    columnsDoc->insertTopLevelItems(0, items);
+    columnsDoc->setColumnWidth ( 0, columnsDoc->width());
+    columnsDoc->setSelectionBehavior(QAbstractItemView::SelectRows);
+
+    treeDocs->setColumnCount(1);
+    items.clear();
+
+    i.toFront();
+    while (i.hasNext()) {
+         i.next();
+         QTreeWidgetItem *docItem = new QTreeWidgetItem((QTreeWidget*)0, QStringList(QString("%1").arg(i.value()->attr(mda_name))));
+         items.append(docItem);
+         DomCfgItem* header = i.value()->find(md_header);
+         for (int i=0;i<=header->childCount()-1;i++) {
+             QTreeWidgetItem *field = new QTreeWidgetItem(docItem, QStringList(QString("%1").arg(header->child(i)->attr(mda_name))));
+         }
+     }
+
+    treeDocs->insertTopLevelItems(0, items);
+    treeDocs->setColumnWidth ( 0, treeDocs->width());
+}
+void JournalEditor::getUsedDoc()
+{
+    QString id = "";
+    QDomNode journalDoc = item->find(md_columns)->node().firstChild();
+    while(!journalDoc.isNull()) {
+        if (journalDoc.nodeName()==md_used_doc) {
+           id = journalDoc.childNodes().item(0).nodeValue();
+           DomCfgItem* docs = item->root()->find(md_documents)->findObjectById(id);
+           used_doc.insert(id,docs);
+        }
+        journalDoc = journalDoc.nextSibling();
+    }
+}

@@ -744,6 +744,8 @@ bool DomCfgItem::moveUp()
     if (!p->node().insertBefore(node(),p->child(prevrow)->node()).isNull()) {
         p->childItems.remove(prevrow);
         p->childItems.remove(currentrow);
+        p->child(prevrow);
+        p->child(currentrow);
         return true;
     }
     return false;
@@ -760,6 +762,8 @@ bool DomCfgItem::moveDown()
     if (!p->node().insertAfter(node(),p->child(prevrow)->node()).isNull()) {
         p->childItems.remove(prevrow);
         p->childItems.remove(currentrow);
+        p->child(prevrow);
+        p->child(currentrow);
         return true;
     }
     return false;

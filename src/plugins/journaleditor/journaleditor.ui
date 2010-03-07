@@ -32,7 +32,7 @@
     <enum>QTabWidget::North</enum>
    </property>
    <property name="currentIndex">
-    <number>0</number>
+    <number>2</number>
    </property>
    <widget class="QWidget" name="tab">
     <attribute name="title">
@@ -185,52 +185,6 @@
           <normaloff>:/images/editdelete.png</normaloff>:/images/editdelete.png</iconset>
         </property>
        </widget>
-       <widget class="QPushButton" name="bMoveUp">
-        <property name="geometry">
-         <rect>
-          <x>222</x>
-          <y>100</y>
-          <width>26</width>
-          <height>25</height>
-         </rect>
-        </property>
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="text">
-         <string/>
-        </property>
-        <property name="icon">
-         <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
-          <normaloff>:/images/arrow_up.png</normaloff>:/images/arrow_up.png</iconset>
-        </property>
-       </widget>
-       <widget class="QPushButton" name="bMoveDown">
-        <property name="geometry">
-         <rect>
-          <x>222</x>
-          <y>130</y>
-          <width>26</width>
-          <height>25</height>
-         </rect>
-        </property>
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="text">
-         <string/>
-        </property>
-        <property name="icon">
-         <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
-          <normaloff>:/images/arrow_down.png</normaloff>:/images/arrow_down.png</iconset>
-        </property>
-       </widget>
        <widget class="QTableWidget" name="journalDocs">
         <property name="geometry">
          <rect>
@@ -273,6 +227,150 @@
       </widget>
      </item>
     </layout>
+   </widget>
+   <widget class="QWidget" name="tab_2">
+    <attribute name="title">
+     <string>Columns</string>
+    </attribute>
+    <widget class="QTreeWidget" name="treeDocs">
+     <property name="geometry">
+      <rect>
+       <x>235</x>
+       <y>0</y>
+       <width>241</width>
+       <height>271</height>
+      </rect>
+     </property>
+     <column>
+      <property name="text">
+       <string>Documents</string>
+      </property>
+     </column>
+    </widget>
+    <widget class="QPushButton" name="bMoveUp">
+     <property name="geometry">
+      <rect>
+       <x>200</x>
+       <y>110</y>
+       <width>26</width>
+       <height>25</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="text">
+      <string/>
+     </property>
+     <property name="icon">
+      <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+       <normaloff>:/images/arrow_up.png</normaloff>:/images/arrow_up.png</iconset>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="bRemoveDocCol">
+     <property name="geometry">
+      <rect>
+       <x>200</x>
+       <y>80</y>
+       <width>26</width>
+       <height>25</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="text">
+      <string/>
+     </property>
+     <property name="icon">
+      <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+       <normaloff>:/images/editdelete.png</normaloff>:/images/editdelete.png</iconset>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="bMoveDown">
+     <property name="geometry">
+      <rect>
+       <x>200</x>
+       <y>140</y>
+       <width>26</width>
+       <height>25</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="text">
+      <string/>
+     </property>
+     <property name="icon">
+      <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+       <normaloff>:/images/arrow_down.png</normaloff>:/images/arrow_down.png</iconset>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="bAddCol">
+     <property name="geometry">
+      <rect>
+       <x>200</x>
+       <y>50</y>
+       <width>26</width>
+       <height>25</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="text">
+      <string/>
+     </property>
+     <property name="icon">
+      <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+       <normaloff>:/images/arrow_left.png</normaloff>:/images/arrow_left.png</iconset>
+     </property>
+    </widget>
+    <widget class="QTreeWidget" name="columnsDoc">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>0</y>
+       <width>190</width>
+       <height>271</height>
+      </rect>
+     </property>
+     <column>
+      <property name="text">
+       <string>Columns</string>
+      </property>
+     </column>
+    </widget>
+    <widget class="QPushButton" name="addCol">
+     <property name="geometry">
+      <rect>
+       <x>200</x>
+       <y>170</y>
+       <width>25</width>
+       <height>26</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string/>
+     </property>
+     <property name="icon">
+      <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+       <normaloff>:/add.png</normaloff>:/add.png</iconset>
+     </property>
+    </widget>
    </widget>
    <widget class="QWidget" name="tab">
     <attribute name="title">
@@ -337,9 +435,6 @@
  <layoutdefault spacing="5" margin="5"/>
  <pixmapfunction>qPixmapFromMimeSource</pixmapfunction>
  <resources>
-  <include location="../ananasprojectmanager/libananas/designer.qrc"/>
-  <include location="../ananasprojectmanager/libananas/designer.qrc"/>
-  <include location="../ananasprojectmanager/libananas/designer.qrc"/>
   <include location="../ananasprojectmanager/libananas/designer.qrc"/>
  </resources>
  <connections/>
