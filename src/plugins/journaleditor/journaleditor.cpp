@@ -49,6 +49,7 @@ void JournalEditor::setData( DomCfgItem *o )
     connect(bRemoveDoc, SIGNAL(clicked()),this,SLOT(removeDoc()));
     connect(bMoveUp,SIGNAL(clicked()),this,SLOT(moveUp()));
     connect(bMoveDown,SIGNAL(clicked()),this,SLOT(moveDown()));
+    connect(bRemoveDocCol,SIGNAL(clicked()),this,SLOT(removeCol()));
 
     getUsedDoc();
     getAllDocsList();
@@ -188,6 +189,12 @@ void JournalEditor::moveDown()
 //        if ( after )
 //            aitem->moveItem( after );
 //    }
+}
+
+void JournalEditor::removeCol()
+{
+    item->find(md_columns)->remove(columnsDoc->indexOfTopLevelItem(columnsDoc->selectedItems().last()));
+    getJournalColumns();
 }
 
 //void JournalEditor::doubleClickedGroup ( int row, int ) {

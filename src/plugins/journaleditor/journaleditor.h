@@ -67,7 +67,7 @@ private slots:
     void removeDoc();
     void moveUp();
     void moveDown();
-
+    void removeCol();
 };
 }
 
