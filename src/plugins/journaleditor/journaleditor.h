@@ -62,12 +62,13 @@ private:
     void getUsedDoc();
     void deleteDoc(QString name);
 private slots:
-    void typeChange();
+    void typeChange(int index);
     void addDoc();
     void removeDoc();
     void moveUp();
     void moveDown();
     void removeCol();
+    void addCol();
 };
 }
 

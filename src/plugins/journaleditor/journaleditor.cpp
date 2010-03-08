@@ -36,20 +36,21 @@ void JournalEditor::languageChange()
 
 void JournalEditor::setData( DomCfgItem *o )
 {
-     item = o;
+    item = o;
 
-     setWindowTitle( tr("Journal:") + item->attr( mda_name ) );
-     eName->setText( item->attr( mda_name ) );
-     eDescription->setText( item->attr( md_description ) );
+    setWindowTitle( tr("Journal:") + item->attr( mda_name ) );
+    eName->setText( item->attr( mda_name ) );
+    eDescription->setText( item->attr( md_description ) );
 
+    cbType->setCurrentIndex(item->attr(mda_type).toInt());
 
-
-    connect(cbType,SIGNAL(clicked()),this,SLOT(typeChange()));
+    connect(cbType,SIGNAL(currentIndexChanged(int)),this,SLOT(typeChange(int)));
     connect(bAddDoc,SIGNAL(clicked()),this,SLOT(addDoc()));
     connect(bRemoveDoc, SIGNAL(clicked()),this,SLOT(removeDoc()));
     connect(bMoveUp,SIGNAL(clicked()),this,SLOT(moveUp()));
     connect(bMoveDown,SIGNAL(clicked()),this,SLOT(moveDown()));
     connect(bRemoveDocCol,SIGNAL(clicked()),this,SLOT(removeCol()));
+    connect(bAddCol,SIGNAL(clicked()),this,SLOT(addCol()));
 
     getUsedDoc();
     getAllDocsList();
@@ -72,13 +73,15 @@ void JournalEditor::setData( DomCfgItem *o )
 //}
 
 
-void JournalEditor::typeChange()
+void JournalEditor::typeChange(int )
 {
-    if ( cbType->currentIndex() != 1 )
-        tabWidget18->removeTab(2);
+//    if ( cbType->currentIndex() != 1 )
+//        tabWidget18->removeTab(2);
+//    else
+//    tabWidget18->insertTab(2,tabWidget18,QObject::tr("Documents"));
 
-    else
-        tabWidget18->insertTab(2,tabWidget18,QObject::tr("Documents"));
+    item->setAttr(mda_type,QString(cbType->currentIndex()));
+
 }
 
 void JournalEditor::addDoc()
@@ -191,6 +194,35 @@ void JournalEditor::moveDown()
 //    }
 }
 
+void JournalEditor::addCol()
+{
+    DomCfgItem* doc = 0;
+    if (treeDocs->selectedItems().last()->parent()==0)
+        return;
+    QString name = treeDocs->selectedItems().last()->parent()->text(0);
+    QTreeWidgetItem* dest = columnsDoc->selectedItems().last();
+    if (dest->parent()!=0)
+        dest = dest->parent();
+    int destRow = columnsDoc->indexOfTopLevelItem(dest);
+    QHashIterator<QString, DomCfgItem*> i(used_doc);
+    while (i.hasNext()) {
+         i.next();
+         if (i.value()->attr(mda_name) == name) {
+            doc = i.value();
+            break;
+         }
+     }
+    DomCfgItem* column = item->find(md_columns)->child(destRow);
+    QDomElement j;
+    QDomDocument xml;
+    j = xml.createElement(md_fieldid);
+    QDomNode node = column->node().appendChild(j);
+    int head = treeDocs->currentItem()->parent()->indexOfChild(treeDocs->selectedItems().last());
+    QDomText t = xml.createTextNode(doc->find(md_header)->child(head)->attr(mda_id));
+    node.appendChild(t);
+    getJournalColumns();
+}
+
 void JournalEditor::removeCol()
 {
     item->find(md_columns)->remove(columnsDoc->indexOfTopLevelItem(columnsDoc->selectedItems().last()));
@@ -277,7 +309,7 @@ void JournalEditor::eSvG_activated( int index )
 //    else eStrViewFG->setEnabled( FALSE );
 }
 
-void JournalEditor::setModified(bool modified)
+void JournalEditor::setModified(bool /*modified*/)
 {
 //    int unmodifiedState = modified ? -1 : m_undoStack.size();
 //    if (unmodifiedState == m_unmodifiedState)
@@ -293,7 +325,7 @@ bool JournalEditor::isModified() const
 
 void JournalEditor::getAllDocsList()
 {
-    int i,childCount;
+    int childCount;
     DomCfgItem* docs = item->root()->find(md_documents);
     QTableWidgetItem *newItem;
     childCount =0;
@@ -343,7 +375,7 @@ void JournalEditor::getJournalColumns()
            while(!field.isNull()) {
                DomCfgItem* f = item->root()->findObjectById(field.childNodes().item(0).nodeValue());
                QString nameObject = f->parent()->parent()->cfgName()+"."+f->attr(mda_name);
-               QTreeWidgetItem *fi = new QTreeWidgetItem(column, QStringList(QString("%1").arg(nameObject)));
+               new QTreeWidgetItem(column, QStringList(QString("%1").arg(nameObject)));
                field = field.nextSibling();
            }
         }
@@ -361,7 +393,7 @@ void JournalEditor::getJournalColumns()
          items.append(docItem);
          DomCfgItem* header = i.value()->find(md_header);
          for (int i=0;i<=header->childCount()-1;i++) {
-             QTreeWidgetItem *field = new QTreeWidgetItem(docItem, QStringList(QString("%1").arg(header->child(i)->attr(mda_name))));
+             new QTreeWidgetItem(docItem, QStringList(QString("%1").arg(header->child(i)->attr(mda_name))));
          }
      }
 
