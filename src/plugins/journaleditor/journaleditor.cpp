@@ -5,6 +5,7 @@
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/messageoutputwindow.h>
 #include <QDebug>
+#include <QInputDialog>
 
 using namespace JOURNALEditor;
 
@@ -51,7 +52,7 @@ void JournalEditor::setData( DomCfgItem *o )
     connect(bMoveDown,SIGNAL(clicked()),this,SLOT(moveDown()));
     connect(bRemoveDocCol,SIGNAL(clicked()),this,SLOT(removeCol()));
     connect(bAddCol,SIGNAL(clicked()),this,SLOT(addCol()));
-
+    connect(bNewCol,SIGNAL(clicked()),this,SLOT(newCol()));
     getUsedDoc();
     getAllDocsList();
     getJournalDocs();
@@ -81,6 +82,25 @@ void JournalEditor::typeChange(int )
 //    tabWidget18->insertTab(2,tabWidget18,QObject::tr("Documents"));
 
     item->setAttr(mda_type,QString(cbType->currentIndex()));
+
+}
+
+void JournalEditor::newCol()
+{
+    bool ok;
+    QString text = QInputDialog::getText(this, tr("Column name"),
+             tr("column name:"), QLineEdit::Normal,
+             "", &ok);
+    if (ok && !text.isEmpty()) {
+        QDomElement i;
+        QDomDocument xml;
+        i = xml.createElement(md_column);
+        i.setAttribute(mda_name,text);
+        i.setAttribute(mda_id,(int)item->nextID());
+        QDomNode node = item->find(md_columns)->node().appendChild(i);
+        columnsDoc->insertTopLevelItem(0,new QTreeWidgetItem((QTreeWidget*)0,QStringList(text)));
+
+    }
 
 }
 
@@ -137,6 +157,7 @@ void JournalEditor::removeDoc()
 
 void JournalEditor::deleteDoc(QString name)
 {
+    //Надо доделать удаление полей удаленого документа
     QHashIterator<QString, DomCfgItem*> i(used_doc);
     while (i.hasNext()) {
          i.next();

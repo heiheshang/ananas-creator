@@ -69,6 +69,7 @@ private slots:
     void moveDown();
     void removeCol();
     void addCol();
+    void newCol();
 };
 }
 
