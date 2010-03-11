@@ -1,5 +1,6 @@
 <RCC>
   <qresource prefix="/">
+    <file>images/application_view_columns.png</file>
     <file>add.png</file>
     <file>images/CVclass.png</file>
     <file>images/computer_key.png</file>

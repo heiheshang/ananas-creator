@@ -299,6 +299,23 @@ QDomNode node = item->node();
             connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
           }
         }
+        //Document Editor
+        if(node.nodeName()==md_document){
+            QString titlePattern = tr("Document $");
+            QDomNode stringView =  item->node();
+            Core::EditorManager* manager = Core::EditorManager::instance();
+
+            QString cfgName = item->cfgName();
+            Core::IEditor* editor = manager->openEditorWithContents("Document Editor", &cfgName,"");
+            if (editor) {
+             manager->activateEditor(editor);
+
+            if (!QMetaObject::invokeMethod(editor->widget(), "setData",Qt::DirectConnection,
+              Q_ARG(DomCfgItem*, item)))
+                 qCritical() << "Can't invoke method!";
+              connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
+            }
+        }
         //JOURNAL EDITOR
         if(node.nodeName()==md_journal){
             QString titlePattern = tr("Journal $");

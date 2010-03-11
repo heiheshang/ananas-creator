@@ -370,6 +370,10 @@ QString DomCfgItem::cfgName() const
 	QString arrt = domNode.attributes().namedItem(mda_name).nodeValue();
   	return arrt;
 	}
+ if (domNode.nodeName()==md_table) {
+        QString arrt = domNode.attributes().namedItem(mda_name).nodeValue();
+        return arrt;
+        }
  if (domNode.nodeName()==md_columns)
 	return QObject::tr("Columns");
  if (domNode.nodeName()==md_column)
@@ -441,7 +445,7 @@ QIcon DomCfgItem::iconNode()
 	if ( nodeName == md_webform )
 		return QIcon ( ":/images/webform.png" );
 	if ( nodeName == md_table )
-		return QIcon ( ":/images/table.png" );
+                return QIcon ( ":/images/application_view_columns.png" );
 	if ( nodeName == md_tables )
 		return QIcon ( ":/images/table_g.png" );
 	if ( nodeName == md_information )
@@ -468,7 +472,7 @@ QMenu *DomCfgItem::menu() const
 	 contextMenu->addAction("Property");
 	 return contextMenu;
 	}
-        if (domNode.nodeName()==md_catalogue || domNode.nodeName()==md_journal) {
+        if (domNode.nodeName()==md_catalogue || domNode.nodeName()==md_journal || domNode.nodeName()==md_document) {
 	 QMenu *contextMenu = new QMenu(tr("Context menu"));
          contextMenu->addAction("New");
          contextMenu->addAction("Edit");
