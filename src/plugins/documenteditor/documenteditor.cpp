@@ -270,8 +270,8 @@ void DocumentEdit::setData( DomCfgItem *o )
 //        connect(groupAttributesList,SIGNAL(itemClicked(QTableWidgetItem*)),this,SLOT(activateGroup(QTableWidgetItem*)));
 //        connect(formsList,SIGNAL(itemClicked(QTableWidgetItem*)),this,SLOT(activateForm(QTableWidgetItem*)));
 //
-//        connect(moveUpElementAttribute,SIGNAL(pressed()),this,SLOT(moveUpElementAttribute_clicked()));
-//        connect(moveDownElementAttribute,SIGNAL(pressed()),this,SLOT(moveDownElementAttribute_clicked()));
+        connect(moveUpHeaderAttribute,SIGNAL(pressed()),this,SLOT(moveUpHeaderAttribute_clicked()));
+        connect(moveDownHeaderAttribute,SIGNAL(pressed()),this,SLOT(moveDownHeaderAttribute_clicked()));
 //
 //        connect(moveUpGroupAttribute,SIGNAL(pressed()),this,SLOT(moveUpGroupAttribute_clicked()));
 //        connect(moveDownGroupAttribute,SIGNAL(pressed()),this,SLOT(moveDownGroupAttribute_clicked()));
@@ -433,18 +433,18 @@ void DocumentEdit::getHeaderAttributesList()
     headerAttributesList->setModel(headers);
 
 
-//        if (elementAttributesList->rowCount()==0) {
-//             moveUpElementAttribute->setEnabled(false);
-//             moveDownElementAttribute->setEnabled(false);
-//             editElementAttribute->setEnabled(false);
-//             deleteElementAttribute->setEnabled(false);
-//        }
-//        else {
-//            moveUpElementAttribute->setEnabled(true);
-//            moveDownElementAttribute->setEnabled(true);
-//            editElementAttribute->setEnabled(true);
-//            deleteElementAttribute->setEnabled(true);
-//        }
+        if (headerAttributesList->model()->rowCount()==0) {
+             moveUpHeaderAttribute->setEnabled(false);
+             moveDownHeaderAttribute->setEnabled(false);
+             editHeaderAttribute->setEnabled(false);
+             deleteHeaderAttribute->setEnabled(false);
+        }
+        else {
+            moveUpHeaderAttribute->setEnabled(true);
+            moveDownHeaderAttribute->setEnabled(true);
+            editHeaderAttribute->setEnabled(true);
+            deleteHeaderAttribute->setEnabled(true);
+        }
 
 //        aCfg *md = item->md;
 //        aCfgItem obj = item->obj, cobj, e;
@@ -899,42 +899,50 @@ void DocumentEdit::getTablesAttributesList()
 //// * Обрабатывает пользовательское нажатие кнопки "Переместить вверх"
 //// * \_ru
 ////*/
-//void DocumentEditor::moveUpElementAttribute_clicked()
-//{
-//        //aListViewItem *ai = (aListViewItem *) elementAttributesList->currentItem(), *eitem;
-//        //aCfg *md = item->md;
-//        //QString itemName = item->attr(mda_name);
-//        //eitem = item->findItemInMD(item, "catalogue", md->attr(item->obj, mda_name ), "field", itemName);
-//        //eitem->moveUp();
-//        DomCfgItem* eitem = item->find(md_element)->child(elementAttributesList->currentRow());
-//        eitem->moveUp();
-//        GetElementAttributesList();
-//        //elementAttributesList->setCurrentItem(elementAttributesList->findItem(itemName, 0));
-//        //elementAttributesList_selectionChanged();
-//}
+void DocumentEdit::moveUpHeaderAttribute_clicked()
+{
+        //aListViewItem *ai = (aListViewItem *) elementAttributesList->currentItem(), *eitem;
+        //aCfg *md = item->md;
+        //QString itemName = item->attr(mda_name);
+        //eitem = item->findItemInMD(item, "catalogue", md->attr(item->obj, mda_name ), "field", itemName);
+        //eitem->moveUp();
+        int currentRow = headerAttributesList->currentIndex().row();
+        DomCfgItem* eitem = item->find(md_header)->child(currentRow);
+        eitem->moveUp();
+        headerAttributesList->update(headerAttributesList->currentIndex());
+        headerAttributesList->update(headerAttributesList->model()->index(currentRow-1,0));
+        headerAttributesList->setCurrentIndex(headerAttributesList->model()->index(currentRow-1,0));
+        //headerAttributesList->setUpdatesEnabled(true);
+        //headerAttributesList->repaint();
+        //elementAttributesList->setCurrentItem(elementAttributesList->findItem(itemName, 0));
+        //elementAttributesList_selectionChanged();
+}
 //
-/////*!
-//// * \en
-//// *  Processes the user pressing the button " Move down"
-//// * \_en
-//// * \ru
-//// * Обрабатывает пользовательское нажатие кнопки "Переместить вниз"
-//// * \_ru
-////*/
-//void DocumentEditor::moveDownElementAttribute_clicked()
-//{
-//        //aListViewItem *ai = (aListViewItem *) elementAttributesList->currentItem(), *eitem;
-//        //aCfg *md = item->md;
-//        //QString itemName = ai->text(0);
-//        //eitem = item->findItemInMD(item, "catalogue", md->attr(item->obj, mda_name ), "field", itemName);
-//        DomCfgItem* eitem = item->find(md_element)->child(elementAttributesList->currentRow());
-//        eitem->moveDown();
-//        GetElementAttributesList();
-//        //elementAttributesList->setCurrentItem(elementAttributesList->findItem(itemName, 0));
-//        //elementAttributesList_selectionChanged();
-//}
-//
-//
+///*!
+// * \en
+// *  Processes the user pressing the button " Move down"
+// * \_en
+// * \ru
+// * Обрабатывает пользовательское нажатие кнопки "Переместить вниз"
+// * \_ru
+//*/
+void DocumentEdit::moveDownHeaderAttribute_clicked()
+{
+        //aListViewItem *ai = (aListViewItem *) elementAttributesList->currentItem(), *eitem;
+        //aCfg *md = item->md;
+        //QString itemName = ai->text(0);
+        //eitem = item->findItemInMD(item, "catalogue", md->attr(item->obj, mda_name ), "field", itemName);
+        int currentRow = headerAttributesList->currentIndex().row();
+        DomCfgItem* eitem = item->find(md_header)->child(currentRow);
+        eitem->moveDown();
+        headerAttributesList->update(headerAttributesList->currentIndex());
+        headerAttributesList->update(headerAttributesList->model()->index(currentRow+1,0));
+        headerAttributesList->setCurrentIndex(headerAttributesList->model()->index(currentRow+1,0));
+        //elementAttributesList->setCurrentItem(elementAttributesList->findItem(itemName, 0));
+        //elementAttributesList_selectionChanged();
+}
+
+
 /////*!
 //// * \en
 //// *  Processes the user pressing the button " New attribute of group " and creates in metadata new attribute of an element.
