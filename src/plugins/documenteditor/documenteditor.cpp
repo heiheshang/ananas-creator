@@ -262,7 +262,7 @@ void DocumentEdit::setData( DomCfgItem *o )
 //
 //        connect(editForm,SIGNAL(pressed()),this,SLOT(editForm_clicked()));
 //
-//        connect(deleteElementAttribute,SIGNAL(pressed()),this,SLOT(deleteElementAttribute_clicked()));
+        connect(deleteHeaderAttribute,SIGNAL(pressed()),this,SLOT(deleteHeaderAttribute_clicked()));
 //        connect(deleteGroupAttribute,SIGNAL(pressed()),this,SLOT(deleteGroupAttribute_clicked()));
 //        connect(deleteForm,SIGNAL(pressed()),this,SLOT(deleteForm_clicked()));
 //
@@ -276,6 +276,7 @@ void DocumentEdit::setData( DomCfgItem *o )
 //        connect(moveUpGroupAttribute,SIGNAL(pressed()),this,SLOT(moveUpGroupAttribute_clicked()));
 //        connect(moveDownGroupAttribute,SIGNAL(pressed()),this,SLOT(moveDownGroupAttribute_clicked()));
 //
+
         getHeaderAttributesList();
         getTablesAttributesList();
 //        GetGroupAttributesList();
@@ -859,38 +860,43 @@ void DocumentEdit::getTablesAttributesList()
 // * Обрабатывает пользовательское нажатие кнопки "Удалить" и удаляет из метаданных атрибут элемента в справочнике.
 // * \_ru
 //*/
-//void DocumentEditor::deleteElementAttribute_clicked()
-//{
+void DocumentEdit::deleteHeaderAttribute_clicked()
+{
+
+        if (headerAttributesList->model()->rowCount(QModelIndex()) == 0)
+                return;
+        QModelIndex currentIndex = headerAttributesList->currentIndex();
+        int newRow = currentIndex.row();
+        if (currentIndex.row()==headerAttributesList->model()->rowCount(QModelIndex())-1)
+            newRow = currentIndex.row()-1;
+
+        item->find(md_header)->remove(currentIndex.row());
+        headerAttributesList->reset();
+        headerAttributesList->setCurrentIndex(headerAttributesList->model()->index(newRow,0));
+//        aCfg *md = item->md;
+//        aListViewItem *i = (aListViewItem *) elementAttributesList->currentItem(), *elementitem;
 //
-//        if (elementAttributesList->rowCount() == 0)
-//                return;
-//        item->find(md_element)->remove(elementAttributesList->currentRow());
-//        GetElementAttributesList();
-////        aCfg *md = item->md;
-////        aListViewItem *i = (aListViewItem *) elementAttributesList->currentItem(), *elementitem;
-////
-////        if (elementAttributesList->currentItem()->isSelected())
-////        {
-////                elementitem = item->findItemInMD(item, "catalogue", md->attr( item->obj, mda_name ), "field", i->text(0));
-////                if ( elementitem )
-////                {
-////                        if ( i->id ) {
-////                                md->remove( i->obj );
-////                                delete elementitem;
-////                        }
-////                }
-//                GetElementAttributesList();
-//                //if (elementAttributesList->rowCount() == 0)
-//                //{
-//                //        moveUpElementAttribute->setEnabled(FALSE);
-//                //        moveDownElementAttribute->setEnabled(FALSE);
-//                //        editElementAttribute->setEnabled(FALSE);
-//                //        deleteElementAttribute->setEnabled(FALSE);
-//                //}
-////        }
-//}
-//
-//
+//        if (elementAttributesList->currentItem()->isSelected())
+//        {
+//                elementitem = item->findItemInMD(item, "catalogue", md->attr( item->obj, mda_name ), "field", i->text(0));
+//                if ( elementitem )
+//                {
+//                        if ( i->id ) {
+//                                md->remove( i->obj );
+//                                delete elementitem;
+//                        }
+//                }
+                //if (elementAttributesList->rowCount() == 0)
+                //{
+                //        moveUpElementAttribute->setEnabled(FALSE);
+                //        moveDownElementAttribute->setEnabled(FALSE);
+                //        editElementAttribute->setEnabled(FALSE);
+                //        deleteElementAttribute->setEnabled(FALSE);
+                //}
+//        }
+}
+
+
 /////*!
 //// * \en
 //// *  Processes the user pressing the button " Move up"

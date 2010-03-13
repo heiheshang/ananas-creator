@@ -335,8 +335,12 @@ return 0;
 
 bool DomCfgItem::remove(int i)
 {
- node().removeChild(child(i)->node());
- childItems.remove(i);
+ QDomNode rmNode =  child(i)->node();
+ QHash<int,DomCfgItem*>::iterator it;
+ for (it = childItems.begin(); it != childItems.end(); ++it)
+     delete it.value();
+ node().removeChild(rmNode);
+ childItems.clear();
  return true;
 }
 
@@ -378,6 +382,8 @@ QString DomCfgItem::cfgName() const
 	return QObject::tr("Columns");
  if (domNode.nodeName()==md_column)
 	return QObject::tr("Column");
+ if (domNode.nodeName()==md_header)
+        return QObject::tr("Header");
  if (domNode.nodeName()==md_tables)
 	return QObject::tr("Tables");
  if (domNode.nodeName()==md_resources)

@@ -114,7 +114,7 @@ private slots:
 //    void createNewElementAttribute_clicked();
 //    void createNewGroupAttribute_clicked();
 //    void elementAttributesList_selectionChanged();
-//    void deleteElementAttribute_clicked();
+    void deleteHeaderAttribute_clicked();
 //    void activateElement(QTableWidgetItem* item);
 //    void activateGroup(QTableWidgetItem* item);
 //    void activateForm(QTableWidgetItem* item);
@@ -126,6 +126,7 @@ private slots:
 //    void editForm_clicked();
 //    void deleteForm_clicked();
 //    void updateForm(QList<Core::IEditor*> editor);
+
 };
 }
 
