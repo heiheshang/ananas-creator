@@ -19,8 +19,59 @@ class FontSettings;
 
 namespace JOURNALEditor {
 
+    class tableViewModel : public QAbstractItemModel
+    {
+            Q_OBJECT
+    public:
+         tableViewModel(DomCfgItem *document, QObject *parent = 0);
+        ~tableViewModel();
 
-    class JournalEditor : public QMainWindow , public Ui::JournalEdit
+        QModelIndex index(int row, int column, const QModelIndex &parent) const;
+        QModelIndex parent(const QModelIndex &child) const;
+
+        int rowCount(const QModelIndex &parent) const;
+        int columnCount(const QModelIndex &parent) const;
+
+        QVariant data(const QModelIndex &index, int role) const;
+        QVariant headerData(int section, Qt::Orientation orientation, int role) const;
+
+        Qt::ItemFlags flags(const QModelIndex &index) const;
+        QString info() const;
+        bool hasChildren ( const QModelIndex & parent = QModelIndex() ) const;
+    private:
+
+        DomCfgItem *rootItem;
+        QModelIndex createIndexByTags(const QString & md_const,int row, int column,DomCfgItem *parent) const;
+
+    };
+
+    class docViewModel : public QAbstractItemModel
+    {
+            Q_OBJECT
+    public:
+         docViewModel(DomCfgItem *document, QObject *parent = 0);
+        ~docViewModel();
+
+        QModelIndex index(int row, int column, const QModelIndex &parent) const;
+        QModelIndex parent(const QModelIndex &child) const;
+
+        int rowCount(const QModelIndex &parent) const;
+        int columnCount(const QModelIndex &parent) const;
+
+        QVariant data(const QModelIndex &index, int role) const;
+        QVariant headerData(int section, Qt::Orientation orientation, int role) const;
+
+        Qt::ItemFlags flags(const QModelIndex &index) const;
+        QString info() const;
+        bool hasChildren ( const QModelIndex & parent = QModelIndex() ) const;
+    private:
+
+        DomCfgItem *rootItem;
+        QModelIndex createIndexByTags(const QString & md_const,int row, int column,DomCfgItem *parent) const;
+
+    };
+
+class JournalEditor : public QMainWindow , public Ui::JournalEdit
 {
     Q_OBJECT
 

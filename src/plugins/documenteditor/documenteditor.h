@@ -28,8 +28,8 @@ namespace DocumentEditor {
         ~headerViewModel();
 
         int rowCount(const QModelIndex &parent) const;
-        //int columnCount(const QModelIndex &parent) const;
-
+        QModelIndex index(int row, int column, const QModelIndex &parent) const;
+        QModelIndex parent(const QModelIndex &child) const;
         QVariant data(const QModelIndex &index, int role) const;
 
         Qt::ItemFlags flags(const QModelIndex &index) const;
@@ -109,10 +109,10 @@ private slots:
 //    void doubleClickedElement ( int row, int column );
 //    void doubleClickedGroup ( int row, int column );
 //    void doubleClickedForm ( int row, int column );
-//    void editElementAttribute_clicked();
-//    void editGroupAttribute_clicked();
-//    void createNewElementAttribute_clicked();
-//    void createNewGroupAttribute_clicked();
+    void editHeaderAttribute_clicked();
+    void editTableAttribute_clicked();
+    void createNewHeaderAttribute_clicked();
+    void createNewTable_clicked();
 //    void elementAttributesList_selectionChanged();
     void deleteHeaderAttribute_clicked();
 //    void activateElement(QTableWidgetItem* item);

@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QInputDialog>
 
 using namespace DocumentEditor;
 
@@ -64,6 +65,42 @@ int headerViewModel::rowCount(const QModelIndex &parent) const
     return rootItem->childCount();
 
 }
+
+QModelIndex headerViewModel::index(int row, int column, const QModelIndex &parent)
+            const
+{
+    if (!hasIndex(row, column, parent))
+        return QModelIndex();
+
+    DomCfgItem *parentItem;
+
+    if (!parent.isValid())
+        parentItem = rootItem;
+    else
+        parentItem = static_cast<DomCfgItem*>(parent.internalPointer());
+
+    DomCfgItem *childItem = parentItem->child(row);
+
+    if (childItem)
+        return createIndex(row, column, childItem);
+    else
+        return QModelIndex();
+}
+
+QModelIndex headerViewModel::parent(const QModelIndex &child) const
+{
+    if (!child.isValid())
+        return QModelIndex();
+
+    DomCfgItem *childItem = static_cast<DomCfgItem*>(child.internalPointer());
+    DomCfgItem *parentItem = childItem->parent();
+
+    if (!parentItem || parentItem == rootItem)
+        return QModelIndex();
+
+    return createIndex(parentItem->row(), 0, parentItem);
+}
+
 //===================================================================================================
 //Модель для отображения табличной части документа
 //===================================================================================================
@@ -254,11 +291,11 @@ void DocumentEdit::setData( DomCfgItem *o )
 //        connect(groupAttributesList,SIGNAL(cellDoubleClicked ( int , int ) ),this,SLOT(doubleClickedGroup(int,int)));
 //        connect(formsList,SIGNAL(cellDoubleClicked ( int , int ) ),this,SLOT(doubleClickedForm(int,int)));
 //
-//        connect(editElementAttribute,SIGNAL(pressed() ),this,SLOT(editElementAttribute_clicked()));
-//        connect(createNewElementAttribute,SIGNAL(pressed()) ,this,SLOT(createNewElementAttribute_clicked()));
-//
-//        connect(editGroupAttribute,SIGNAL(pressed() ),this,SLOT(editGroupAttribute_clicked()));
-//        connect(createNewGroupAttribute,SIGNAL(pressed()) ,this,SLOT(createNewGroupAttribute_clicked()));
+        connect(editHeaderAttribute,SIGNAL(pressed() ),this,SLOT(editHeaderAttribute_clicked()));
+        connect(createNewHeaderAttribute,SIGNAL(pressed()) ,this,SLOT(createNewHeaderAttribute_clicked()));
+
+        connect(editTable,SIGNAL(pressed() ),this,SLOT(editTableAttribute_clicked()));
+        connect(createNewTable,SIGNAL(pressed()) ,this,SLOT(createNewTable_clicked()));
 //
 //        connect(editForm,SIGNAL(pressed()),this,SLOT(editForm_clicked()));
 //
@@ -279,9 +316,7 @@ void DocumentEdit::setData( DomCfgItem *o )
 
         getHeaderAttributesList();
         getTablesAttributesList();
-//        GetGroupAttributesList();
-//        GetFormsList();
-//        CatList();
+
 }
 
 //void DocumentEdit::doubleClickedElement ( int row, int ) {
@@ -464,6 +499,19 @@ void DocumentEdit::getTablesAttributesList()
 {
     tableViewModel* tableModel = new tableViewModel(item->find(md_tables),this);
     tableAttributeTree->setModel(tableModel);
+
+    if (tableAttributeTree->model()->rowCount()==0) {
+         moveUpTableAttribute->setEnabled(false);
+         moveDownTableAttribute->setEnabled(false);
+         editTable->setEnabled(false);
+         deleteTable->setEnabled(false);
+    }
+    else {
+        moveUpTableAttribute->setEnabled(true);
+        moveDownTableAttribute->setEnabled(true);
+        editTable->setEnabled(true);
+        deleteTable->setEnabled(true);
+    }
 }
 ///*!
 // * \en
@@ -670,99 +718,99 @@ void DocumentEdit::getTablesAttributesList()
 // * новый атрибут элемента. Запрашивает имя атрибута у пользователя.
 // * \_ru
 //*/
-//void DocumentEditor::createNewElementAttribute_clicked()
-//{
-//    DomCfgItem *element=item->find(md_element);
-//    DomCfgItem* field = element->newElement();
+void DocumentEdit::createNewHeaderAttribute_clicked()
+{
+    DomCfgItem *element=item->find(md_header);
+    DomCfgItem* field = element->newElement();
+
+    Core::EditorManager* manager = Core::EditorManager::instance();
+
+    QString cfgName = field->cfgName();
+    Core::IEditor* editor = manager->openEditorWithContents("Field Editor", &cfgName,"");
+    if (editor) {
+        manager->activateEditor(editor);
+        QMetaObject::invokeMethod(editor->widget(), "setData",
+        Q_ARG(DomCfgItem*, field));
+        connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
+    }
+    headerAttributesList->reset();
+    headerAttributesList->setCurrentIndex(headerAttributesList->model()->index(headerAttributesList->model()->rowCount(),0));
+//        aListViewItem *newitem, *fielditem;
+//        aCfgItem newobj;
+//        aCfg *md = item->md;
+//        aCfgItem obj = item->obj, e, field;
+//        bool ok, yes=TRUE;
+//        QString fieldName;
+//        QStringList tN;
+//        int i;
+//        QString prompt = tr("Enter a new field name:");
+//        e = md->find( obj, md_element ); // Find Element context
+//        for ( i = 0; i < md->count( e, md_field); i++ )
+//        {
+//                field = md->find( e, md_field, i);
+//                tN.append(md->attr(field, mda_name ));
+//        }
 //
-//    Core::EditorManager* manager = Core::EditorManager::instance();
+//        while (yes)
+//        {
+//                fieldName = QInputDialog::getText(
+//                        tr("Add new field"),
+//                        prompt,
+//                        QLineEdit::Normal,
+//                        QString::null, &ok, this );
+//                if ( ok && !fieldName.isEmpty() )
+//                {
+//                        if (tN.contains(fieldName) == 0 )
+//                        {
+//                                yes=FALSE;
+//                        }else
+//                        {
+//                                prompt = QString(tr("Field <b>%1</b> alredy exist.\nEnter another field name:").arg(fieldName));
+//                                yes=TRUE;
+//                        }
+//                }else{
+//                        fieldName = "";
+//                        yes=FALSE;
+//                }
+//        }
 //
-//    QString cfgName = field->cfgName();
-//    Core::IEditor* editor = manager->openEditorWithContents("Field Editor", &cfgName,"");
-//    if (editor) {
-//        manager->activateEditor(editor);
-//        QMetaObject::invokeMethod(editor->widget(), "setData",
-//        Q_ARG(DomCfgItem*, field));
-//    }
+//        if (fieldName != "")
+//        {
+//                fielditem = item->findItemInMD(item, "catalogue", md->attr( obj, mda_name ), "element", "");
 //
-//    GetElementAttributesList();
+//                newobj = md->insert( md->find(obj, md_element), md_field, fieldName );
+//                newitem = new aListViewItem(fielditem, fielditem->getLastChild(), md, newobj );
+//                new aListViewItem( elementAttributesList, md, newobj );
 //
-////        aListViewItem *newitem, *fielditem;
-////        aCfgItem newobj;
-////        aCfg *md = item->md;
-////        aCfgItem obj = item->obj, e, field;
-////        bool ok, yes=TRUE;
-////        QString fieldName;
-////        QStringList tN;
-////        int i;
-////        QString prompt = tr("Enter a new field name:");
-////        e = md->find( obj, md_element ); // Find Element context
-////        for ( i = 0; i < md->count( e, md_field); i++ )
-////        {
-////                field = md->find( e, md_field, i);
-////                tN.append(md->attr(field, mda_name ));
-////        }
-////
-////        while (yes)
-////        {
-////                fieldName = QInputDialog::getText(
-////                        tr("Add new field"),
-////                        prompt,
-////                        QLineEdit::Normal,
-////                        QString::null, &ok, this );
-////                if ( ok && !fieldName.isEmpty() )
-////                {
-////                        if (tN.contains(fieldName) == 0 )
-////                        {
-////                                yes=FALSE;
-////                        }else
-////                        {
-////                                prompt = QString(tr("Field <b>%1</b> alredy exist.\nEnter another field name:").arg(fieldName));
-////                                yes=TRUE;
-////                        }
-////                }else{
-////                        fieldName = "";
-////                        yes=FALSE;
-////                }
-////        }
-////
-////        if (fieldName != "")
-////        {
-////                fielditem = item->findItemInMD(item, "catalogue", md->attr( obj, mda_name ), "element", "");
-////
-////                newobj = md->insert( md->find(obj, md_element), md_field, fieldName );
-////                newitem = new aListViewItem(fielditem, fielditem->getLastChild(), md, newobj );
-////                new aListViewItem( elementAttributesList, md, newobj );
-////
-////                newitem->setSelected( FALSE );
-////                newitem->setOpen( FALSE );
-////
-////                QWorkspace *ws = mainform->ws;
-////                aWindowsList *wl = mainform->wl;
-////                QString oclass = md->objClass( obj );
-////                int objid = md->id( newitem->obj );
-////                if ( wl->find( objid ) )
-////                {
-////                        wl->get( objid )->setFocus();
-////                        return;
-////                }
-////                QWidget *editor;
-////                dEditField *e = new dEditField( ws, 0, WDestructiveClose );
-////
-////                editor = e;
-////                e->setData(newitem);
-////                QObject::connect(mainform, SIGNAL(tosave()), editor, SLOT( updateMD()));
-////                QObject::connect(e, SIGNAL(destroyed()), this, SLOT(GetElementAttributesList()));
-////                e->show();
-////                mainform->addTab(++mainform->lastTabId,e->name());
-////                e->parentWidget()->setGeometry(10,10,e->parentWidget()->frameSize().width(),
-////                                e->parentWidget()->frameSize().height());
-////                wl->insert( objid, e );
-////                updateMD();
-////        }
+//                newitem->setSelected( FALSE );
+//                newitem->setOpen( FALSE );
 //
-//}
+//                QWorkspace *ws = mainform->ws;
+//                aWindowsList *wl = mainform->wl;
+//                QString oclass = md->objClass( obj );
+//                int objid = md->id( newitem->obj );
+//                if ( wl->find( objid ) )
+//                {
+//                        wl->get( objid )->setFocus();
+//                        return;
+//                }
+//                QWidget *editor;
+//                dEditField *e = new dEditField( ws, 0, WDestructiveClose );
 //
+//                editor = e;
+//                e->setData(newitem);
+//                QObject::connect(mainform, SIGNAL(tosave()), editor, SLOT( updateMD()));
+//                QObject::connect(e, SIGNAL(destroyed()), this, SLOT(GetElementAttributesList()));
+//                e->show();
+//                mainform->addTab(++mainform->lastTabId,e->name());
+//                e->parentWidget()->setGeometry(10,10,e->parentWidget()->frameSize().width(),
+//                                e->parentWidget()->frameSize().height());
+//                wl->insert( objid, e );
+//                updateMD();
+//        }
+
+}
+
 ////*!
 ////*\ru
 //// Активирует кнопки редактирование,удаления элемента списка атрибутов
@@ -805,26 +853,24 @@ void DocumentEdit::getTablesAttributesList()
 ////вызывает форму редактирования атрибута элемента.
 //// * \_ru
 ////*/
-//void DocumentEditor::editElementAttribute_clicked()
-//{
-//    int currentRow;
-//    currentRow = elementAttributesList->currentIndex().row();
-//    if (currentRow==-1) {
-//        currentRow=1;
-//    }
-//    Core::EditorManager* manager = Core::EditorManager::instance();
-//    DomCfgItem *element=item->find(md_element);
-//
-//    QString cfgName = element->child(currentRow)->cfgName();
-//    Core::IEditor* editor = manager->openEditorWithContents("Field Editor", &cfgName,"");
-//    if (editor) {
-//        manager->activateEditor(editor);
-//        QMetaObject::invokeMethod(editor->widget(), "setData",
-//        Q_ARG(DomCfgItem*, element->child(currentRow)));
-//        connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
-//    }
+void DocumentEdit::editHeaderAttribute_clicked()
+{
+    QModelIndex index = headerAttributesList->currentIndex();
+    if (!index.isValid())
+        return;
+    DomCfgItem *element = static_cast<DomCfgItem*> ( index.internalPointer() );
+    Core::EditorManager* manager = Core::EditorManager::instance();
 
+    QString cfgName = element->cfgName();
+    Core::IEditor* editor = manager->openEditorWithContents("Field Editor", &cfgName,"");
+    if (editor) {
+        manager->activateEditor(editor);
+        QMetaObject::invokeMethod(editor->widget(), "setData",
+        Q_ARG(DomCfgItem*, element));
+        connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
+    }
 
+    headerAttributesList->reset();
 //    aCfg *md = item->md;
 //    aCfgItem obj = item->obj;
 //    QWorkspace *ws = mainform->ws;
@@ -850,7 +896,7 @@ void DocumentEdit::getTablesAttributesList()
 //    mainform->addTab(++mainform->lastTabId,e->name());
 //    e->parentWidget()->setGeometry(10,10,e->parentWidget()->frameSize().width(),
 //        e->parentWidget()->frameSize().height());
-//}
+}
 
 ///*!
 // * \en
@@ -913,10 +959,13 @@ void DocumentEdit::moveUpHeaderAttribute_clicked()
         //eitem = item->findItemInMD(item, "catalogue", md->attr(item->obj, mda_name ), "field", itemName);
         //eitem->moveUp();
         int currentRow = headerAttributesList->currentIndex().row();
-        DomCfgItem* eitem = item->find(md_header)->child(currentRow);
+        //DomCfgItem* eitem = item->find(md_header)->child(currentRow);
+        QModelIndex index = headerAttributesList->currentIndex();
+        DomCfgItem *eitem = static_cast<DomCfgItem*> ( index.internalPointer() );
         eitem->moveUp();
-        headerAttributesList->update(headerAttributesList->currentIndex());
-        headerAttributesList->update(headerAttributesList->model()->index(currentRow-1,0));
+        //headerAttributesList->update(headerAttributesList->currentIndex());
+        //headerAttributesList->update(headerAttributesList->model()->index(currentRow-1,0));
+        headerAttributesList->reset();
         headerAttributesList->setCurrentIndex(headerAttributesList->model()->index(currentRow-1,0));
         //headerAttributesList->setUpdatesEnabled(true);
         //headerAttributesList->repaint();
@@ -939,10 +988,15 @@ void DocumentEdit::moveDownHeaderAttribute_clicked()
         //QString itemName = ai->text(0);
         //eitem = item->findItemInMD(item, "catalogue", md->attr(item->obj, mda_name ), "field", itemName);
         int currentRow = headerAttributesList->currentIndex().row();
-        DomCfgItem* eitem = item->find(md_header)->child(currentRow);
+        QModelIndex index = headerAttributesList->currentIndex();
+        if (!index.isValid() )
+                return;
+        DomCfgItem *eitem = static_cast<DomCfgItem*> ( index.internalPointer() );
+        qDebug() << eitem->cfgName();
         eitem->moveDown();
-        headerAttributesList->update(headerAttributesList->currentIndex());
-        headerAttributesList->update(headerAttributesList->model()->index(currentRow+1,0));
+        //headerAttributesList->update(headerAttributesList->currentIndex());
+        //headerAttributesList->update(headerAttributesList->model()->index(currentRow+1,0));
+        headerAttributesList->reset();
         headerAttributesList->setCurrentIndex(headerAttributesList->model()->index(currentRow+1,0));
         //elementAttributesList->setCurrentItem(elementAttributesList->findItem(itemName, 0));
         //elementAttributesList_selectionChanged();
@@ -955,111 +1009,104 @@ void DocumentEdit::moveDownHeaderAttribute_clicked()
 //// * Requests a name of attribute of the user.
 //// * \_en
 //// * \ru
-//// * Обрабатывает пользовательское нажатие кнопки "Новый атрибут группы" и создает в метаданных
+//// * Обрабатывает пользовательское нажатие кнопки "Новая табличная часть" и создает в метаданных
 //// * новый атрибут группы. Запрашивает имя атрибута у пользователя.
 //// * \_ru
 ////*/
-//void DocumentEditor::createNewGroupAttribute_clicked()
-//{
-//    DomCfgItem *element=item->find(md_group);
-//    QString otype=md_field;
-//    QString name=tr("New");
-//    item->insert(element,otype,name,0);
+void DocumentEdit::createNewTable_clicked()
+{
+    DomCfgItem *element=item->find(md_tables);
+    QString otype=md_table;
+    QString name=tr("New table");
+    item->insert(element,otype,name,0);
+
+    DomCfgItem *field=element->child(element->childCount()-1);
+
+    bool ok;
+    QString text = QInputDialog::getText(this, field->attr(mda_name),
+             tr("table name:"), QLineEdit::Normal,
+             field->attr(mda_name), &ok);
+    if (ok && !text.isEmpty()) {
+        field->setAttr(mda_name,text);
+    }
+    tableAttributeTree->reset();
+
+//        aListViewItem *newitem, *fielditem;
+//        aCfgItem newobj;
+//        aCfg *md = item->md;
+//        aCfgItem obj = item->obj, g, field;
+//        bool ok, yes=TRUE;
+//        QString fieldName;
+//        QStringList tN;
+//        int i;
+//        QString prompt = tr("Enter a new field name:");
+//        g = md->find( obj, md_group ); // Find Group context
+//        for ( i = 0; i < md->count( g, md_field); i++ )
+//        {
+//                field = md->find( g, md_field, i);
+//                tN.append(md->attr(field, mda_name ));
+//        }
 //
-//    DomCfgItem *field=element->child(element->childCount()-1);
-//    field->setAttr(mda_type,QString("C 10\t")+QObject::tr("Char"));
-//    field->setAttr(mda_sort,"0");
-//    field->setAttr(mda_plus,"0");
-//    field->setAttr(mda_nz,"0");
-//    field->setAttr(mda_sum,"0");
-//    Core::EditorManager* manager = Core::EditorManager::instance();
+//        while (yes)
+//        {
+//                fieldName = QInputDialog::getText(
+//                                tr("Add new field"),
+//                                   prompt,
+//       QLineEdit::Normal,
+//       QString::null, &ok, this );
+//                if ( ok && !fieldName.isEmpty() )
+//                {
+//                        if (tN.contains(fieldName) == 0 )
+//                        {
+//                                yes=FALSE;
+//                        }else
+//                        {
+//                                prompt = QString(tr("Field <b>%1</b> alredy exist.\nEnter another field name:").arg(fieldName));
+//                                yes=TRUE;
+//                        }
+//                }else{
+//                        fieldName = "";
+//                        yes=FALSE;
+//                }
+//        }
 //
-//    QString cfgName = field->cfgName();
-//    Core::IEditor* editor = manager->openEditorWithContents("Field Editor", &cfgName,"");
-//    if (editor) {
-//        manager->activateEditor(editor);
-//        QMetaObject::invokeMethod(editor->widget(), "setData",
-//        Q_ARG(DomCfgItem*, field));
-//    }
+//        if (fieldName != "")
+//        {
+//                fielditem = item->findItemInMD(item, "catalogue", md->attr( obj, mda_name ), "group", "");
 //
-//    GetGroupAttributesList();
+//                newobj = md->insert( md->find(obj, md_group), md_field, fieldName );
+//                newitem = new aListViewItem(fielditem, fielditem->getLastChild(), md, newobj );
+//                new aListViewItem( groupAttributesList, md, newobj );
 //
-////        aListViewItem *newitem, *fielditem;
-////        aCfgItem newobj;
-////        aCfg *md = item->md;
-////        aCfgItem obj = item->obj, g, field;
-////        bool ok, yes=TRUE;
-////        QString fieldName;
-////        QStringList tN;
-////        int i;
-////        QString prompt = tr("Enter a new field name:");
-////        g = md->find( obj, md_group ); // Find Group context
-////        for ( i = 0; i < md->count( g, md_field); i++ )
-////        {
-////                field = md->find( g, md_field, i);
-////                tN.append(md->attr(field, mda_name ));
-////        }
-////
-////        while (yes)
-////        {
-////                fieldName = QInputDialog::getText(
-////                                tr("Add new field"),
-////                                   prompt,
-////       QLineEdit::Normal,
-////       QString::null, &ok, this );
-////                if ( ok && !fieldName.isEmpty() )
-////                {
-////                        if (tN.contains(fieldName) == 0 )
-////                        {
-////                                yes=FALSE;
-////                        }else
-////                        {
-////                                prompt = QString(tr("Field <b>%1</b> alredy exist.\nEnter another field name:").arg(fieldName));
-////                                yes=TRUE;
-////                        }
-////                }else{
-////                        fieldName = "";
-////                        yes=FALSE;
-////                }
-////        }
-////
-////        if (fieldName != "")
-////        {
-////                fielditem = item->findItemInMD(item, "catalogue", md->attr( obj, mda_name ), "group", "");
-////
-////                newobj = md->insert( md->find(obj, md_group), md_field, fieldName );
-////                newitem = new aListViewItem(fielditem, fielditem->getLastChild(), md, newobj );
-////                new aListViewItem( groupAttributesList, md, newobj );
-////
-////                newitem->setSelected( FALSE );
-////                newitem->setOpen( FALSE );
-////
-////                QWorkspace *ws = mainform->ws;
-////                aWindowsList *wl = mainform->wl;
-////                QString oclass = md->objClass( obj );
-////                int objid = md->id( newitem->obj );
-////                if ( wl->find( objid ) )
-////                {
-////                        wl->get( objid )->setFocus();
-////                        return;
-////                }
-////                QWidget *editor;
-////                dEditField *e = new dEditField( ws, 0, WDestructiveClose );
-////
-////                editor = e;
-////                e->setData(newitem);
-////                QObject::connect(mainform, SIGNAL(tosave()), editor, SLOT( updateMD()));
-////                QObject::connect(e, SIGNAL(destroyed()), this, SLOT(GetGroupAttributesList()));
-////                e->show();
-////                mainform->addTab(++mainform->lastTabId,e->name());
-////                e->parentWidget()->setGeometry(10,10,e->parentWidget()->frameSize().width(),
-////                                e->parentWidget()->frameSize().height());
-////                wl->insert( objid, e );
-////                updateMD();
-////        }
-////
-//}
-////
+//                newitem->setSelected( FALSE );
+//                newitem->setOpen( FALSE );
+//
+//                QWorkspace *ws = mainform->ws;
+//                aWindowsList *wl = mainform->wl;
+//                QString oclass = md->objClass( obj );
+//                int objid = md->id( newitem->obj );
+//                if ( wl->find( objid ) )
+//                {
+//                        wl->get( objid )->setFocus();
+//                        return;
+//                }
+//                QWidget *editor;
+//                dEditField *e = new dEditField( ws, 0, WDestructiveClose );
+//
+//                editor = e;
+//                e->setData(newitem);
+//                QObject::connect(mainform, SIGNAL(tosave()), editor, SLOT( updateMD()));
+//                QObject::connect(e, SIGNAL(destroyed()), this, SLOT(GetGroupAttributesList()));
+//                e->show();
+//                mainform->addTab(++mainform->lastTabId,e->name());
+//                e->parentWidget()->setGeometry(10,10,e->parentWidget()->frameSize().width(),
+//                                e->parentWidget()->frameSize().height());
+//                wl->insert( objid, e );
+//                updateMD();
+//        }
+//
+}
+
 /////*!
 //// * \en
 //// *  Processes the user pressing button " Edit " and causes the form of editing of attribute of group.
@@ -1069,54 +1116,67 @@ void DocumentEdit::moveDownHeaderAttribute_clicked()
 ////вызывает форму редактирования атрибута группы.
 //// * \_ru
 ////*/
-//void DocumentEditor::editGroupAttribute_clicked()
-//{
+void DocumentEdit::editTableAttribute_clicked()
+{
 //    int currentRow;
-//    currentRow = groupAttributesList->currentIndex().row();
+//    currentRow = tableAttributeTree->currentIndex().row();
 //    if (currentRow==-1) {
 //        currentRow=1;
 //    }
-//    Core::EditorManager* manager = Core::EditorManager::instance();
+    QModelIndex index = tableAttributeTree->currentIndex();
+    if (!index.isValid())
+        return;
+    DomCfgItem *element = static_cast<DomCfgItem*> ( index.internalPointer() );
+    if (element->nodeName()==md_field) {
+        Core::EditorManager* manager = Core::EditorManager::instance();
+
+        QString cfgName = element->cfgName();
+        Core::IEditor* editor = manager->openEditorWithContents("Field Editor", &cfgName,"");
+        if (editor) {
+            manager->activateEditor(editor);
+            QMetaObject::invokeMethod(editor->widget(), "setData",
+            Q_ARG(DomCfgItem*, element));
+            connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
+        }
+    }
+    if (element->nodeName()==md_table) {
+        bool ok;
+        QString text = QInputDialog::getText(this, element->attr(mda_name),
+                 tr("table name:"), QLineEdit::Normal,
+                 element->attr(mda_name), &ok);
+        if (ok && !text.isEmpty()) {
+            element->setAttr(mda_name,text);
+        }
+    }
+    tableAttributeTree->reset();
+//        aCfg *md = item->md;
+//        aCfgItem obj = item->obj;
+//        QWorkspace *ws = mainform->ws;
+//        aWindowsList *wl = mainform->wl;
+//        aListViewItem *ai = (aListViewItem *) groupAttributesList->currentItem(), *groupitem;
 //
-//    DomCfgItem *element=item->find(md_group);
-//    QString cfgName = element->child(currentRow)->cfgName();
-//    Core::IEditor* editor = manager->openEditorWithContents("Field Editor", &cfgName,"");
-//    if (editor) {
-//        manager->activateEditor(editor);
-//        QMetaObject::invokeMethod(editor->widget(), "setData",
-//        Q_ARG(DomCfgItem*, element->child(currentRow)));
-//        connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
-//    }
+//        groupitem = item->findItemInMD(item, "catalogue", md->attr( item->obj, mda_name ), "field", ai->text(0));
 //
+//        int objid = md->id( ai->obj );
+//        if ( wl->find( objid ) )
+//        {
+//                wl->get( objid )->setFocus();
+//                return;
+//        }
 //
-////        aCfg *md = item->md;
-////        aCfgItem obj = item->obj;
-////        QWorkspace *ws = mainform->ws;
-////        aWindowsList *wl = mainform->wl;
-////        aListViewItem *ai = (aListViewItem *) groupAttributesList->currentItem(), *groupitem;
-////
-////        groupitem = item->findItemInMD(item, "catalogue", md->attr( item->obj, mda_name ), "field", ai->text(0));
-////
-////        int objid = md->id( ai->obj );
-////        if ( wl->find( objid ) )
-////        {
-////                wl->get( objid )->setFocus();
-////                return;
-////        }
-////
-////        QWidget *editor;
-////        dEditField *e = new dEditField( ws, 0, WDestructiveClose );
-////        editor = e;
-////        e->setData(groupitem);
-////        QObject::connect( mainform, SIGNAL( tosave() ), editor, SLOT( updateMD() ) );
-////        QObject::connect(e, SIGNAL(destroyed()), this, SLOT(GetGroupAttributesList()));
-////        wl->insert( objid, editor );
-////        e->show();
-////        mainform->addTab(++mainform->lastTabId,e->name());
-////        e->parentWidget()->setGeometry(10,10,e->parentWidget()->frameSize().width(),
-////        e->parentWidget()->frameSize().height());
-//}
-//
+//        QWidget *editor;
+//        dEditField *e = new dEditField( ws, 0, WDestructiveClose );
+//        editor = e;
+//        e->setData(groupitem);
+//        QObject::connect( mainform, SIGNAL( tosave() ), editor, SLOT( updateMD() ) );
+//        QObject::connect(e, SIGNAL(destroyed()), this, SLOT(GetGroupAttributesList()));
+//        wl->insert( objid, editor );
+//        e->show();
+//        mainform->addTab(++mainform->lastTabId,e->name());
+//        e->parentWidget()->setGeometry(10,10,e->parentWidget()->frameSize().width(),
+//        e->parentWidget()->frameSize().height());
+}
+
 /////*!
 //// * \en
 //// *  Processes the user pressing button " Delete " and deletes from metadata attribute of group in the catalogue.

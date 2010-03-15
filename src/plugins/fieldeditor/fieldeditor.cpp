@@ -139,7 +139,7 @@ void FieldEditor::setData( DomCfgItem *o )
             otypes.append(sec.section( "\t", 0, 0 ));
         }
 
-        int index =eType->findText(item->getNameByType(type));
+        int index =eType->findText(item->root()->getNameByType(type));
 	if (index!=-1) {eType->setCurrentIndex(index);}
 
         if ( !ts.isEmpty() )

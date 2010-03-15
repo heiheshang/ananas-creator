@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>503</width>
+    <width>597</width>
     <height>328</height>
    </rect>
   </property>
@@ -16,9 +16,9 @@
   <widget class="QTabWidget" name="tabWidget18">
    <property name="geometry">
     <rect>
-     <x>9</x>
-     <y>9</y>
-     <width>485</width>
+     <x>0</x>
+     <y>10</y>
+     <width>581</width>
      <height>310</height>
     </rect>
    </property>
@@ -59,7 +59,7 @@
       <rect>
        <x>9</x>
        <y>127</y>
-       <width>463</width>
+       <width>551</width>
        <height>141</height>
       </rect>
      </property>
@@ -67,9 +67,9 @@
     <widget class="QLineEdit" name="eName">
      <property name="geometry">
       <rect>
-       <x>59</x>
+       <x>60</x>
        <y>20</y>
-       <width>396</width>
+       <width>500</width>
        <height>27</height>
       </rect>
      </property>
@@ -109,8 +109,8 @@
     <widget class="QComboBox" name="cbType">
      <property name="geometry">
       <rect>
-       <x>230</x>
-       <y>60</y>
+       <x>340</x>
+       <y>50</y>
        <width>221</width>
        <height>23</height>
       </rect>
@@ -142,7 +142,7 @@
        <widget class="QPushButton" name="bAddDoc">
         <property name="geometry">
          <rect>
-          <x>222</x>
+          <x>270</x>
           <y>40</y>
           <width>26</width>
           <height>25</height>
@@ -165,7 +165,7 @@
        <widget class="QPushButton" name="bRemoveDoc">
         <property name="geometry">
          <rect>
-          <x>222</x>
+          <x>270</x>
           <y>70</y>
           <width>26</width>
           <height>25</height>
@@ -190,7 +190,7 @@
          <rect>
           <x>0</x>
           <y>0</y>
-          <width>211</width>
+          <width>261</width>
           <height>261</height>
          </rect>
         </property>
@@ -206,9 +206,9 @@
        <widget class="QTableWidget" name="allDocs">
         <property name="geometry">
          <rect>
-          <x>260</x>
+          <x>310</x>
           <y>0</y>
-          <width>201</width>
+          <width>251</width>
           <height>261</height>
          </rect>
         </property>
@@ -232,143 +232,115 @@
     <attribute name="title">
      <string>Columns</string>
     </attribute>
-    <widget class="QTreeWidget" name="treeDocs">
-     <property name="geometry">
-      <rect>
-       <x>235</x>
-       <y>0</y>
-       <width>241</width>
-       <height>271</height>
-      </rect>
-     </property>
-     <column>
-      <property name="text">
-       <string>Documents</string>
-      </property>
-     </column>
-    </widget>
-    <widget class="QPushButton" name="bMoveUp">
-     <property name="geometry">
-      <rect>
-       <x>200</x>
-       <y>110</y>
-       <width>26</width>
-       <height>25</height>
-      </rect>
-     </property>
-     <property name="sizePolicy">
-      <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-       <horstretch>0</horstretch>
-       <verstretch>0</verstretch>
-      </sizepolicy>
-     </property>
-     <property name="text">
-      <string/>
-     </property>
-     <property name="icon">
-      <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
-       <normaloff>:/images/arrow_up.png</normaloff>:/images/arrow_up.png</iconset>
-     </property>
-    </widget>
-    <widget class="QPushButton" name="bRemoveDocCol">
-     <property name="geometry">
-      <rect>
-       <x>200</x>
-       <y>80</y>
-       <width>26</width>
-       <height>25</height>
-      </rect>
-     </property>
-     <property name="sizePolicy">
-      <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-       <horstretch>0</horstretch>
-       <verstretch>0</verstretch>
-      </sizepolicy>
-     </property>
-     <property name="text">
-      <string/>
-     </property>
-     <property name="icon">
-      <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
-       <normaloff>:/images/editdelete.png</normaloff>:/images/editdelete.png</iconset>
-     </property>
-    </widget>
-    <widget class="QPushButton" name="bMoveDown">
-     <property name="geometry">
-      <rect>
-       <x>200</x>
-       <y>140</y>
-       <width>26</width>
-       <height>25</height>
-      </rect>
-     </property>
-     <property name="sizePolicy">
-      <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-       <horstretch>0</horstretch>
-       <verstretch>0</verstretch>
-      </sizepolicy>
-     </property>
-     <property name="text">
-      <string/>
-     </property>
-     <property name="icon">
-      <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
-       <normaloff>:/images/arrow_down.png</normaloff>:/images/arrow_down.png</iconset>
-     </property>
-    </widget>
-    <widget class="QPushButton" name="bAddCol">
-     <property name="geometry">
-      <rect>
-       <x>200</x>
-       <y>50</y>
-       <width>26</width>
-       <height>25</height>
-      </rect>
-     </property>
-     <property name="sizePolicy">
-      <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-       <horstretch>0</horstretch>
-       <verstretch>0</verstretch>
-      </sizepolicy>
-     </property>
-     <property name="text">
-      <string/>
-     </property>
-     <property name="icon">
-      <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
-       <normaloff>:/images/arrow_left.png</normaloff>:/images/arrow_left.png</iconset>
-     </property>
-    </widget>
-    <widget class="QTreeWidget" name="columnsDoc">
+    <widget class="QTreeView" name="columnsDoc">
      <property name="geometry">
       <rect>
        <x>0</x>
        <y>0</y>
-       <width>190</width>
-       <height>271</height>
+       <width>271</width>
+       <height>281</height>
       </rect>
      </property>
-     <column>
-      <property name="text">
-       <string>Columns</string>
-      </property>
-     </column>
     </widget>
-    <widget class="QPushButton" name="bNewCol">
+    <widget class="QWidget" name="gridLayoutWidget">
      <property name="geometry">
       <rect>
-       <x>200</x>
-       <y>170</y>
-       <width>25</width>
-       <height>26</height>
+       <x>280</x>
+       <y>30</y>
+       <width>31</width>
+       <height>181</height>
       </rect>
      </property>
-     <property name="text">
-      <string/>
-     </property>
-     <property name="icon">
-      <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
-       <normaloff>:/add.png</normaloff>:/add.png</iconset>
+     <layout class="QGridLayout" name="gridLayout">
+      <item row="0" column="0">
+       <widget class="QPushButton" name="bAddCol">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+          <normaloff>:/images/arrow_left.png</normaloff>:/images/arrow_left.png</iconset>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QPushButton" name="bRemoveDocCol">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+          <normaloff>:/images/editdelete.png</normaloff>:/images/editdelete.png</iconset>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0">
+       <widget class="QPushButton" name="bMoveUp">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+          <normaloff>:/images/arrow_up.png</normaloff>:/images/arrow_up.png</iconset>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+       <widget class="QPushButton" name="bMoveDown">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+          <normaloff>:/images/arrow_down.png</normaloff>:/images/arrow_down.png</iconset>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QPushButton" name="bNewCol">
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
+          <normaloff>:/add.png</normaloff>:/add.png</iconset>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+    <widget class="QTreeView" name="treeDocs">
+     <property name="geometry">
+      <rect>
+       <x>320</x>
+       <y>0</y>
+       <width>256</width>
+       <height>281</height>
+      </rect>
      </property>
     </widget>
    </widget>

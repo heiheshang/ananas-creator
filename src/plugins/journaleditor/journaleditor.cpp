@@ -9,6 +9,283 @@
 
 using namespace JOURNALEditor;
 
+tableViewModel::tableViewModel(DomCfgItem *document, QObject *parent)
+    : QAbstractItemModel(parent)
+{
+    rootItem = document;
+}
+
+tableViewModel::~tableViewModel()
+{
+    //delete rootItem;
+}
+
+int tableViewModel::columnCount(const QModelIndex &/*parent*/) const
+{
+    return 1;
+}
+
+QVariant tableViewModel::data(const QModelIndex &index, int role) const
+{
+if ( !index.isValid() )
+        return QVariant();
+if ( role == Qt::DecorationRole )
+{
+        DomCfgItem *item = static_cast<DomCfgItem*> ( index.internalPointer() );
+
+        QDomNode node = item->node();
+        return item->iconNode();
+
+}
+if ( role == Qt::DisplayRole )
+{
+        DomCfgItem *item = static_cast<DomCfgItem*> ( index.internalPointer() );
+        if (item->nodeName()==md_fieldid)
+        {
+            DomCfgItem* f = item->root()->findObjectById(item->node().childNodes().item(0).nodeValue());
+            QString nameObject = f->parent()->parent()->cfgName()+"."+f->attr(mda_name);
+            return nameObject;
+
+
+        }
+        QString name = QObject::tr("%1");
+        return name.arg(item->cfgName());
+}
+return QVariant();
+}
+
+Qt::ItemFlags tableViewModel::flags(const QModelIndex &index) const
+{
+    if (!index.isValid())
+        return 0;
+
+    return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+}
+
+QVariant tableViewModel::headerData(int section, Qt::Orientation orientation,
+                              int role) const
+{
+    Q_UNUSED(section);
+    if (orientation == Qt::Horizontal && role == Qt::DisplayRole) {
+         return tr("Colums");//QString();
+    }
+
+    return QVariant();
+}
+
+QModelIndex tableViewModel::createIndexByTags(const QString & md_const,int row, int column, DomCfgItem *parent) const
+{
+        QDomNodeList listNodes = rootItem->node().toDocument().elementsByTagName(md_const);
+        QDomNode node = listNodes.item(0);
+        DomCfgItem *nodeMd = new DomCfgItem(node,row,parent);
+        return createIndex(row, column, nodeMd);
+}
+
+QModelIndex tableViewModel::index(int row, int column, const QModelIndex &parent)
+            const
+{
+    if (!hasIndex(row, column, parent))
+        return QModelIndex();
+
+    DomCfgItem *parentItem;
+
+    if (!parent.isValid())
+        parentItem = rootItem;
+    else
+        parentItem = static_cast<DomCfgItem*>(parent.internalPointer());
+
+    DomCfgItem *childItem = parentItem->child(row);
+
+    if (childItem)
+        return createIndex(row, column, childItem);
+    else
+        return QModelIndex();
+}
+
+QModelIndex tableViewModel::parent(const QModelIndex &child) const
+{
+    if (!child.isValid())
+        return QModelIndex();
+
+    DomCfgItem *childItem = static_cast<DomCfgItem*>(child.internalPointer());
+    DomCfgItem *parentItem = childItem->parent();
+
+    if (!parentItem || parentItem == rootItem)
+        return QModelIndex();
+
+    return createIndex(parentItem->row(), 0, parentItem);
+}
+
+int tableViewModel::rowCount(const QModelIndex &parent) const
+{
+    if (parent.column() > 0)
+        return 0;
+
+    DomCfgItem *parentItem;
+
+    if (!parent.isValid())
+        {
+        parentItem = rootItem;
+        return parentItem->childCount();
+        }
+    else
+        parentItem = static_cast<DomCfgItem*>(parent.internalPointer());
+    return parentItem->childCount();
+}
+
+bool tableViewModel::hasChildren ( const QModelIndex & parent ) const
+{
+   DomCfgItem *item;
+if (!parent.isValid()) {
+    return true;
+} else
+    item = static_cast<DomCfgItem*>(parent.internalPointer());
+    QDomNode node = item->node();
+    if (node.nodeName()==md_fieldid)
+        return false;
+    if (node.nodeName()==md_column)
+        return node.hasChildNodes();
+    if (item->hasChildren())
+     return true;
+    return false;
+}
+
+
+docViewModel::docViewModel(DomCfgItem *document, QObject *parent)
+    : QAbstractItemModel(parent)
+{
+    rootItem = document;
+}
+
+docViewModel::~docViewModel()
+{
+    //delete rootItem;
+}
+
+int docViewModel::columnCount(const QModelIndex &/*parent*/) const
+{
+    return 1;
+}
+
+QVariant docViewModel::data(const QModelIndex &index, int role) const
+{
+if ( !index.isValid() )
+        return QVariant();
+if ( role == Qt::DecorationRole )
+{
+        DomCfgItem *item = static_cast<DomCfgItem*> ( index.internalPointer() );
+
+        QDomNode node = item->node();
+        return item->iconNode();
+
+}
+if ( role == Qt::DisplayRole )
+{
+        DomCfgItem *item = static_cast<DomCfgItem*> ( index.internalPointer() );
+
+        QString name = QObject::tr("%1");
+        return name.arg(item->cfgName());
+}
+return QVariant();
+}
+
+Qt::ItemFlags docViewModel::flags(const QModelIndex &index) const
+{
+    if (!index.isValid())
+        return 0;
+
+    return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+}
+
+QVariant docViewModel::headerData(int section, Qt::Orientation orientation,
+                              int role) const
+{
+    Q_UNUSED(section);
+    if (orientation == Qt::Horizontal && role == Qt::DisplayRole) {
+         return tr("Colums");//QString();
+    }
+
+    return QVariant();
+}
+
+QModelIndex docViewModel::createIndexByTags(const QString & md_const,int row, int column, DomCfgItem *parent) const
+{
+        QDomNodeList listNodes = rootItem->node().toDocument().elementsByTagName(md_const);
+        QDomNode node = listNodes.item(0);
+        DomCfgItem *nodeMd = new DomCfgItem(node,row,parent);
+        return createIndex(row, column, nodeMd);
+}
+
+QModelIndex docViewModel::index(int row, int column, const QModelIndex &parent)
+            const
+{
+    if (!hasIndex(row, column, parent))
+        return QModelIndex();
+
+    DomCfgItem *parentItem;
+
+    if (!parent.isValid())
+        parentItem = rootItem;
+    else
+        parentItem = static_cast<DomCfgItem*>(parent.internalPointer());
+
+    DomCfgItem *childItem = parentItem->child(row);
+
+    if (childItem)
+        return createIndex(row, column, childItem);
+    else
+        return QModelIndex();
+}
+
+QModelIndex docViewModel::parent(const QModelIndex &child) const
+{
+    if (!child.isValid())
+        return QModelIndex();
+
+    DomCfgItem *childItem = static_cast<DomCfgItem*>(child.internalPointer());
+    DomCfgItem *parentItem = childItem->parent();
+
+    if (!parentItem || parentItem == rootItem)
+        return QModelIndex();
+
+    return createIndex(parentItem->row(), 0, parentItem);
+}
+
+int docViewModel::rowCount(const QModelIndex &parent) const
+{
+    if (parent.column() > 0)
+        return 0;
+
+    DomCfgItem *parentItem;
+
+    if (!parent.isValid())
+        {
+        parentItem = rootItem;
+        return parentItem->childCount();
+        }
+    else
+        parentItem = static_cast<DomCfgItem*>(parent.internalPointer());
+        if (parentItem->nodeName()==md_document)
+            return 1;
+    return parentItem->childCount();
+}
+
+bool docViewModel::hasChildren ( const QModelIndex & parent ) const
+{
+   DomCfgItem *item;
+if (!parent.isValid()) {
+    return true;
+} else
+    item = static_cast<DomCfgItem*>(parent.internalPointer());
+    QDomNode node = item->node();
+    if (node.nodeName()==md_field || node.nodeName()==md_tables || node.nodeName()==md_forms)
+        return false;
+
+    if (item->hasChildren())
+     return true;
+    return false;
+}
+
 JournalEditor::JournalEditor(QWidget* parent, const char* name, Qt::WindowFlags fl)
     : QMainWindow(parent, fl)
 {
@@ -59,19 +336,6 @@ void JournalEditor::setData( DomCfgItem *o )
     getJournalColumns();
 }
 
-//void JournalEditor::doubleClickedElement ( int row, int ) {
-//    Core::EditorManager* manager = Core::EditorManager::instance();
-//
-//    DomCfgItem *fields = item->find(md_element);
-//    QString cfgName = fields->child(row)->cfgName();
-//    Core::IEditor* editor = manager->openEditorWithContents("Field Editor", &cfgName,"");
-//    if (editor) {
-//        manager->activateEditor(editor);
-//        QMetaObject::invokeMethod(editor->widget(), "setData",
-//        Q_ARG(DomCfgItem*, fields->child(row)));
-//        connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
-//    }
-//}
 
 
 void JournalEditor::typeChange(int )
@@ -98,7 +362,7 @@ void JournalEditor::newCol()
         i.setAttribute(mda_name,text);
         i.setAttribute(mda_id,(int)item->nextID());
         QDomNode node = item->find(md_columns)->node().appendChild(i);
-        columnsDoc->insertTopLevelItem(0,new QTreeWidgetItem((QTreeWidget*)0,QStringList(text)));
+        columnsDoc->reset();
 
     }
 
@@ -181,11 +445,11 @@ void JournalEditor::deleteDoc(QString name)
 }
 void JournalEditor::moveUp()
 {
-    if (columnsDoc->selectedItems().count()==0)
-        return;
-    DomCfgItem* eitem = item->find(md_columns)->child(columnsDoc->indexOfTopLevelItem(columnsDoc->selectedItems().last()));
-    eitem->moveUp();
-    getJournalColumns();
+//    if (columnsDoc->selectedItems().count()==0)
+//        return;
+//    DomCfgItem* eitem = item->find(md_columns)->child(columnsDoc->indexOfTopLevelItem(columnsDoc->selectedItems().last()));
+//    eitem->moveUp();
+//    getJournalColumns();
 //    ananasListViewItem *aitem, *after;
 //
 //    aitem = (ananasListViewItem *) journalDocs->selectedItem();
@@ -200,11 +464,11 @@ void JournalEditor::moveUp()
 
 void JournalEditor::moveDown()
 {
-    if (columnsDoc->selectedItems().count()==0)
-        return;
-    DomCfgItem* eitem = item->find(md_columns)->child(columnsDoc->indexOfTopLevelItem(columnsDoc->selectedItems().last()));
-    eitem->moveDown();
-    getJournalColumns();
+//    if (columnsDoc->selectedItems().count()==0)
+//        return;
+//    DomCfgItem* eitem = item->find(md_columns)->child(columnsDoc->indexOfTopLevelItem(columnsDoc->selectedItems().last()));
+//    eitem->moveDown();
+//    getJournalColumns();
 //    ananasListViewItem *aitem, *after;
 //    aitem = (ananasListViewItem *)journalDocs->selectedItem();
 //    if ( aitem )
@@ -217,37 +481,51 @@ void JournalEditor::moveDown()
 
 void JournalEditor::addCol()
 {
-    DomCfgItem* doc = 0;
-    if (treeDocs->selectedItems().last()->parent()==0)
+    QModelIndex indexCol = columnsDoc->currentIndex();
+    if (!indexCol.isValid())
         return;
-    QString name = treeDocs->selectedItems().last()->parent()->text(0);
-    QTreeWidgetItem* dest = columnsDoc->selectedItems().last();
-    if (dest->parent()!=0)
-        dest = dest->parent();
-    int destRow = columnsDoc->indexOfTopLevelItem(dest);
-    QHashIterator<QString, DomCfgItem*> i(used_doc);
-    while (i.hasNext()) {
-         i.next();
-         if (i.value()->attr(mda_name) == name) {
-            doc = i.value();
-            break;
-         }
-     }
-    DomCfgItem* column = item->find(md_columns)->child(destRow);
-    QDomElement j;
-    QDomDocument xml;
-    j = xml.createElement(md_fieldid);
-    QDomNode node = column->node().appendChild(j);
-    int head = treeDocs->currentItem()->parent()->indexOfChild(treeDocs->selectedItems().last());
-    QDomText t = xml.createTextNode(doc->find(md_header)->child(head)->attr(mda_id));
-    node.appendChild(t);
-    getJournalColumns();
+    QModelIndex indexDoc = treeDocs->currentIndex();
+    if (!indexDoc.isValid())
+        return;
+
+    DomCfgItem *selectField = static_cast<DomCfgItem*> ( indexDoc.internalPointer() );
+
+    if (selectField->nodeName()!=md_field)
+        return;
+
+    DomCfgItem *column = static_cast<DomCfgItem*> ( indexCol.internalPointer() );
+
+    if (column->nodeName()==md_fieldid) {
+        column = column->parent();
+        indexCol = indexCol.parent();
+    }
+
+    if (column->nodeName()==md_column) {
+                QDomElement j;
+                QDomDocument xml;
+                j = xml.createElement(md_fieldid);
+                QDomNode node = column->node().appendChild(j);
+                QDomText t = xml.createTextNode(selectField->attr(mda_id));
+                node.appendChild(t);
+                columnsDoc->reset();
+                columnsDoc->expand(indexCol);
+    }
+
 }
 
 void JournalEditor::removeCol()
 {
-    item->find(md_columns)->remove(columnsDoc->indexOfTopLevelItem(columnsDoc->selectedItems().last()));
-    getJournalColumns();
+    QModelIndex indexCol = columnsDoc->currentIndex();
+    if (!indexCol.isValid())
+        return;
+
+    DomCfgItem *column = static_cast<DomCfgItem*> ( indexCol.internalPointer() );
+    if (column->nodeName()==md_fieldid) {
+        column->parent()->remove(indexCol.row());
+        columnsDoc->reset();
+        columnsDoc->expand(indexCol.parent());
+    }
+
 }
 
 //void JournalEditor::doubleClickedGroup ( int row, int ) {
@@ -346,6 +624,7 @@ bool JournalEditor::isModified() const
 
 void JournalEditor::getAllDocsList()
 {
+
     int childCount;
     DomCfgItem* docs = item->root()->find(md_documents);
     QTableWidgetItem *newItem;
@@ -383,43 +662,47 @@ void JournalEditor::getJournalDocs()
 
 void JournalEditor::getJournalColumns()
 {
-    QList<QTreeWidgetItem *> items;
-    QHashIterator<QString, DomCfgItem*> i(used_doc);
-    columnsDoc->clear();
-    treeDocs->clear();
-    DomCfgItem* columns = item->find(md_columns);
-    columnsDoc->setColumnCount(1);
-    for (int i=0;i<=columns->childCount()-1;i++) {
-           QTreeWidgetItem* column = new QTreeWidgetItem((QTreeWidget*)0, QStringList(QString("%1").arg(columns->child(i)->attr(mda_name))));
-           items.append(column);
-           QDomNode field = columns->child(i)->node().firstChild();
-           while(!field.isNull()) {
-               DomCfgItem* f = item->root()->findObjectById(field.childNodes().item(0).nodeValue());
-               QString nameObject = f->parent()->parent()->cfgName()+"."+f->attr(mda_name);
-               new QTreeWidgetItem(column, QStringList(QString("%1").arg(nameObject)));
-               field = field.nextSibling();
-           }
-        }
-    columnsDoc->insertTopLevelItems(0, items);
-    columnsDoc->setColumnWidth ( 0, columnsDoc->width());
-    columnsDoc->setSelectionBehavior(QAbstractItemView::SelectRows);
-
-    treeDocs->setColumnCount(1);
-    items.clear();
-
-    i.toFront();
-    while (i.hasNext()) {
-         i.next();
-         QTreeWidgetItem *docItem = new QTreeWidgetItem((QTreeWidget*)0, QStringList(QString("%1").arg(i.value()->attr(mda_name))));
-         items.append(docItem);
-         DomCfgItem* header = i.value()->find(md_header);
-         for (int i=0;i<=header->childCount()-1;i++) {
-             new QTreeWidgetItem(docItem, QStringList(QString("%1").arg(header->child(i)->attr(mda_name))));
-         }
-     }
-
-    treeDocs->insertTopLevelItems(0, items);
-    treeDocs->setColumnWidth ( 0, treeDocs->width());
+    tableViewModel* tableModel = new tableViewModel(item->find(md_columns),this);
+    columnsDoc->setModel(tableModel);
+    docViewModel* docModel = new docViewModel(item->root()->find(md_documents),this);
+    treeDocs->setModel(docModel);
+//    QList<QTreeWidgetItem *> items;
+//    QHashIterator<QString, DomCfgItem*> i(used_doc);
+//    columnsDoc->clear();
+//    treeDocs->clear();
+//    DomCfgItem* columns = item->find(md_columns);
+//    columnsDoc->setColumnCount(1);
+//    for (int i=0;i<=columns->childCount()-1;i++) {
+//           QTreeWidgetItem* column = new QTreeWidgetItem((QTreeWidget*)0, QStringList(QString("%1").arg(columns->child(i)->attr(mda_name))));
+//           items.append(column);
+//           QDomNode field = columns->child(i)->node().firstChild();
+//           while(!field.isNull()) {
+//               DomCfgItem* f = item->root()->findObjectById(field.childNodes().item(0).nodeValue());
+//               QString nameObject = f->parent()->parent()->cfgName()+"."+f->attr(mda_name);
+//               new QTreeWidgetItem(column, QStringList(QString("%1").arg(nameObject)));
+//               field = field.nextSibling();
+//           }
+//        }
+//    columnsDoc->insertTopLevelItems(0, items);
+//    columnsDoc->setColumnWidth ( 0, columnsDoc->width());
+//    columnsDoc->setSelectionBehavior(QAbstractItemView::SelectRows);
+//
+//    treeDocs->setColumnCount(1);
+//    items.clear();
+//
+//    i.toFront();
+//    while (i.hasNext()) {
+//         i.next();
+//         QTreeWidgetItem *docItem = new QTreeWidgetItem((QTreeWidget*)0, QStringList(QString("%1").arg(i.value()->attr(mda_name))));
+//         items.append(docItem);
+//         DomCfgItem* header = i.value()->find(md_header);
+//         for (int i=0;i<=header->childCount()-1;i++) {
+//             new QTreeWidgetItem(docItem, QStringList(QString("%1").arg(header->child(i)->attr(mda_name))));
+//         }
+//     }
+//
+//    treeDocs->insertTopLevelItems(0, items);
+//    treeDocs->setColumnWidth ( 0, treeDocs->width());
 }
 void JournalEditor::getUsedDoc()
 {
