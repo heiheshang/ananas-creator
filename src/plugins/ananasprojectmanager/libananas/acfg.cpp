@@ -139,9 +139,11 @@ DomCfgItem::~DomCfgItem()
     QHash<int,DomCfgItem*>::iterator it;
     for (it = childItems.begin(); it != childItems.end(); ++it)
         delete it.value();
+    childItems.clear();
     QHash<QString,DomCfgItem*>::iterator id;
-    for (id = hashId.begin(); id != hashId.end(); ++id)
-        delete id.value();
+//    for (id = hashId.begin(); id != hashId.end(); ++id)
+//        delete id.value();
+    hashId.clear();
 }
 
 QDomNode DomCfgItem::node() const
@@ -336,11 +338,14 @@ return 0;
 bool DomCfgItem::remove(int i)
 {
  QDomNode rmNode =  child(i)->node();
- QHash<int,DomCfgItem*>::iterator it;
- for (it = childItems.begin(); it != childItems.end(); ++it)
-     delete it.value();
+ //QHash<int,DomCfgItem*>::iterator it;
+ //for (it = childItems.begin(); it != childItems.end(); ++it)
+ //    delete it.value();
+ delete childItems[i];
+ childItems.remove(i);
  node().removeChild(rmNode);
- childItems.clear();
+ //childItems.clear();
+
  return true;
 }
 
@@ -478,13 +483,19 @@ QMenu *DomCfgItem::menu() const
 	 contextMenu->addAction("Property");
 	 return contextMenu;
 	}
-        if (domNode.nodeName()==md_catalogue || domNode.nodeName()==md_journal || domNode.nodeName()==md_document) {
+        if (domNode.nodeName()==md_catalogue || domNode.nodeName()==md_catalogues || domNode.nodeName()==md_journal || domNode.nodeName()==md_document
+            ) {
 	 QMenu *contextMenu = new QMenu(tr("Context menu"));
          contextMenu->addAction("New");
          contextMenu->addAction("Edit");
          contextMenu->addAction("Delete");
 	 return contextMenu;
 	}
+        if (domNode.nodeName()==md_element) {
+            QMenu *contextMenu = new QMenu(tr("Context menu"));
+            contextMenu->addAction("New");
+            return contextMenu;
+        }
  return 0;
 }
 

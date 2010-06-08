@@ -141,15 +141,55 @@ if (!parent.isValid()) {
 } else
     item = static_cast<DomCfgItem*>(parent.internalPointer());
     QDomNode node = item->node();
-    if (node.nodeName()==md_fieldid)
+    if (item->nodeName()==md_fieldid)
         return false;
-    if (node.nodeName()==md_column)
+    if (item->nodeName()==md_column)
         return node.hasChildNodes();
     if (item->hasChildren())
      return true;
     return false;
 }
 
+void tableViewModel::insertCol(QDomElement &col)
+{
+    beginInsertRows(QModelIndex(),rowCount(QModelIndex()),rowCount(QModelIndex())+1);
+    rootItem->find(md_columns)->node().appendChild(col);
+    createIndex(rowCount(QModelIndex()), 0, rootItem->child(rowCount(QModelIndex())));
+    endInsertRows();
+}
+
+bool tableViewModel::removeRows ( int row, int count, const QModelIndex & parent )
+{
+    DomCfgItem* column;
+
+    if (!parent.isValid()) {
+        column = rootItem;
+    }
+    else
+    {
+        column = static_cast<DomCfgItem*> ( parent.internalPointer() );
+    }
+//    if (column->nodeName()==md_column)
+//    {
+//        beginRemoveRows(parent,row,row+count-1);
+//        DomCfgItem* p = column->parent();
+//        p->remove(row);
+//        endRemoveRows();
+//        return;
+//    }
+    //if (column->nodeName()==md_fieldid)
+    //{
+    beginRemoveRows(parent,row,row+count-1);
+        for (int i=0;i<=column->childCount()-1;i++)
+            qDebug() << column->child(i)->attr(mda_name);
+        column->remove(row);
+        for (int i=0;i<=column->childCount()-1;i++)
+            qDebug() << column->child(i)->attr(mda_name);
+        endRemoveRows();
+        return true;
+    //}
+
+}
 
 docViewModel::docViewModel(DomCfgItem *document, QObject *parent)
     : QAbstractItemModel(parent)
@@ -289,6 +329,7 @@ if (!parent.isValid()) {
 JournalEditor::JournalEditor(QWidget* parent, const char* name, Qt::WindowFlags fl)
     : QMainWindow(parent, fl)
 {
+    Q_UNUSED(name);
     setupUi(this);
     //(void)statusBar();
     //init();
@@ -361,9 +402,7 @@ void JournalEditor::newCol()
         i = xml.createElement(md_column);
         i.setAttribute(mda_name,text);
         i.setAttribute(mda_id,(int)item->nextID());
-        QDomNode node = item->find(md_columns)->node().appendChild(i);
-        columnsDoc->reset();
-
+        ((tableViewModel*) columnsDoc->model())->insertCol(i);
     }
 
 }
@@ -515,16 +554,20 @@ void JournalEditor::addCol()
 
 void JournalEditor::removeCol()
 {
-    QModelIndex indexCol = columnsDoc->currentIndex();
-    if (!indexCol.isValid())
-        return;
+    QModelIndex index = columnsDoc->selectionModel()->currentIndex();
+    QAbstractItemModel* model = columnsDoc->model();
+    model->removeRow(index.row(),index.parent());
+    //if (!indexCol.isValid())
+    //    return;
+    //((tableViewModel*)(columnsDoc->model()))->removeCol(indexCol);
 
-    DomCfgItem *column = static_cast<DomCfgItem*> ( indexCol.internalPointer() );
-    if (column->nodeName()==md_fieldid) {
-        column->parent()->remove(indexCol.row());
-        columnsDoc->reset();
-        columnsDoc->expand(indexCol.parent());
-    }
+
+//    DomCfgItem *column = static_cast<DomCfgItem*> ( indexCol.internalPointer() );
+//    if (column->nodeName()==md_fieldid) {
+//        column->parent()->remove(indexCol.row());
+//        columnsDoc->reset();
+//        columnsDoc->expand(indexCol.parent());
+//    }
 
 }
 
@@ -598,12 +641,14 @@ void JournalEditor::destroy()
 
 void JournalEditor::eSv_activated( int index )
 {
+    Q_UNUSED(index);
 //    if ( index == 1 ) eStrViewF->setEnabled( TRUE );
 //    else eStrViewF->setEnabled( FALSE );
 }
 
 void JournalEditor::eSvG_activated( int index )
 {
+    Q_UNUSED(index);
 //    if ( index == 1 ) eStrViewFG->setEnabled( TRUE );
 //    else eStrViewFG->setEnabled( FALSE );
 }
@@ -620,6 +665,7 @@ void JournalEditor::setModified(bool /*modified*/)
 bool JournalEditor::isModified() const
 {
     //return (m_undoStack.size() != m_unmodifiedState);
+    return true;
 }
 
 void JournalEditor::getAllDocsList()

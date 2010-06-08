@@ -336,10 +336,13 @@ QDomNode node = item->node();
     }
 
     if (a->text()==tr("New")) {
-        if (node.nodeName()==md_catalogue) {
+        if (node.nodeName()==md_catalogue || node.nodeName()==md_catalogues) {
+           DomCfgItem *catalogues=0;
            QString titlePattern = tr("Catalogue $");
-
-           DomCfgItem *catalogues=item->parent();
+           if (node.nodeName()==md_catalogue)
+            catalogues=item->parent();
+           if (node.nodeName()==md_catalogues)
+            catalogues=item;
            //DomCfgItem *lastcatalogue = catalogues->child(catalogues->childCount()-1);
            DomCfgItem* catalogue = catalogues->newCatalogue();
 
@@ -355,6 +358,22 @@ QDomNode node = item->node();
                qCritical() << "Can't invoke method!";
             connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
           }
+        }
+        if (node.nodeName()==md_element) {
+            DomCfgItem* field = item->newElement();
+
+            Core::EditorManager* manager = Core::EditorManager::instance();
+
+            QString cfgName = field->cfgName();
+            Core::IEditor* editor = manager->openEditorWithContents("Field Editor", &cfgName,"");
+            if (editor) {
+                manager->activateEditor(editor);
+
+                if (!QMetaObject::invokeMethod(editor->widget(), "setData",
+                Q_ARG(DomCfgItem*, field)))
+                    qCritical() << "Can't invoke method!";
+            }
+
         }
         if(node.nodeName()==md_journal){
             QString titlePattern = tr("Journal $");
@@ -388,6 +407,7 @@ QDomNode node = item->node();
         if (editor)
             manager->activateEditor(editor);
         }
+
    if (a->text()==tr("Open element view")) {
         openSprModule();
         }

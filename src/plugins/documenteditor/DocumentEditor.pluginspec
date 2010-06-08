@@ -21,5 +21,6 @@ will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.</license>
     <dependencyList>
         <dependency name="Core" version="1.3.1"/>
         <dependency name="TextEditor" version="1.3.1"/>
+        <dependency name="QtScriptEditor" version="1.3.1"/>
     </dependencyList>
 </plugin>

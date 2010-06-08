@@ -7,7 +7,6 @@
 #include <extensionsystem/iplugin.h>
 #include <coreplugin/editormanager/ieditorfactory.h>
 #include <coreplugin/ifile.h>
-#include <texteditor/basetexteditor.h>
 #include <ui_documenteditor.h>
 
 namespace Core {
@@ -20,32 +19,13 @@ class FontSettings;
 
 namespace DocumentEditor {
 
-    class headerViewModel : public QAbstractListModel
+
+    class domCfgViewModel : public QAbstractItemModel
     {
             Q_OBJECT
     public:
-         headerViewModel(DomCfgItem *document, QObject *parent = 0);
-        ~headerViewModel();
-
-        int rowCount(const QModelIndex &parent) const;
-        QModelIndex index(int row, int column, const QModelIndex &parent) const;
-        QModelIndex parent(const QModelIndex &child) const;
-        QVariant data(const QModelIndex &index, int role) const;
-
-        Qt::ItemFlags flags(const QModelIndex &index) const;
-
-    private:
-
-        DomCfgItem *rootItem;
-
-    };
-
-    class tableViewModel : public QAbstractItemModel
-    {
-            Q_OBJECT
-    public:
-         tableViewModel(DomCfgItem *document, QObject *parent = 0);
-        ~tableViewModel();
+         domCfgViewModel(DomCfgItem *document, QObject *parent = 0);
+        ~domCfgViewModel();
 
         QModelIndex index(int row, int column, const QModelIndex &parent) const;
         QModelIndex parent(const QModelIndex &child) const;
@@ -103,7 +83,8 @@ private:
     Core::IEditor *m_ieditor;
     void getHeaderAttributesList();
     void getTablesAttributesList();
-
+    void getFormsList();
+    void getJournalList();
     QHash<QString,QString> openForm;
 private slots:
 //    void doubleClickedElement ( int row, int column );
@@ -128,6 +109,7 @@ private slots:
 //    void updateForm(QList<Core::IEditor*> editor);
 
 };
+
 }
 
 #endif // DOCUMENTEDITOR_H

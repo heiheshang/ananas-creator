@@ -197,7 +197,7 @@
        <string/>
       </property>
       <property name="icon">
-       <iconset>
+       <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
         <normaloff>:/images/arrow_up.png</normaloff>:/images/arrow_up.png</iconset>
       </property>
      </widget>
@@ -262,7 +262,7 @@
        <string/>
       </property>
       <property name="icon">
-       <iconset>
+       <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
         <normaloff>:/images/arrow_down.png</normaloff>:/images/arrow_down.png</iconset>
       </property>
      </widget>
@@ -319,7 +319,7 @@
        <string/>
       </property>
       <property name="icon">
-       <iconset>
+       <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
         <normaloff>:/images/arrow_up.png</normaloff>:/images/arrow_up.png</iconset>
       </property>
      </widget>
@@ -339,7 +339,7 @@
        <string/>
       </property>
       <property name="icon">
-       <iconset>
+       <iconset resource="../ananasprojectmanager/libananas/designer.qrc">
         <normaloff>:/images/arrow_down.png</normaloff>:/images/arrow_down.png</iconset>
       </property>
      </widget>
@@ -843,6 +843,9 @@
    </widget>
   </widget>
  </widget>
- <resources/>
+ <resources>
+  <include location="directoryeditor.qrc"/>
+  <include location="../ananasprojectmanager/libananas/designer.qrc"/>
+ </resources>
  <connections/>
 </ui>

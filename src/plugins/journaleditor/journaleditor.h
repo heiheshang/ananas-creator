@@ -38,6 +38,8 @@ namespace JOURNALEditor {
         Qt::ItemFlags flags(const QModelIndex &index) const;
         QString info() const;
         bool hasChildren ( const QModelIndex & parent = QModelIndex() ) const;
+        void insertCol(QDomElement &col);
+        bool removeRows ( int row, int count, const QModelIndex & parent = QModelIndex() ) ;
     private:
 
         DomCfgItem *rootItem;

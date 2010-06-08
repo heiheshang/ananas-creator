@@ -1,5 +1,6 @@
 
 #include "documenteditor.h"
+#include "documenteditorconstants.h"
 #include <coreplugin/editormanager/editormanager.h>
 #include <QTableWidgetItem>
 #include <QStandardItemModel>
@@ -11,116 +12,60 @@
 #include <QListWidgetItem>
 #include <QInputDialog>
 
+#include <coreplugin/coreconstants.h>
+#include <coreplugin/modemanager.h>
+#include <coreplugin/uniqueidmanager.h>
+#include <coreplugin/actionmanager/actionmanager.h>
+#include <coreplugin/editormanager/ieditorfactory.h>
+#include <coreplugin/editormanager/iexternaleditor.h>
+#include <coreplugin/icore.h>
+#include <coreplugin/baseview.h>
+#include <coreplugin/imode.h>
+#include <coreplugin/settingsdatabase.h>
+#include <coreplugin/variablemanager.h>
+
+#include <extensionsystem/pluginmanager.h>
+#include <qtscripteditor/qtscripteditor.h>
+#include <utils/consoleprocess.h>
+#include <utils/qtcassert.h>
+
+#include "qtscripteditor/qtscripteditorfactory.h"
+#include "qtscripteditor/qtscripteditorconstants.h"
+#include "qtscripteditor/qtscripteditorplugin.h"
+
+using namespace Core;
+using namespace Core::Internal;
+using namespace Utils;
+using namespace QtScriptEditor::Internal;
+using namespace QtScriptEditor::Constants;
+
+//enum {
+//    UPDATE_DOCUMENT_DEFAULT_INTERVAL = 100
+//};
+
 using namespace DocumentEditor;
 
-headerViewModel::headerViewModel(DomCfgItem *document, QObject *parent)
-    : QAbstractListModel(parent)
-{
-    rootItem = document->find(md_header);
-}
-
-headerViewModel::~headerViewModel()
-{
-    //delete rootItem;
-}
-
-//int headerViewModel::columnCount(const QModelIndex &/*parent*/) const
-//{
-//    return 1;
-//}
-
-QVariant headerViewModel::data(const QModelIndex &index, int role) const
-{
-if ( !index.isValid() )
-        return QVariant();
-if ( role == Qt::DecorationRole )
-{
-        return rootItem->child(index.row())->iconNode();
-
-}
-if ( role == Qt::DisplayRole )
-{
-        QString name = QObject::tr("%1");
-        return name.arg(rootItem->child(index.row())->cfgName());
-}
-return QVariant();
-}
-
-Qt::ItemFlags headerViewModel::flags(const QModelIndex &index) const
-{
-    if (!index.isValid())
-        return 0;
-
-    return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
-}
-
-
-int headerViewModel::rowCount(const QModelIndex &parent) const
-{
-    if (parent.isValid())
-        {
-        return 0;
-        }
-
-    return rootItem->childCount();
-
-}
-
-QModelIndex headerViewModel::index(int row, int column, const QModelIndex &parent)
-            const
-{
-    if (!hasIndex(row, column, parent))
-        return QModelIndex();
-
-    DomCfgItem *parentItem;
-
-    if (!parent.isValid())
-        parentItem = rootItem;
-    else
-        parentItem = static_cast<DomCfgItem*>(parent.internalPointer());
-
-    DomCfgItem *childItem = parentItem->child(row);
-
-    if (childItem)
-        return createIndex(row, column, childItem);
-    else
-        return QModelIndex();
-}
-
-QModelIndex headerViewModel::parent(const QModelIndex &child) const
-{
-    if (!child.isValid())
-        return QModelIndex();
-
-    DomCfgItem *childItem = static_cast<DomCfgItem*>(child.internalPointer());
-    DomCfgItem *parentItem = childItem->parent();
-
-    if (!parentItem || parentItem == rootItem)
-        return QModelIndex();
-
-    return createIndex(parentItem->row(), 0, parentItem);
-}
 
 //===================================================================================================
-//Модель для отображения табличной части документа
+//Модель для отображения элемента DomCfgItem
 //===================================================================================================
-tableViewModel::tableViewModel(DomCfgItem *document, QObject *parent)
+domCfgViewModel::domCfgViewModel(DomCfgItem *document, QObject *parent)
     : QAbstractItemModel(parent)
 {
-    rootItem = document->find(md_tables);
+    rootItem = document;
 }
 
-tableViewModel::~tableViewModel()
+domCfgViewModel::~domCfgViewModel()
 {
     //delete rootItem;
 }
 
-int tableViewModel::columnCount(const QModelIndex &/*parent*/) const
+int domCfgViewModel::columnCount(const QModelIndex &/*parent*/) const
 {
     return 1;
 }
 
-QVariant tableViewModel::data(const QModelIndex &index, int role) const
+QVariant domCfgViewModel::data(const QModelIndex &index, int role) const
 {
 if ( !index.isValid() )
         return QVariant();
@@ -142,7 +87,7 @@ if ( role == Qt::DisplayRole )
 return QVariant();
 }
 
-Qt::ItemFlags tableViewModel::flags(const QModelIndex &index) const
+Qt::ItemFlags domCfgViewModel::flags(const QModelIndex &index) const
 {
     if (!index.isValid())
         return 0;
@@ -150,7 +95,7 @@ Qt::ItemFlags tableViewModel::flags(const QModelIndex &index) const
     return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
 }
 
-QVariant tableViewModel::headerData(int section, Qt::Orientation orientation,
+QVariant domCfgViewModel::headerData(int section, Qt::Orientation orientation,
                               int role) const
 {
     Q_UNUSED(section);
@@ -161,7 +106,7 @@ QVariant tableViewModel::headerData(int section, Qt::Orientation orientation,
     return QVariant();
 }
 
-QModelIndex tableViewModel::createIndexByTags(const QString & md_const,int row, int column, DomCfgItem *parent) const
+QModelIndex domCfgViewModel::createIndexByTags(const QString & md_const,int row, int column, DomCfgItem *parent) const
 {
         QDomNodeList listNodes = rootItem->node().toDocument().elementsByTagName(md_const);
         QDomNode node = listNodes.item(0);
@@ -169,7 +114,7 @@ QModelIndex tableViewModel::createIndexByTags(const QString & md_const,int row, 
         return createIndex(row, column, nodeMd);
 }
 
-QModelIndex tableViewModel::index(int row, int column, const QModelIndex &parent)
+QModelIndex domCfgViewModel::index(int row, int column, const QModelIndex &parent)
             const
 {
     if (!hasIndex(row, column, parent))
@@ -190,7 +135,7 @@ QModelIndex tableViewModel::index(int row, int column, const QModelIndex &parent
         return QModelIndex();
 }
 
-QModelIndex tableViewModel::parent(const QModelIndex &child) const
+QModelIndex domCfgViewModel::parent(const QModelIndex &child) const
 {
     if (!child.isValid())
         return QModelIndex();
@@ -204,7 +149,7 @@ QModelIndex tableViewModel::parent(const QModelIndex &child) const
     return createIndex(parentItem->row(), 0, parentItem);
 }
 
-int tableViewModel::rowCount(const QModelIndex &parent) const
+int domCfgViewModel::rowCount(const QModelIndex &parent) const
 {
     if (parent.column() > 0)
         return 0;
@@ -221,7 +166,7 @@ int tableViewModel::rowCount(const QModelIndex &parent) const
     return parentItem->childCount();
 }
 
-bool tableViewModel::hasChildren ( const QModelIndex & parent ) const
+bool domCfgViewModel::hasChildren ( const QModelIndex & parent ) const
 {
    DomCfgItem *item;
 if (!parent.isValid()) {
@@ -269,6 +214,39 @@ void DocumentEdit::setData( DomCfgItem *o )
      setWindowTitle( tr("Document:") + item->attr( mda_name ) );
      eName->setText( item->attr( mda_name ) );
      eDescription->setText( item->attr( md_description ) );
+     QDomNode source =  item->node().namedItem(md_sourcecode);
+
+     QString titlePattern = tr("module document$");
+
+     Core::ICore *core = Core::ICore::instance();
+//     Core::BaseView *view = new Core::BaseView;
+//     view->setUniqueViewName("Doc");
+//     view->setWidget(TabPageModule);
+//     view->setContext(QList<int>() << core->uniqueIDManager()
+//         ->uniqueIdentifier(QLatin1String("DocWidget")));
+//     view->setDefaultPosition(Core::IView::First);
+//
+     //Core::EditorManager* manager = new EditorManager(core,TabPageModule);
+     Core::EditorManager* manager = Core::EditorManager::instance();
+     Core::IEditor* editor = manager->openEditorWithContents("Qt Script Editor", &titlePattern,source.toElement().text());
+//     ScriptEditor* editor = new ScriptEditor::ScriptEditor(
+//             QList<int>() << core->uniqueIDManager()
+//                      ->uniqueIdentifier(QLatin1String("DocWidget")),TabPageModule);
+     //ExtensionSystem::PluginManager::instance()->getObject<QtScriptEditorPlugin>()->initializeEditor(editor);
+//     QtScriptEditorPlugin::instance()->initializeEditor(editor);
+     //foreach (QObject *object, ExtensionSystem::PluginManager::instance()->allObjects()) {
+     //    qDebug() << object->objectName();
+     //}
+
+     if (editor) {
+//         //formLayout->addWidget(editor->widget());
+//         //tabWidget->addTab(editor->widget(),tr("Document module"));
+         //editor->widget()->setParent(TabPageModule,Qt::SubWindow);
+         manager->activateEditor(editor);
+          editor->widget()->setParent(TabPageModule);
+          formLayout->addWidget(editor->widget());
+//         //connect(manager,SIGNAL(editorsClosed(QList<Core::IEditor*>)),editor->widget(),SLOT(updateMD(QList<Core::IEditor*>)));
+     }
      //DomCfgItem *fields = o->find(md_element);//->find(md_field);
 //     listField->setSortingEnabled(false);
 //     QTableWidgetItem *newItem;
@@ -316,7 +294,8 @@ void DocumentEdit::setData( DomCfgItem *o )
 
         getHeaderAttributesList();
         getTablesAttributesList();
-
+        getFormsList();
+        getJournalList();
 }
 
 //void DocumentEdit::doubleClickedElement ( int row, int ) {
@@ -366,7 +345,7 @@ void DocumentEdit::setData( DomCfgItem *o )
 
 void DocumentEdit::init()
 {
-        //delete statusBar();
+
 
 
 }
@@ -464,7 +443,7 @@ bool DocumentEdit::isModified() const
 */
 void DocumentEdit::getHeaderAttributesList()
 {
-    headerViewModel* headers = new headerViewModel(item,this);
+    QAbstractItemModel* headers = new domCfgViewModel(item->find(md_header),this);
 
     headerAttributesList->setModel(headers);
 
@@ -497,7 +476,7 @@ void DocumentEdit::getHeaderAttributesList()
 
 void DocumentEdit::getTablesAttributesList()
 {
-    tableViewModel* tableModel = new tableViewModel(item->find(md_tables),this);
+    QAbstractItemModel* tableModel = new domCfgViewModel(item->find(md_tables),this);
     tableAttributeTree->setModel(tableModel);
 
     if (tableAttributeTree->model()->rowCount()==0) {
@@ -513,116 +492,27 @@ void DocumentEdit::getTablesAttributesList()
         deleteTable->setEnabled(true);
     }
 }
-///*!
-// * \en
-// * Reading of attributes of groups from a configuration in the list
-// * \_en
-// * \ru
-// * Считывание атрибутов группы из конфигурации в список
-// * \_ru
-//*/
-//void DocumentEditor::GetGroupAttributesList()
-//{
-//        int  i,childCount;
-//        QTableWidgetItem* newItem;
-//        DomCfgItem *fields = item->find(md_group);//->find(md_field);
-//        childCount=0;
-//        groupAttributesList->clear();
-//        for(int i=0;i<fields->childCount();i++) {
-//        if (fields->child(i)->nodeName()==md_field) {
-//            newItem = new QTableWidgetItem(fields->child(i)->attr(mda_name));
-//            groupAttributesList->setRowCount(childCount+1);
-//            groupAttributesList->setItem(childCount,0,newItem);
-//            groupAttributesList->setRowHeight(childCount,20);
-//            childCount++;
-//            }
-//        }
-//    groupAttributesList->setColumnWidth ( 0, groupAttributesList->width()-30 );
-//    groupAttributesList->setSelectionBehavior(QAbstractItemView::SelectRows);
-////        aCfg *md = item->md;
-////        aCfgItem obj = item->obj, g, field;
-////        g = md->find( obj, md_group ); // Find Group context
-////        for ( i = 0; i < md->count( g, md_field ); i++ ) {
-////                field = md->find( g, md_field, i );
-////                new aListViewItem(groupAttributesList, md, field, QString::null );
-////        }
-//
-//}
-//
-/////*!
-//// * \en
-//// * Reading of forms from a configuration in the list
-//// * \_en
-//// * \ru
-//// * Считывание форм из конфигурации в список
-//// * \_ru
-////*/
-//void DocumentEditor::GetFormsList()
-//{
-//    int i,childCount;
-//    QTableWidgetItem* newItem;
-//    DomCfgItem *form = item->find(md_forms);
-//    childCount=0;
-//    formsList->clear();
-//    for(int i=0;i<form->childCount();i++) {
-//        if (form->child(i)->nodeName()==md_form) {
-//            newItem = new QTableWidgetItem(form->child(i)->attr(mda_name));
-//            formsList->setRowCount(childCount+1);
-//            formsList->setItem(childCount,0,newItem);
-//            formsList->setRowHeight(childCount,20);
-//            childCount++;
-//            }
-//        }
-//    formsList->setColumnWidth ( 0, formsList->width()-30 );
-//    formsList->setSelectionBehavior(QAbstractItemView::SelectRows);
-//   // formsList->setSourceModel(model);
-////        formsList->clear();
-////        int i;
-////        aCfg *md = item->md;
-////        aCfgItem cobj, gobj, f, field;
-////        aCfgItem obj = item->obj;
-////        f = md->find(obj, md_forms);// Find forms context
-////        for ( i = 0; i < md->count( f, md_form ); i++ )
-////        {
-////                cobj = md->find( f, md_form, i );
-////                if ( !cobj.isNull() )
-////                {
-////                    new aListViewItem( formsList, md, cobj, QString::null );
-////                }
-////        }
-//}
-//
-/////*!
-//// * \en
-//// * Reading of catalogues from a configuration in the list
-//// * \_en
-//// * \ru
-//// * Считывание каталогов из конфигурации в список
-//// * \_ru
-////*/
-//void DocumentEditor::CatList()
-//{
-//        eParentCat->clear();
-//        eParentCat->insertItem(0,tr("<<< Not subordinate >>>"),QVariant());
-//        long int i;
-//        DomCfgItem* catalogue=item->root()->find(md_catalogues);
-//        for ( i = 0; i < catalogue->childCount(); i++ )
-//        {
-//            eParentCat->insertItem(i+1,catalogue->child(i)->cfgName(),QVariant());
-//        }
-//        //aCfg *md = item->md;
-////        aCfgItem obj = item->obj, aobj, cat, field;
-////        aCfgItem cobj = md->parent( obj ); // Parent. All Catalogues
-////        for ( i = 0; i < md->count(md->parent( obj ), md_catalogue); i++ )
-////        {
-////          field = md->find( md->parent( obj ), md_catalogue, i );
-////          if (QString("%1").arg(md->attr(field, mda_name )) != md->attr( obj, mda_name ))
-////          {
-////                  eParentCat->insertItem(QString("%1").arg(md->attr(field, mda_name )));
-////          }
-////        }
-//}
-//
+
+void DocumentEdit::getFormsList()
+{
+    QAbstractItemModel* formModel = new domCfgViewModel(item->find(md_forms),this);
+    formsList->setModel(formModel);
+
+    if (formsList->model()->rowCount()==0) {
+         editForm->setEnabled(false);
+         deleteForm->setEnabled(false);
+    }
+    else {
+        editForm->setEnabled(true);
+        deleteForm->setEnabled(true);
+    }
+}
+
+void DocumentEdit::getJournalList()
+{
+    QAbstractItemModel* journalModel = new domCfgViewModel(item->root()->find(md_journals),this);
+    eDocJournal->setModel(journalModel);
+}
 
 ///*!
 // * \en
